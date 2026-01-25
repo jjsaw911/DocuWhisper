@@ -59,7 +59,8 @@ export default function Record() {
       });
 
       if (!response.ok) {
-        throw new Error("Transcription failed");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.details || errorData.error || "Transcription failed");
       }
 
       return response.json();
@@ -68,11 +69,11 @@ export default function Record() {
       setTranscript(data.transcript);
       setRecordingState("complete");
     },
-    onError: () => {
+    onError: (error: Error) => {
       setRecordingState("error");
       toast({
         title: "Transcription failed",
-        description: "Please try recording again",
+        description: error.message || "Please try recording again",
         variant: "destructive",
       });
     },
