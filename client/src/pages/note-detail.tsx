@@ -26,7 +26,9 @@ import {
   RefreshCw,
   Download,
   Share2,
-  Wand2
+  Wand2,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import type { Note } from "@shared/schema";
 
@@ -44,30 +46,60 @@ export default function NoteDetail() {
   const [formData, setFormData] = useState({
     title: "",
     patientName: "",
-    subjective: "",
-    objective: "",
-    assessment: "",
-    plan: "",
+    soapNote: "",
   });
   const [aiInstructions, setAiInstructions] = useState("");
-  const [copiedSection, setCopiedSection] = useState<string | null>(null);
+  const [showAiInstructions, setShowAiInstructions] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const formatSoapNote = (note: Note) => {
+    const parts = [];
+    if (note.subjective) parts.push(`SUBJECTIVE:\n${note.subjective}`);
+    if (note.objective) parts.push(`OBJECTIVE:\n${note.objective}`);
+    if (note.assessment) parts.push(`ASSESSMENT:\n${note.assessment}`);
+    if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    return parts.join("\n\n");
+  };
+
+  const parseSoapNote = (text: string) => {
+    const sections: { subjective: string; objective: string; assessment: string; plan: string } = {
+      subjective: "",
+      objective: "",
+      assessment: "",
+      plan: "",
+    };
+
+    const subjectiveMatch = text.match(/SUBJECTIVE:\s*([\s\S]*?)(?=OBJECTIVE:|ASSESSMENT:|PLAN:|$)/i);
+    const objectiveMatch = text.match(/OBJECTIVE:\s*([\s\S]*?)(?=SUBJECTIVE:|ASSESSMENT:|PLAN:|$)/i);
+    const assessmentMatch = text.match(/ASSESSMENT:\s*([\s\S]*?)(?=SUBJECTIVE:|OBJECTIVE:|PLAN:|$)/i);
+    const planMatch = text.match(/PLAN:\s*([\s\S]*?)(?=SUBJECTIVE:|OBJECTIVE:|ASSESSMENT:|$)/i);
+
+    if (subjectiveMatch) sections.subjective = subjectiveMatch[1].trim();
+    if (objectiveMatch) sections.objective = objectiveMatch[1].trim();
+    if (assessmentMatch) sections.assessment = assessmentMatch[1].trim();
+    if (planMatch) sections.plan = planMatch[1].trim();
+
+    return sections;
+  };
 
   useEffect(() => {
     if (note) {
       setFormData({
         title: note.title || "",
         patientName: note.patientName || "",
-        subjective: note.subjective || "",
-        objective: note.objective || "",
-        assessment: note.assessment || "",
-        plan: note.plan || "",
+        soapNote: formatSoapNote(note),
       });
     }
   }, [note]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("PATCH", `/api/notes/${id}`, formData);
+      const parsedSoap = parseSoapNote(formData.soapNote);
+      const response = await apiRequest("PATCH", `/api/notes/${id}`, {
+        title: formData.title,
+        patientName: formData.patientName,
+        ...parsedSoap,
+      });
       return response.json();
     },
     onSuccess: () => {
@@ -98,13 +130,17 @@ export default function NoteDetail() {
       return response.json();
     },
     onSuccess: (data) => {
+      const newSoapNote: string[] = [];
+      if (data.subjective) newSoapNote.push(`SUBJECTIVE:\n${data.subjective}`);
+      if (data.objective) newSoapNote.push(`OBJECTIVE:\n${data.objective}`);
+      if (data.assessment) newSoapNote.push(`ASSESSMENT:\n${data.assessment}`);
+      if (data.plan) newSoapNote.push(`PLAN:\n${data.plan}`);
+      
       setFormData(prev => ({
         ...prev,
-        subjective: data.subjective || "",
-        objective: data.objective || "",
-        assessment: data.assessment || "",
-        plan: data.plan || "",
+        soapNote: newSoapNote.join("\n\n"),
       }));
+      setShowAiInstructions(false);
       toast({
         title: "SOAP note regenerated",
         description: "The note has been regenerated with your instructions",
@@ -119,14 +155,14 @@ export default function NoteDetail() {
     },
   });
 
-  const copyToClipboard = async (text: string, section: string) => {
+  const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedSection(section);
-      setTimeout(() => setCopiedSection(null), 2000);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
       toast({
         title: "Copied",
-        description: `${section} copied to clipboard`,
+        description: "Note copied to clipboard",
       });
     } catch {
       toast({
@@ -137,26 +173,6 @@ export default function NoteDetail() {
     }
   };
 
-  const copyFullNote = () => {
-    const fullNote = `SOAP NOTE
-${formData.patientName ? `Patient: ${formData.patientName}` : ""}
-Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}
-
-SUBJECTIVE:
-${formData.subjective || "Not documented"}
-
-OBJECTIVE:
-${formData.objective || "Not documented"}
-
-ASSESSMENT:
-${formData.assessment || "Not documented"}
-
-PLAN:
-${formData.plan || "Not documented"}`;
-    
-    copyToClipboard(fullNote, "Full note");
-  };
-
   const exportToPDF = () => {
     const content = `
       <html>
@@ -165,12 +181,10 @@ ${formData.plan || "Not documented"}`;
           <style>
             body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
             h1 { color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px; }
-            h2 { color: #374151; margin-top: 24px; }
             .meta { color: #6b7280; margin-bottom: 24px; }
-            .section { margin-bottom: 20px; }
-            .section-title { font-weight: bold; color: #0d9488; margin-bottom: 8px; }
-            .section-content { white-space: pre-wrap; line-height: 1.6; }
+            .content { white-space: pre-wrap; line-height: 1.6; }
             .transcript { background: #f3f4f6; padding: 16px; border-radius: 8px; margin-top: 32px; }
+            .transcript h2 { margin-top: 0; }
           </style>
         </head>
         <body>
@@ -179,31 +193,11 @@ ${formData.plan || "Not documented"}`;
             ${formData.patientName ? `<p>Patient: ${formData.patientName}</p>` : ""}
             <p>Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>
           </div>
-          
-          <div class="section">
-            <div class="section-title">SUBJECTIVE</div>
-            <div class="section-content">${formData.subjective || "Not documented"}</div>
-          </div>
-          
-          <div class="section">
-            <div class="section-title">OBJECTIVE</div>
-            <div class="section-content">${formData.objective || "Not documented"}</div>
-          </div>
-          
-          <div class="section">
-            <div class="section-title">ASSESSMENT</div>
-            <div class="section-content">${formData.assessment || "Not documented"}</div>
-          </div>
-          
-          <div class="section">
-            <div class="section-title">PLAN</div>
-            <div class="section-content">${formData.plan || "Not documented"}</div>
-          </div>
-          
+          <div class="content">${formData.soapNote}</div>
           ${note?.transcript ? `
             <div class="transcript">
               <h2>Original Transcript</h2>
-              <div class="section-content">${note.transcript}</div>
+              <div class="content">${note.transcript}</div>
             </div>
           ` : ""}
         </body>
@@ -219,19 +213,17 @@ ${formData.plan || "Not documented"}`;
   };
 
   const shareNote = async () => {
-    const shareText = `SOAP Note: ${formData.title}\n\nSubjective: ${formData.subjective?.substring(0, 100)}...`;
-    
     if (navigator.share) {
       try {
         await navigator.share({
           title: formData.title,
-          text: shareText,
+          text: formData.soapNote,
         });
       } catch {
-        copyFullNote();
+        copyToClipboard(formData.soapNote);
       }
     } else {
-      copyFullNote();
+      copyToClipboard(formData.soapNote);
     }
   };
 
@@ -241,11 +233,7 @@ ${formData.plan || "Not documented"}`;
         <div className="max-w-4xl mx-auto">
           <Skeleton className="h-10 w-64 mb-4" />
           <Skeleton className="h-6 w-48 mb-8" />
-          <div className="space-y-6">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-32 w-full" />
-            ))}
-          </div>
+          <Skeleton className="h-64 w-full" />
         </div>
       </div>
     );
@@ -291,9 +279,6 @@ ${formData.plan || "Not documented"}`;
             <Button variant="outline" size="icon" onClick={exportToPDF} data-testid="button-export">
               <Download className="h-4 w-4" />
             </Button>
-            <Button variant="outline" size="icon" onClick={copyFullNote} data-testid="button-copy-all">
-              {copiedSection === "Full note" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            </Button>
             <Button
               onClick={() => updateMutation.mutate()}
               disabled={updateMutation.isPending}
@@ -307,7 +292,7 @@ ${formData.plan || "Not documented"}`;
               ) : (
                 <>
                   <Save className="mr-2 h-4 w-4" />
-                  Save Changes
+                  Save
                 </>
               )}
             </Button>
@@ -361,47 +346,6 @@ ${formData.plan || "Not documented"}`;
           </CardContent>
         </Card>
 
-        <Card data-testid="card-ai-instructions" className="mb-6">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Wand2 className="h-4 w-4 text-primary" />
-              AI Instructions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Textarea
-              placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on the symptoms related to chest pain' or 'Add that patient has a history of diabetes'"
-              value={aiInstructions}
-              onChange={(e) => setAiInstructions(e.target.value)}
-              className="min-h-[80px]"
-              data-testid="textarea-ai-instructions"
-            />
-            <Button 
-              variant="secondary" 
-              onClick={() => regenerateMutation.mutate()}
-              disabled={regenerateMutation.isPending || !note.transcript}
-              data-testid="button-regenerate"
-            >
-              {regenerateMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Regenerating...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Regenerate SOAP Note
-                </>
-              )}
-            </Button>
-            {!note.transcript && (
-              <p className="text-xs text-muted-foreground">
-                Regeneration requires a transcript. This note was created without one.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
         <Card data-testid="card-soap" className="mb-6">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -412,136 +356,101 @@ ${formData.plan || "Not documented"}`;
               <Button 
                 variant="ghost" 
                 size="sm"
-                onClick={() => {
-                  const soapText = `Subjective:\n${formData.subjective}\n\nObjective:\n${formData.objective}\n\nAssessment:\n${formData.assessment}\n\nPlan:\n${formData.plan}`;
-                  copyToClipboard(soapText, "SOAP Note");
-                }}
+                onClick={() => copyToClipboard(formData.soapNote)}
                 data-testid="button-copy-soap"
               >
-                {copiedSection === "SOAP Note" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="subjective" className="text-base font-semibold">Subjective</Label>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => copyToClipboard(formData.subjective, "Subjective")}
-                >
-                  {copiedSection === "Subjective" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                </Button>
-              </div>
-              <Textarea
-                id="subjective"
-                value={formData.subjective}
-                onChange={(e) => setFormData({ ...formData, subjective: e.target.value })}
-                className="min-h-[120px]"
-                placeholder="Patient's symptoms, complaints, and medical history as described by the patient..."
-                data-testid="textarea-subjective"
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="objective" className="text-base font-semibold">Objective</Label>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => copyToClipboard(formData.objective, "Objective")}
-                >
-                  {copiedSection === "Objective" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                </Button>
-              </div>
-              <Textarea
-                id="objective"
-                value={formData.objective}
-                onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-                className="min-h-[120px]"
-                placeholder="Physical examination findings, vital signs, lab results..."
-                data-testid="textarea-objective"
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="assessment" className="text-base font-semibold">Assessment</Label>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => copyToClipboard(formData.assessment, "Assessment")}
-                >
-                  {copiedSection === "Assessment" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                </Button>
-              </div>
-              <Textarea
-                id="assessment"
-                value={formData.assessment}
-                onChange={(e) => setFormData({ ...formData, assessment: e.target.value })}
-                className="min-h-[120px]"
-                placeholder="Diagnosis, clinical reasoning, differential diagnoses..."
-                data-testid="textarea-assessment"
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="plan" className="text-base font-semibold">Plan</Label>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => copyToClipboard(formData.plan, "Plan")}
-                >
-                  {copiedSection === "Plan" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                </Button>
-              </div>
-              <Textarea
-                id="plan"
-                value={formData.plan}
-                onChange={(e) => setFormData({ ...formData, plan: e.target.value })}
-                className="min-h-[120px]"
-                placeholder="Treatment plan, medications, follow-up instructions..."
-                data-testid="textarea-plan"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card data-testid="card-transcript">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <AudioLines className="h-4 w-4 text-primary" />
-                Original Transcript
-              </CardTitle>
-              {note.transcript && (
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => copyToClipboard(note.transcript || "", "Transcript")}
-                  data-testid="button-copy-transcript"
-                >
-                  {copiedSection === "Transcript" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
+          <CardContent className="space-y-4">
+            <Textarea
+              value={formData.soapNote}
+              onChange={(e) => setFormData({ ...formData, soapNote: e.target.value })}
+              className="min-h-[400px] font-mono text-sm"
+              placeholder="SUBJECTIVE:&#10;Patient's symptoms...&#10;&#10;OBJECTIVE:&#10;Examination findings...&#10;&#10;ASSESSMENT:&#10;Diagnosis...&#10;&#10;PLAN:&#10;Treatment plan..."
+              data-testid="textarea-soap"
+            />
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAiInstructions(!showAiInstructions)}
+              className="w-full"
+              data-testid="button-toggle-ai"
+            >
+              <Wand2 className="mr-2 h-4 w-4" />
+              AI Instructions
+              {showAiInstructions ? (
+                <ChevronUp className="ml-2 h-4 w-4" />
+              ) : (
+                <ChevronDown className="ml-2 h-4 w-4" />
               )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {note.transcript ? (
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
-              </div>
-            ) : (
-              <div className="text-center text-muted-foreground py-8">
-                <AudioLines className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No transcript available for this note</p>
+            </Button>
+
+            {showAiInstructions && (
+              <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                <Textarea
+                  placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on chest pain symptoms' or 'Add that patient has history of diabetes'"
+                  value={aiInstructions}
+                  onChange={(e) => setAiInstructions(e.target.value)}
+                  className="min-h-[80px]"
+                  data-testid="textarea-ai-instructions"
+                />
+                <Button 
+                  variant="secondary" 
+                  onClick={() => regenerateMutation.mutate()}
+                  disabled={regenerateMutation.isPending || !note.transcript}
+                  className="w-full"
+                  data-testid="button-regenerate"
+                >
+                  {regenerateMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Regenerating...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      Regenerate SOAP Note
+                    </>
+                  )}
+                </Button>
+                {!note.transcript && (
+                  <p className="text-xs text-muted-foreground text-center">
+                    Regeneration requires a transcript.
+                  </p>
+                )}
               </div>
             )}
           </CardContent>
         </Card>
+
+        {note.transcript && (
+          <Card data-testid="card-transcript">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AudioLines className="h-4 w-4 text-primary" />
+                  Original Transcript
+                </CardTitle>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => copyToClipboard(note.transcript || "")}
+                  data-testid="button-copy-transcript"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
