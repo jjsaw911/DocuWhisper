@@ -1,16 +1,18 @@
 # DocuWhisper - AI Medical Scribe
 
-AI-powered medical scribing tool that transforms patient consultations into structured SOAP notes.
+AI-powered medical scribing tool that transforms patient consultations into structured SOAP notes. Heidi AI-inspired interface.
 
 ## Overview
 
 DocuWhisper helps healthcare providers save 2+ hours daily by automatically transcribing voice recordings and generating structured clinical documentation.
 
 **Core Features:**
-- Voice recording with AI transcription
-- Automatic SOAP note generation
+- Voice recording with pause/resume and audio level visualization
+- AI transcription and automatic SOAP note generation
+- **Auto-save:** Notes are automatically saved after transcription
+- **Auto-title:** If no patient name provided, AI generates title from symptoms/complaints
 - Custom SOAP templates for personalized AI prompts
-- Notes management and editing
+- Notes management with SOAP/Transcript tabs
 - User authentication via Replit Auth
 - $25/month subscription via Stripe
 
@@ -29,13 +31,13 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 ├── client/                  # Frontend React app
 │   ├── src/
 │   │   ├── components/      # Reusable UI components
-│   │   │   └── ui/          # Shadcn components
+│   │   │   ├── ui/          # Shadcn components
+│   │   │   └── app-sidebar.tsx # Main sidebar navigation
 │   │   ├── pages/           # Page components
 │   │   │   ├── landing.tsx  # Public landing page
-│   │   │   ├── dashboard.tsx # User dashboard
-│   │   │   ├── record.tsx   # Recording interface
+│   │   │   ├── session.tsx  # Main recording/scribing interface
 │   │   │   ├── notes.tsx    # Notes list
-│   │   │   ├── note-detail.tsx # Single note view
+│   │   │   ├── note-detail.tsx # Single note view with SOAP/Transcript tabs
 │   │   │   ├── templates.tsx # Template management
 │   │   │   └── subscription.tsx # Subscription management
 │   │   ├── hooks/           # Custom hooks
@@ -100,6 +102,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 ### AI
 - `POST /api/transcribe` - Transcribe audio (multipart form)
 - `POST /api/generate-soap` - Generate SOAP note from transcript (optional templateId parameter)
+- `POST /api/generate-title` - Generate title from transcript based on symptoms/complaints
 
 ### Templates
 - `GET /api/templates` - List user's templates

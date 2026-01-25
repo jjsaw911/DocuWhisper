@@ -8,19 +8,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { 
   ArrowLeft, 
-  Stethoscope, 
   Save,
   Loader2,
   Calendar,
   User,
   FileText,
-  Clock
+  Clock,
+  AudioLines,
+  Sparkles
 } from "lucide-react";
 import type { Note } from "@shared/schema";
 
@@ -36,6 +37,7 @@ export default function NoteDetail() {
     enabled: !!user && !!id,
   });
 
+  const [activeTab, setActiveTab] = useState("soap");
   const [formData, setFormData] = useState({
     title: "",
     patientName: "",
@@ -174,100 +176,109 @@ export default function NoteDetail() {
           </div>
         </div>
 
-        <div className="space-y-6">
-          <Card data-testid="card-details">
-            <CardHeader>
-              <CardTitle>Details</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="title">Title</Label>
-                <Input
-                  id="title"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  data-testid="input-title"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="patientName">Patient Name</Label>
-                <Input
-                  id="patientName"
-                  value={formData.patientName}
-                  onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
-                  data-testid="input-patient-name"
-                />
-              </div>
-            </CardContent>
-          </Card>
+        <Card data-testid="card-details" className="mb-6">
+          <CardContent className="pt-4 grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="title">Title</Label>
+              <Input
+                id="title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                data-testid="input-title"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="patientName">Patient Name</Label>
+              <Input
+                id="patientName"
+                value={formData.patientName}
+                onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
+                data-testid="input-patient-name"
+              />
+            </div>
+          </CardContent>
+        </Card>
 
-          <Card data-testid="card-soap">
-            <CardHeader>
-              <CardTitle>SOAP Note</CardTitle>
-              <CardDescription>Clinical documentation</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="subjective" className="text-base font-semibold">Subjective</Label>
-                <Textarea
-                  id="subjective"
-                  value={formData.subjective}
-                  onChange={(e) => setFormData({ ...formData, subjective: e.target.value })}
-                  className="min-h-[120px]"
-                  placeholder="Patient's symptoms, complaints, and medical history as described by the patient..."
-                  data-testid="textarea-subjective"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="objective" className="text-base font-semibold">Objective</Label>
-                <Textarea
-                  id="objective"
-                  value={formData.objective}
-                  onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-                  className="min-h-[120px]"
-                  placeholder="Physical examination findings, vital signs, lab results..."
-                  data-testid="textarea-objective"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="assessment" className="text-base font-semibold">Assessment</Label>
-                <Textarea
-                  id="assessment"
-                  value={formData.assessment}
-                  onChange={(e) => setFormData({ ...formData, assessment: e.target.value })}
-                  className="min-h-[120px]"
-                  placeholder="Diagnosis, clinical reasoning, differential diagnoses..."
-                  data-testid="textarea-assessment"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="plan" className="text-base font-semibold">Plan</Label>
-                <Textarea
-                  id="plan"
-                  value={formData.plan}
-                  onChange={(e) => setFormData({ ...formData, plan: e.target.value })}
-                  className="min-h-[120px]"
-                  placeholder="Treatment plan, medications, follow-up instructions..."
-                  data-testid="textarea-plan"
-                />
-              </div>
-            </CardContent>
-          </Card>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="mb-4">
+            <TabsTrigger value="soap" className="gap-2" data-testid="tab-soap">
+              <Sparkles className="h-4 w-4" />
+              SOAP Note
+            </TabsTrigger>
+            <TabsTrigger value="transcript" className="gap-2" data-testid="tab-transcript">
+              <AudioLines className="h-4 w-4" />
+              Transcript
+            </TabsTrigger>
+          </TabsList>
 
-          {note.transcript && (
-            <Card data-testid="card-transcript">
-              <CardHeader>
-                <CardTitle>Original Transcript</CardTitle>
-                <CardDescription>Raw transcription from the consultation</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="p-4 bg-muted/50 rounded-lg">
-                  <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
+          <TabsContent value="soap" className="mt-0">
+            <Card data-testid="card-soap">
+              <CardContent className="pt-6 space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="subjective" className="text-base font-semibold">Subjective</Label>
+                  <Textarea
+                    id="subjective"
+                    value={formData.subjective}
+                    onChange={(e) => setFormData({ ...formData, subjective: e.target.value })}
+                    className="min-h-[120px]"
+                    placeholder="Patient's symptoms, complaints, and medical history as described by the patient..."
+                    data-testid="textarea-subjective"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="objective" className="text-base font-semibold">Objective</Label>
+                  <Textarea
+                    id="objective"
+                    value={formData.objective}
+                    onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
+                    className="min-h-[120px]"
+                    placeholder="Physical examination findings, vital signs, lab results..."
+                    data-testid="textarea-objective"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="assessment" className="text-base font-semibold">Assessment</Label>
+                  <Textarea
+                    id="assessment"
+                    value={formData.assessment}
+                    onChange={(e) => setFormData({ ...formData, assessment: e.target.value })}
+                    className="min-h-[120px]"
+                    placeholder="Diagnosis, clinical reasoning, differential diagnoses..."
+                    data-testid="textarea-assessment"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="plan" className="text-base font-semibold">Plan</Label>
+                  <Textarea
+                    id="plan"
+                    value={formData.plan}
+                    onChange={(e) => setFormData({ ...formData, plan: e.target.value })}
+                    className="min-h-[120px]"
+                    placeholder="Treatment plan, medications, follow-up instructions..."
+                    data-testid="textarea-plan"
+                  />
                 </div>
               </CardContent>
             </Card>
-          )}
-        </div>
+          </TabsContent>
+
+          <TabsContent value="transcript" className="mt-0">
+            <Card data-testid="card-transcript">
+              <CardContent className="pt-6">
+                {note.transcript ? (
+                  <div className="p-4 bg-muted/50 rounded-lg">
+                    <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
+                  </div>
+                ) : (
+                  <div className="text-center text-muted-foreground py-8">
+                    <AudioLines className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No transcript available for this note</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

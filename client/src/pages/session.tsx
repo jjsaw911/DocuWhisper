@@ -221,6 +221,13 @@ export default function Session() {
     });
   };
 
+  const generateTitleMutation = useMutation({
+    mutationFn: async (transcript: string) => {
+      const response = await apiRequest("POST", "/api/generate-title", { transcript });
+      return response.json();
+    },
+  });
+
   const transcribeMutation = useMutation({
     mutationFn: async (audioBlob: Blob) => {
       const formData = new FormData();
@@ -239,11 +246,79 @@ export default function Session() {
 
       return response.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       if (data.transcript) {
         addTranscriptEntry(data.transcript, "content");
+        
+        // Auto-save: Generate SOAP note and save automatically
+        setRecordingState("processing");
+        addTranscriptEntry("Generating clinical note...");
+        
+        try {
+          // Generate SOAP note
+          const soapResponse = await apiRequest("POST", "/api/generate-soap", {
+            transcript: data.transcript,
+            patientName,
+            specialty: "general",
+            templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+          });
+          const generatedSoap = await soapResponse.json();
+          setSoapNote(generatedSoap);
+          
+          // Generate title from symptoms if no patient name
+          let noteTitle = patientName 
+            ? `${patientName} - ${new Date().toLocaleDateString()}`
+            : `Session - ${new Date().toLocaleDateString()}`;
+          
+          if (!patientName) {
+            try {
+              const titleResult = await generateTitleMutation.mutateAsync(data.transcript);
+              if (titleResult.title) {
+                noteTitle = titleResult.title;
+              }
+            } catch {
+              // Fall back to default title
+            }
+          }
+          
+          // Auto-save the note
+          const saveResponse = await apiRequest("POST", "/api/notes", {
+            title: noteTitle,
+            patientName: patientName || null,
+            specialty: "general",
+            subjective: generatedSoap.subjective || "",
+            objective: generatedSoap.objective || "",
+            assessment: generatedSoap.assessment || "",
+            plan: generatedSoap.plan || "",
+            transcript: data.transcript,
+          });
+          const savedNote = await saveResponse.json();
+          
+          queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+          setActiveTab("soap");
+          addTranscriptEntry("Note saved automatically");
+          
+          toast({
+            title: "Session saved",
+            description: "Your note has been generated and saved",
+          });
+          
+          // Navigate to the saved note
+          navigate(`/notes/${savedNote.id}`);
+          
+        } catch (error) {
+          console.error("Auto-save failed:", error);
+          toast({
+            title: "Auto-save failed",
+            description: "Transcription complete, but automatic save failed. You can manually save.",
+            variant: "destructive",
+          });
+        }
+        
+        setRecordingState("idle");
+      } else {
+        setRecordingState("idle");
       }
-      setRecordingState("idle");
     },
     onError: (error: Error) => {
       setRecordingState("idle");

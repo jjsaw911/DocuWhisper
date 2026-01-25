@@ -253,6 +253,53 @@ Return ONLY valid JSON in this exact format:
     }
   });
 
+  // Generate title from transcript (extract symptoms/complaints)
+  app.post("/api/generate-title", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { transcript } = req.body;
+      
+      if (!transcript || typeof transcript !== "string") {
+        return res.status(400).json({ error: "Transcript is required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical documentation assistant. Given a transcript of a patient consultation, extract the main symptom, complaint, or reason for visit to create a brief title.
+
+Return ONLY valid JSON in this exact format:
+{
+  "title": "Brief 2-4 word description of main symptom or complaint"
+}
+
+Examples of good titles:
+- "Chest Pain"
+- "Annual Checkup"
+- "Lower Back Pain"
+- "Persistent Cough"
+- "Headache and Fatigue"
+- "Follow-up Diabetes"
+
+If the transcript is unclear or empty, use "General Consultation".`
+          },
+          { role: "user", content: `Transcript:\n${transcript}` }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 100,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"title": "General Consultation"}';
+      const result = JSON.parse(content);
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error generating title:", error);
+      res.status(500).json({ error: "Failed to generate title" });
+    }
+  });
+
   // Template CRUD endpoints
   app.get("/api/templates", isAuthenticated, async (req: any, res: Response) => {
     try {
