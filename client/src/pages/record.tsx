@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,10 +20,18 @@ import {
   FileText,
   Sparkles,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  LayoutTemplate
 } from "lucide-react";
 
 type RecordingState = "idle" | "recording" | "processing" | "complete" | "error";
+
+type Template = {
+  id: number;
+  name: string;
+  description: string | null;
+  isDefault: boolean | null;
+};
 
 export default function Record() {
   const { user } = useAuth();
@@ -35,6 +43,7 @@ export default function Record() {
   const [transcript, setTranscript] = useState("");
   const [patientName, setPatientName] = useState("");
   const [specialty, setSpecialty] = useState("general");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [soapNote, setSoapNote] = useState<{
     subjective: string;
     objective: string;
@@ -44,6 +53,10 @@ export default function Record() {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+
+  const { data: templates = [] } = useQuery<Template[]>({
+    queryKey: ["/api/templates"],
+  });
 
   const transcribeMutation = useMutation({
     mutationFn: async (audioBlob: Blob) => {
@@ -85,6 +98,7 @@ export default function Record() {
         transcript,
         patientName,
         specialty,
+        templateId: selectedTemplateId ? parseInt(selectedTemplateId) : undefined,
       });
       return response.json();
     },
@@ -201,7 +215,7 @@ export default function Record() {
               <CardTitle>Consultation Details</CardTitle>
               <CardDescription>Optional information about the consultation</CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
+            <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="patientName">Patient Name (Optional)</Label>
                 <Input
@@ -234,6 +248,32 @@ export default function Record() {
                     <SelectItem value="internal">Internal Medicine</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="template">Template (Optional)</Label>
+                <Select 
+                  value={selectedTemplateId} 
+                  onValueChange={setSelectedTemplateId}
+                  disabled={recordingState === "recording" || recordingState === "processing"}
+                >
+                  <SelectTrigger id="template" data-testid="select-template">
+                    <SelectValue placeholder="Default template" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Default template</SelectItem>
+                    {templates.map((template) => (
+                      <SelectItem key={template.id} value={template.id.toString()}>
+                        {template.name}
+                        {template.isDefault && " (Default)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {templates.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    <Link href="/templates" className="text-primary hover:underline">Create templates</Link> to customize SOAP notes
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>

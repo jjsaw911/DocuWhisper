@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { speechToText, ensureCompatibleFormat } from "./replit_integrations/audio/client";
-import { insertNoteSchema } from "@shared/schema";
+import { insertNoteSchema, insertTemplateSchema } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
@@ -15,6 +15,21 @@ const generateSoapSchema = z.object({
   transcript: z.string().min(1, "Transcript is required"),
   patientName: z.string().optional(),
   specialty: z.string().optional(),
+  templateId: z.number().optional(),
+});
+
+const createTemplateSchema = z.object({
+  name: z.string().min(1, "Template name is required"),
+  description: z.string().optional(),
+  prompt: z.string().min(1, "Template prompt is required"),
+  isDefault: z.boolean().optional(),
+});
+
+const updateTemplateSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  prompt: z.string().optional(),
+  isDefault: z.boolean().optional(),
 });
 
 const updateNoteSchema = z.object({
@@ -185,9 +200,17 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty } = validationResult.data;
+      const { transcript, patientName, specialty, templateId } = validationResult.data;
 
-      const systemPrompt = `You are a medical documentation assistant. Given a transcript of a patient consultation, generate a structured SOAP note.
+      let customPrompt = "";
+      if (templateId) {
+        const template = await storage.getTemplate(templateId);
+        if (template) {
+          customPrompt = template.prompt;
+        }
+      }
+
+      const basePrompt = customPrompt || `You are a medical documentation assistant. Given a transcript of a patient consultation, generate a structured SOAP note.
 
 ${specialty ? `Specialty: ${specialty}` : ""}
 ${patientName ? `Patient: ${patientName}` : ""}
@@ -198,7 +221,9 @@ Generate a SOAP note with the following sections:
 - Assessment: Clinical diagnosis and reasoning
 - Plan: Treatment plan, medications, follow-up instructions
 
-Be thorough but concise. Use professional medical terminology. If information for a section is not available in the transcript, write "Not documented in consultation."
+Be thorough but concise. Use professional medical terminology. If information for a section is not available in the transcript, write "Not documented in consultation."`;
+
+      const systemPrompt = `${basePrompt}
 
 Return ONLY valid JSON in this exact format:
 {
@@ -225,6 +250,122 @@ Return ONLY valid JSON in this exact format:
     } catch (error) {
       console.error("Error generating SOAP note:", error);
       res.status(500).json({ error: "Failed to generate SOAP note" });
+    }
+  });
+
+  // Template CRUD endpoints
+  app.get("/api/templates", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const templates = await storage.getTemplatesByUser(userId);
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching templates:", error);
+      res.status(500).json({ error: "Failed to fetch templates" });
+    }
+  });
+
+  app.get("/api/templates/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const templateId = parseInt(req.params.id);
+      const template = await storage.getTemplate(templateId);
+      
+      if (!template) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      
+      if (template.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized to view this template" });
+      }
+      
+      res.json(template);
+    } catch (error) {
+      console.error("Error fetching template:", error);
+      res.status(500).json({ error: "Failed to fetch template" });
+    }
+  });
+
+  app.post("/api/templates", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = createTemplateSchema.safeParse(req.body);
+      
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.flatten().fieldErrors 
+        });
+      }
+      
+      const userId = req.user.claims.sub;
+      const template = await storage.createTemplate({
+        ...validationResult.data,
+        userId,
+      });
+      
+      if (validationResult.data.isDefault) {
+        await storage.setDefaultTemplate(userId, template.id);
+      }
+      
+      res.status(201).json(template);
+    } catch (error) {
+      console.error("Error creating template:", error);
+      res.status(500).json({ error: "Failed to create template" });
+    }
+  });
+
+  app.patch("/api/templates/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const templateId = parseInt(req.params.id);
+      const template = await storage.getTemplate(templateId);
+      
+      if (!template) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      
+      if (template.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized to update this template" });
+      }
+      
+      const validationResult = updateTemplateSchema.safeParse(req.body);
+      
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.flatten().fieldErrors 
+        });
+      }
+      
+      const updated = await storage.updateTemplate(templateId, validationResult.data);
+      
+      if (validationResult.data.isDefault) {
+        await storage.setDefaultTemplate(req.user.claims.sub, templateId);
+      }
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating template:", error);
+      res.status(500).json({ error: "Failed to update template" });
+    }
+  });
+
+  app.delete("/api/templates/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const templateId = parseInt(req.params.id);
+      const template = await storage.getTemplate(templateId);
+      
+      if (!template) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      
+      if (template.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized to delete this template" });
+      }
+      
+      await storage.deleteTemplate(templateId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting template:", error);
+      res.status(500).json({ error: "Failed to delete template" });
     }
   });
 

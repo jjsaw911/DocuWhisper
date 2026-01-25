@@ -12,6 +12,7 @@ import Record from "@/pages/record";
 import Notes from "@/pages/notes";
 import NoteDetail from "@/pages/note-detail";
 import Subscription from "@/pages/subscription";
+import Templates from "@/pages/templates";
 
 function AuthenticatedRoutes() {
   return (
@@ -21,6 +22,7 @@ function AuthenticatedRoutes() {
       <Route path="/notes" component={Notes} />
       <Route path="/notes/:id" component={NoteDetail} />
       <Route path="/subscription" component={Subscription} />
+      <Route path="/templates" component={Templates} />
       <Route component={NotFound} />
     </Switch>
   );

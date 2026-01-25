@@ -23,7 +23,8 @@ import {
   CreditCard,
   Clock,
   TrendingUp,
-  ChevronRight
+  ChevronRight,
+  LayoutTemplate
 } from "lucide-react";
 import type { Note } from "@shared/schema";
 
@@ -97,6 +98,12 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/templates" className="flex items-center cursor-pointer" data-testid="menu-templates">
+                      <LayoutTemplate className="mr-2 h-4 w-4" />
+                      Templates
+                    </Link>
+                  </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link href="/subscription" className="flex items-center cursor-pointer" data-testid="menu-subscription">
                       <CreditCard className="mr-2 h-4 w-4" />
