@@ -143,15 +143,34 @@ export async function registerRoutes(
         return res.status(400).json({ error: "No audio file provided" });
       }
 
+      console.log("Transcription request received:", {
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      });
+
       const audioBuffer = req.file.buffer;
+      console.log("Converting audio format...");
       const { buffer: compatibleBuffer, format } = await ensureCompatibleFormat(audioBuffer);
+      console.log(`Converted to ${format}, size: ${compatibleBuffer.length}`);
       
+      console.log("Calling OpenAI transcription API...");
       const transcript = await speechToText(compatibleBuffer, format);
+      console.log("Transcription successful, length:", transcript.length);
 
       res.json({ transcript });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error transcribing audio:", error);
-      res.status(500).json({ error: "Failed to transcribe audio" });
+      console.error("Error details:", {
+        message: error?.message,
+        status: error?.status,
+        code: error?.code,
+        response: error?.response?.data,
+      });
+      res.status(500).json({ 
+        error: "Failed to transcribe audio",
+        details: error?.message || "Unknown error"
+      });
     }
   });
 
