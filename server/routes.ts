@@ -16,6 +16,7 @@ const generateSoapSchema = z.object({
   patientName: z.string().optional(),
   specialty: z.string().optional(),
   templateId: z.number().optional(),
+  aiInstructions: z.string().optional(),
 });
 
 const createTemplateSchema = z.object({
@@ -200,7 +201,7 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty, templateId } = validationResult.data;
+      const { transcript, patientName, specialty, templateId, aiInstructions } = validationResult.data;
 
       let customPrompt = "";
       if (templateId) {
@@ -223,7 +224,14 @@ Generate a SOAP note with the following sections:
 
 Be thorough but concise. Use professional medical terminology. If information for a section is not available in the transcript, write "Not documented in consultation."`;
 
-      const systemPrompt = `${basePrompt}
+      const aiInstructionsSection = aiInstructions ? `
+
+IMPORTANT - User Instructions (follow these carefully):
+${aiInstructions}
+
+Apply these instructions when generating the SOAP note. If the user asks to omit certain information, do not include it. If they ask to add context, incorporate it appropriately.` : "";
+
+      const systemPrompt = `${basePrompt}${aiInstructionsSection}
 
 Return ONLY valid JSON in this exact format:
 {
