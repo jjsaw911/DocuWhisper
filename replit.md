@@ -11,8 +11,11 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - AI transcription and automatic SOAP note generation
 - **Auto-save:** Notes are automatically saved after transcription
 - **Auto-title:** If no patient name provided, AI generates title from symptoms/complaints
+- **AI Instructions:** Tell AI what to omit or add context when regenerating notes
 - Custom SOAP templates for personalized AI prompts
-- Notes management with SOAP/Transcript tabs
+- Notes management with unified view (SOAP + Transcript in one page)
+- Copy buttons for each section and full note
+- Export to PDF and share functionality
 - User authentication via Replit Auth
 - $25/month subscription via Stripe
 
