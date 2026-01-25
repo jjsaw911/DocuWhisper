@@ -252,15 +252,15 @@ export default function Record() {
               <div className="space-y-2">
                 <Label htmlFor="template">Template (Optional)</Label>
                 <Select 
-                  value={selectedTemplateId} 
-                  onValueChange={setSelectedTemplateId}
+                  value={selectedTemplateId || "default"} 
+                  onValueChange={(value) => setSelectedTemplateId(value === "default" ? "" : value)}
                   disabled={recordingState === "recording" || recordingState === "processing"}
                 >
                   <SelectTrigger id="template" data-testid="select-template">
                     <SelectValue placeholder="Default template" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Default template</SelectItem>
+                    <SelectItem value="default">Default template</SelectItem>
                     {templates.map((template) => (
                       <SelectItem key={template.id} value={template.id.toString()}>
                         {template.name}
