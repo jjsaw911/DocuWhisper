@@ -9,6 +9,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 **Core Features:**
 - Voice recording with AI transcription
 - Automatic SOAP note generation
+- Custom SOAP templates for personalized AI prompts
 - Notes management and editing
 - User authentication via Replit Auth
 - $25/month subscription via Stripe
@@ -35,6 +36,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 │   │   │   ├── record.tsx   # Recording interface
 │   │   │   ├── notes.tsx    # Notes list
 │   │   │   ├── note-detail.tsx # Single note view
+│   │   │   ├── templates.tsx # Template management
 │   │   │   └── subscription.tsx # Subscription management
 │   │   ├── hooks/           # Custom hooks
 │   │   └── lib/             # Utilities
@@ -72,6 +74,15 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `status` - Subscription status (active/inactive/canceled)
 - `currentPeriodEnd` - When subscription renews
 
+### Templates Table
+- `id` - Auto-incrementing primary key
+- `userId` - Owner's user ID
+- `name` - Template name
+- `description` - Optional description
+- `prompt` - Custom AI prompt for SOAP generation
+- `isDefault` - Whether this is the user's default template
+- `createdAt`, `updatedAt` - Timestamps
+
 ## API Endpoints
 
 ### Authentication
@@ -88,7 +99,13 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 
 ### AI
 - `POST /api/transcribe` - Transcribe audio (multipart form)
-- `POST /api/generate-soap` - Generate SOAP note from transcript
+- `POST /api/generate-soap` - Generate SOAP note from transcript (optional templateId parameter)
+
+### Templates
+- `GET /api/templates` - List user's templates
+- `POST /api/templates` - Create template
+- `PUT /api/templates/:id` - Update template
+- `DELETE /api/templates/:id` - Delete template
 
 ### Subscription
 - `GET /api/subscription` - Get subscription status
