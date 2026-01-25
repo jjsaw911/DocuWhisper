@@ -1,0 +1,648 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useAuth } from "@/hooks/use-auth";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { useLocation, useParams } from "wouter";
+import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  Mic,
+  Square,
+  Pause,
+  Play,
+  Upload,
+  Copy,
+  Undo,
+  Redo,
+  Loader2,
+  Calendar,
+  Globe,
+  Sparkles,
+  AudioLines,
+} from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+type Template = {
+  id: number;
+  name: string;
+  description: string | null;
+  isDefault: boolean | null;
+};
+
+type RecordingState = "idle" | "recording" | "paused" | "processing";
+
+type TranscriptEntry = {
+  timestamp: string;
+  text: string;
+  type: "system" | "content";
+};
+
+export default function Session() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const params = useParams<{ id?: string }>();
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isNewSession = !params.id || params.id === "new";
+
+  const [patientName, setPatientName] = useState("");
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const [duration, setDuration] = useState(0);
+  const [audioLevel, setAudioLevel] = useState<number[]>([0, 0, 0, 0, 0]);
+  const [transcriptEntries, setTranscriptEntries] = useState<TranscriptEntry[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("default");
+  const [activeTab, setActiveTab] = useState("transcript");
+  const [soapNote, setSoapNote] = useState<{
+    subjective: string;
+    objective: string;
+    assessment: string;
+    plan: string;
+  } | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const { data: templates = [] } = useQuery<Template[]>({
+    queryKey: ["/api/templates"],
+  });
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const addTranscriptEntry = (text: string, type: "system" | "content" = "system") => {
+    const now = new Date();
+    const timestamp = now.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    }) + " " + now.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
+    
+    setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
+  };
+
+  const updateAudioLevel = useCallback(() => {
+    if (analyserRef.current && recordingState === "recording") {
+      const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(dataArray);
+      
+      const levels = [];
+      const chunkSize = Math.floor(dataArray.length / 5);
+      for (let i = 0; i < 5; i++) {
+        const chunk = dataArray.slice(i * chunkSize, (i + 1) * chunkSize);
+        const avg = chunk.reduce((a, b) => a + b, 0) / chunk.length;
+        levels.push(Math.min(avg / 128, 1));
+      }
+      setAudioLevel(levels);
+      
+      animationRef.current = requestAnimationFrame(updateAudioLevel);
+    }
+  }, [recordingState]);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.start();
+      setRecordingState("recording");
+      setDuration(0);
+      addTranscriptEntry("Transcript started");
+
+      timerRef.current = setInterval(() => {
+        setDuration((d) => d + 1);
+      }, 1000);
+
+      animationRef.current = requestAnimationFrame(updateAudioLevel);
+
+    } catch (error) {
+      toast({
+        title: "Microphone access denied",
+        description: "Please allow microphone access to record",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const pauseRecording = () => {
+    if (mediaRecorderRef.current && recordingState === "recording") {
+      mediaRecorderRef.current.pause();
+      setRecordingState("paused");
+      addTranscriptEntry("Transcript paused");
+      
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      setAudioLevel([0, 0, 0, 0, 0]);
+    }
+  };
+
+  const resumeRecording = () => {
+    if (mediaRecorderRef.current && recordingState === "paused") {
+      mediaRecorderRef.current.resume();
+      setRecordingState("recording");
+      addTranscriptEntry("Transcript resumed");
+      
+      timerRef.current = setInterval(() => {
+        setDuration((d) => d + 1);
+      }, 1000);
+      
+      animationRef.current = requestAnimationFrame(updateAudioLevel);
+    }
+  };
+
+  const stopRecording = () => {
+    return new Promise<Blob>((resolve) => {
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.onstop = () => {
+          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+          resolve(blob);
+        };
+        mediaRecorderRef.current.stop();
+      }
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+
+      setAudioLevel([0, 0, 0, 0, 0]);
+      addTranscriptEntry("Transcript stopped");
+    });
+  };
+
+  const transcribeMutation = useMutation({
+    mutationFn: async (audioBlob: Blob) => {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "recording.webm");
+
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Transcription failed");
+      }
+
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.transcript) {
+        addTranscriptEntry(data.transcript, "content");
+      }
+      setRecordingState("idle");
+    },
+    onError: (error: Error) => {
+      setRecordingState("idle");
+      toast({
+        title: "Transcription failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const generateSoapMutation = useMutation({
+    mutationFn: async () => {
+      const transcript = transcriptEntries
+        .filter((e) => e.type === "content")
+        .map((e) => e.text)
+        .join("\n");
+
+      const response = await apiRequest("POST", "/api/generate-soap", {
+        transcript,
+        patientName,
+        specialty: "general",
+        templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setSoapNote(data);
+      setActiveTab("soap");
+    },
+    onError: () => {
+      toast({
+        title: "SOAP generation failed",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const saveNoteMutation = useMutation({
+    mutationFn: async () => {
+      const transcript = transcriptEntries
+        .filter((e) => e.type === "content")
+        .map((e) => e.text)
+        .join("\n");
+
+      const response = await apiRequest("POST", "/api/notes", {
+        title: patientName ? `${patientName} - ${new Date().toLocaleDateString()}` : `Session - ${new Date().toLocaleDateString()}`,
+        patientName,
+        specialty: "general",
+        subjective: soapNote?.subjective || "",
+        objective: soapNote?.objective || "",
+        assessment: soapNote?.assessment || "",
+        plan: soapNote?.plan || "",
+        transcript,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      toast({
+        title: "Session saved",
+        description: "Your session has been saved successfully",
+      });
+      navigate(`/notes/${data.id}`);
+    },
+    onError: () => {
+      toast({
+        title: "Failed to save",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleStopAndTranscribe = async () => {
+    setRecordingState("processing");
+    const audioBlob = await stopRecording();
+    transcribeMutation.mutate(audioBlob);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setRecordingState("processing");
+      addTranscriptEntry("Processing uploaded audio...");
+      transcribeMutation.mutate(file);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  const hasTranscript = transcriptEntries.some((e) => e.type === "content");
+
+  return (
+    <div className="flex flex-col h-full">
+      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Add patient details"
+                value={patientName}
+                onChange={(e) => setPatientName(e.target.value)}
+                className="w-48 h-8"
+                data-testid="input-patient-name"
+              />
+            </div>
+            
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Calendar className="h-4 w-4" />
+              <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+            </div>
+            
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Globe className="h-4 w-4" />
+              <span>English</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+              <span>{formatTime(duration)}</span>
+            </div>
+            
+            <div className="flex items-center gap-0.5">
+              {audioLevel.map((level, i) => (
+                <div
+                  key={i}
+                  className="w-1 bg-primary rounded-full transition-all duration-75"
+                  style={{ height: `${Math.max(4, level * 16)}px` }}
+                />
+              ))}
+            </div>
+
+            <ThemeToggle />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between px-4 py-2 border-t">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <div className="flex items-center justify-between">
+              <TabsList className="h-8">
+                <TabsTrigger value="transcript" className="text-xs px-3" data-testid="tab-transcript">
+                  <AudioLines className="h-3 w-3 mr-1" />
+                  Transcript
+                </TabsTrigger>
+                <TabsTrigger value="soap" className="text-xs px-3" data-testid="tab-soap" disabled={!soapNote}>
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  SOAP Note
+                </TabsTrigger>
+              </TabsList>
+
+              <div className="flex items-center gap-2">
+                <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+                  <SelectTrigger className="h-8 w-48" data-testid="select-template">
+                    <SelectValue placeholder="Select template" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default Template</SelectItem>
+                    {templates.map((template) => (
+                      <SelectItem key={template.id} value={template.id.toString()}>
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Button variant="outline" size="sm" disabled className="h-8">
+                  <Undo className="h-3 w-3 mr-1" />
+                </Button>
+                <Button variant="outline" size="sm" disabled className="h-8">
+                  <Redo className="h-3 w-3 mr-1" />
+                </Button>
+                <Button variant="outline" size="sm" className="h-8" data-testid="button-copy">
+                  <Copy className="h-3 w-3 mr-1" />
+                  Copy
+                </Button>
+              </div>
+            </div>
+          </Tabs>
+        </div>
+      </header>
+
+      <main className="flex-1 overflow-auto p-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsContent value="transcript" className="mt-0">
+            {transcriptEntries.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+                <h2 className="text-xl font-medium mb-2">Start this session using the controls below</h2>
+                <p className="text-muted-foreground mb-6">
+                  Your transcript will appear here once you start recording
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4 max-w-3xl">
+                {transcriptEntries.map((entry, index) => (
+                  <div key={index} className={entry.type === "system" ? "text-muted-foreground text-sm" : ""}>
+                    {entry.type === "system" ? (
+                      <p className="italic">{entry.text} {entry.timestamp}</p>
+                    ) : (
+                      <div className="bg-muted/50 rounded-lg p-4">
+                        <p className="whitespace-pre-wrap">{entry.text}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {recordingState === "recording" && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className="h-2 w-2 bg-red-500 rounded-full animate-pulse" />
+                      Listening...
+                    </span>
+                  </div>
+                )}
+                {recordingState === "processing" && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Processing transcript...
+                  </div>
+                )}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="soap" className="mt-0">
+            {soapNote ? (
+              <div className="space-y-6 max-w-3xl">
+                {[
+                  { key: "subjective", label: "Subjective" },
+                  { key: "objective", label: "Objective" },
+                  { key: "assessment", label: "Assessment" },
+                  { key: "plan", label: "Plan" },
+                ].map(({ key, label }) => (
+                  <div key={key}>
+                    <h3 className="font-medium mb-2">{label}</h3>
+                    <Textarea
+                      value={soapNote[key as keyof typeof soapNote]}
+                      onChange={(e) =>
+                        setSoapNote((prev) =>
+                          prev ? { ...prev, [key]: e.target.value } : null
+                        )
+                      }
+                      className="min-h-[100px]"
+                      data-testid={`textarea-${key}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+                <p className="text-muted-foreground">
+                  Generate a SOAP note from your transcript
+                </p>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </main>
+
+      <footer className="border-t bg-background p-4">
+        <div className="flex items-center justify-center gap-3">
+          {recordingState === "idle" && (
+            <>
+              <Button
+                size="lg"
+                onClick={startRecording}
+                className="gap-2"
+                data-testid="button-start-recording"
+              >
+                <Mic className="h-5 w-5" />
+                Start transcribing
+              </Button>
+              
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept="audio/*"
+                className="hidden"
+              />
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => fileInputRef.current?.click()}
+                className="gap-2"
+                data-testid="button-upload-audio"
+              >
+                <Upload className="h-5 w-5" />
+                Upload audio
+              </Button>
+            </>
+          )}
+
+          {recordingState === "recording" && (
+            <>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={pauseRecording}
+                className="h-10 w-10"
+                data-testid="button-pause"
+              >
+                <Pause className="h-5 w-5" />
+              </Button>
+              <Button
+                variant="destructive"
+                size="lg"
+                onClick={handleStopAndTranscribe}
+                className="gap-2"
+                data-testid="button-stop-recording"
+              >
+                <span className="h-2 w-2 bg-white rounded-full animate-pulse" />
+                Stop transcribing
+              </Button>
+            </>
+          )}
+
+          {recordingState === "paused" && (
+            <>
+              <Button
+                size="lg"
+                onClick={resumeRecording}
+                className="gap-2"
+                data-testid="button-resume"
+              >
+                <Play className="h-5 w-5" />
+                Resume
+              </Button>
+              <Button
+                variant="destructive"
+                size="lg"
+                onClick={handleStopAndTranscribe}
+                className="gap-2"
+                data-testid="button-stop-recording"
+              >
+                <Square className="h-4 w-4" />
+                Stop & Create
+              </Button>
+            </>
+          )}
+
+          {recordingState === "processing" && (
+            <Button size="lg" disabled className="gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Processing...
+            </Button>
+          )}
+
+          {recordingState === "idle" && hasTranscript && (
+            <>
+              <Button
+                variant="default"
+                size="lg"
+                onClick={() => generateSoapMutation.mutate()}
+                disabled={generateSoapMutation.isPending}
+                className="gap-2"
+                data-testid="button-generate-soap"
+              >
+                {generateSoapMutation.isPending ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Sparkles className="h-5 w-5" />
+                )}
+                Generate SOAP
+              </Button>
+              
+              {soapNote && (
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={() => saveNoteMutation.mutate()}
+                  disabled={saveNoteMutation.isPending}
+                  className="gap-2"
+                  data-testid="button-save-session"
+                >
+                  {saveNoteMutation.isPending ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    "Save Session"
+                  )}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+        
+        <p className="text-xs text-muted-foreground text-center mt-3">
+          Review your note before use to ensure it accurately represents the visit
+        </p>
+      </footer>
+    </div>
+  );
+}

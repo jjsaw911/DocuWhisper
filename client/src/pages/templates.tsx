@@ -174,29 +174,8 @@ export default function Templates() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" asChild data-testid="button-back">
-                <Link href="/">
-                  <ArrowLeft className="h-5 w-5" />
-                </Link>
-              </Button>
-              <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary">
-                  <Stethoscope className="h-5 w-5 text-primary-foreground" />
-                </div>
-                <span className="text-xl font-semibold tracking-tight">Templates</span>
-              </div>
-            </div>
-            <ThemeToggle />
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 max-w-4xl">
+    <div className="h-full overflow-auto bg-background">
+      <div className="p-6 max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">SOAP Note Templates</h1>
@@ -273,7 +252,6 @@ export default function Templates() {
             ))}
           </div>
         )}
-      </main>
 
       <Dialog open={isCreateOpen || !!editingTemplate} onOpenChange={(open) => !open && closeDialog()}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -371,6 +349,7 @@ export default function Templates() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </div>
   );
 }

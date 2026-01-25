@@ -82,16 +82,8 @@ export default function NoteDetail() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex h-16 items-center gap-4">
-              <Skeleton className="h-9 w-9 rounded-md" />
-              <Skeleton className="h-6 w-32" />
-            </div>
-          </div>
-        </header>
-        <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 max-w-4xl">
+      <div className="h-full overflow-auto bg-background p-6">
+        <div className="max-w-4xl mx-auto">
           <Skeleton className="h-10 w-64 mb-4" />
           <Skeleton className="h-6 w-48 mb-8" />
           <div className="space-y-6">
@@ -99,14 +91,14 @@ export default function NoteDetail() {
               <Skeleton key={i} className="h-32 w-full" />
             ))}
           </div>
-        </main>
+        </div>
       </div>
     );
   }
 
   if (!note) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="h-full bg-background flex items-center justify-center">
         <Card className="max-w-md">
           <CardContent className="pt-6 text-center">
             <FileText className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
@@ -115,7 +107,7 @@ export default function NoteDetail() {
               This note may have been deleted or doesn't exist.
             </p>
             <Button asChild>
-              <Link href="/notes">Back to Notes</Link>
+              <Link href="/">Back to Home</Link>
             </Button>
           </CardContent>
         </Card>
@@ -124,50 +116,42 @@ export default function NoteDetail() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" asChild data-testid="button-back">
-                <Link href="/notes">
-                  <ArrowLeft className="h-5 w-5" />
-                </Link>
-              </Button>
-              <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary">
-                  <Stethoscope className="h-5 w-5 text-primary-foreground" />
-                </div>
-                <span className="text-xl font-semibold tracking-tight truncate max-w-[200px] sm:max-w-none">
-                  {note.title}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <Button
-                onClick={() => updateMutation.mutate()}
-                disabled={updateMutation.isPending}
-                data-testid="button-save"
-              >
-                {updateMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
+    <div className="h-full overflow-auto bg-background">
+      <div className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
+        <div className="flex h-14 items-center justify-between gap-4 px-6">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" asChild data-testid="button-back">
+              <Link href="/">
+                <ArrowLeft className="h-5 w-5" />
+              </Link>
+            </Button>
+            <span className="text-lg font-semibold truncate max-w-[300px]">
+              {note.title}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => updateMutation.mutate()}
+              disabled={updateMutation.isPending}
+              data-testid="button-save"
+            >
+              {updateMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
                     <Save className="mr-2 h-4 w-4" />
                     Save Changes
                   </>
                 )}
               </Button>
-            </div>
           </div>
         </div>
-      </header>
+      </div>
 
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 max-w-4xl">
+      <div className="p-6 max-w-4xl mx-auto">
         <div className="mb-8">
           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
             {note.specialty && (
@@ -284,7 +268,7 @@ export default function NoteDetail() {
             </Card>
           )}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
