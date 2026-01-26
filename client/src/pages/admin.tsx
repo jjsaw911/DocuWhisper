@@ -284,31 +284,31 @@ export default function Admin() {
                   Send Email Invitation
                 </CardTitle>
                 <CardDescription>
-                  Send an invite link directly to a patient's email address. They'll receive a link to sign up and activate their membership.
+                  Send an invite link directly to a clinician's email address. They'll receive a link to sign up and activate their membership.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="patient-email">Patient Email *</Label>
+                    <Label htmlFor="clinician-email">Clinician Email *</Label>
                     <Input
-                      id="patient-email"
+                      id="clinician-email"
                       type="email"
-                      placeholder="patient@example.com"
+                      placeholder="doctor@example.com"
                       value={emailInviteEmail}
                       onChange={(e) => setEmailInviteEmail(e.target.value)}
-                      data-testid="input-patient-email"
+                      data-testid="input-clinician-email"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="patient-name">Patient Name (optional)</Label>
+                    <Label htmlFor="clinician-name">Clinician Name (optional)</Label>
                     <Input
-                      id="patient-name"
+                      id="clinician-name"
                       type="text"
                       placeholder="Dr. Smith"
                       value={emailInviteName}
                       onChange={(e) => setEmailInviteName(e.target.value)}
-                      data-testid="input-patient-name"
+                      data-testid="input-clinician-name"
                     />
                   </div>
                   <div className="space-y-2">
