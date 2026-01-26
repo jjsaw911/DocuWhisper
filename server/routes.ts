@@ -557,7 +557,10 @@ If the transcript is unclear or empty, use "General Consultation".`
 
   // Check if current user is admin
   app.get("/api/admin/check", isAuthenticated, async (req: any, res: Response) => {
-    res.json({ isAdmin: isAdmin(req) });
+    res.json({ 
+      isAdmin: isAdmin(req),
+      userEmail: req.user?.claims?.email,
+    });
   });
 
   // Get all subscribers (admin only)
