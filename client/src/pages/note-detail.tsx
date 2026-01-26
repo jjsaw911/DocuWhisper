@@ -50,6 +50,7 @@ export default function NoteDetail() {
   });
   const [aiInstructions, setAiInstructions] = useState("");
   const [showAiInstructions, setShowAiInstructions] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const formatSoapNote = (note: Note) => {
@@ -427,29 +428,45 @@ export default function NoteDetail() {
         </Card>
 
         {note.transcript && (
-          <Card data-testid="card-transcript">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <AudioLines className="h-4 w-4 text-primary" />
-                  Original Transcript
-                </CardTitle>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => copyToClipboard(note.transcript || "")}
-                  data-testid="button-copy-transcript"
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowTranscript(!showTranscript)}
+              className="w-full"
+              data-testid="button-toggle-transcript"
+            >
+              <AudioLines className="mr-2 h-4 w-4" />
+              Original Transcript
+              {showTranscript ? (
+                <ChevronUp className="ml-2 h-4 w-4" />
+              ) : (
+                <ChevronDown className="ml-2 h-4 w-4" />
+              )}
+            </Button>
+
+            {showTranscript && (
+              <Card data-testid="card-transcript">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-end">
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => copyToClipboard(note.transcript || "")}
+                      data-testid="button-copy-transcript"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="p-4 bg-muted/50 rounded-lg">
+                    <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </>
         )}
       </div>
     </div>
