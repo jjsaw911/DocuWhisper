@@ -1,6 +1,6 @@
-import { notes, subscriptions, templates, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate } from "@shared/schema";
+import { notes, subscriptions, templates, invites, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, isNull } from "drizzle-orm";
 
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
@@ -19,6 +19,15 @@ export interface IStorage {
   updateTemplate(id: number, data: Partial<InsertTemplate>): Promise<Template | undefined>;
   deleteTemplate(id: number): Promise<void>;
   setDefaultTemplate(userId: string, templateId: number): Promise<void>;
+  // Admin functions
+  getAllSubscriptions(): Promise<Subscription[]>;
+  extendSubscription(userId: string, newPeriodEnd: Date): Promise<Subscription | undefined>;
+  // Invite functions
+  createInvite(invite: InsertInvite): Promise<Invite>;
+  getInviteByCode(code: string): Promise<Invite | undefined>;
+  getAllInvites(): Promise<Invite[]>;
+  useInvite(code: string, userId: string): Promise<Invite | undefined>;
+  deleteInvite(id: number): Promise<void>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -115,6 +124,52 @@ class DatabaseStorage implements IStorage {
   async setDefaultTemplate(userId: string, templateId: number): Promise<void> {
     await db.update(templates).set({ isDefault: false }).where(eq(templates.userId, userId));
     await db.update(templates).set({ isDefault: true }).where(and(eq(templates.id, templateId), eq(templates.userId, userId)));
+  }
+
+  // Admin functions
+  async getAllSubscriptions(): Promise<Subscription[]> {
+    return db.select().from(subscriptions).orderBy(desc(subscriptions.createdAt));
+  }
+
+  async extendSubscription(userId: string, newPeriodEnd: Date): Promise<Subscription | undefined> {
+    const [updated] = await db
+      .update(subscriptions)
+      .set({ 
+        currentPeriodEnd: newPeriodEnd,
+        status: "active",
+        updatedAt: new Date() 
+      })
+      .where(eq(subscriptions.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  // Invite functions
+  async createInvite(invite: InsertInvite): Promise<Invite> {
+    const [created] = await db.insert(invites).values(invite).returning();
+    return created;
+  }
+
+  async getInviteByCode(code: string): Promise<Invite | undefined> {
+    const [invite] = await db.select().from(invites).where(eq(invites.code, code));
+    return invite;
+  }
+
+  async getAllInvites(): Promise<Invite[]> {
+    return db.select().from(invites).orderBy(desc(invites.createdAt));
+  }
+
+  async useInvite(code: string, userId: string): Promise<Invite | undefined> {
+    const [updated] = await db
+      .update(invites)
+      .set({ usedBy: userId, usedAt: new Date() })
+      .where(and(eq(invites.code, code), isNull(invites.usedBy)))
+      .returning();
+    return updated;
+  }
+
+  async deleteInvite(id: number): Promise<void> {
+    await db.delete(invites).where(eq(invites.id, id));
   }
 }
 
