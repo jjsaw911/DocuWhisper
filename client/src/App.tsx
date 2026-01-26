@@ -13,6 +13,7 @@ import Session from "@/pages/session";
 import NoteDetail from "@/pages/note-detail";
 import Subscription from "@/pages/subscription";
 import Templates from "@/pages/templates";
+import Admin from "@/pages/admin";
 
 function AuthenticatedLayout() {
   const style = {
@@ -36,6 +37,7 @@ function AuthenticatedLayout() {
               <Route path="/notes/:id" component={NoteDetail} />
               <Route path="/subscription" component={Subscription} />
               <Route path="/templates" component={Templates} />
+              <Route path="/admin" component={Admin} />
               <Route component={NotFound} />
             </Switch>
           </main>

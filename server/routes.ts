@@ -540,5 +540,250 @@ If the transcript is unclear or empty, use "General Consultation".`
     }
   });
 
+  // Helper function to check if user is admin/owner
+  const isAdmin = (req: any): boolean => {
+    const ownerEmail = process.env.OWNER_EMAIL;
+    if (!ownerEmail) return false;
+    return req.user?.claims?.email === ownerEmail;
+  };
+
+  // Admin middleware
+  const requireAdmin = (req: any, res: Response, next: Function) => {
+    if (!isAdmin(req)) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  };
+
+  // Check if current user is admin
+  app.get("/api/admin/check", isAuthenticated, async (req: any, res: Response) => {
+    res.json({ isAdmin: isAdmin(req) });
+  });
+
+  // Get all subscribers (admin only)
+  app.get("/api/admin/subscribers", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const allSubscriptions = await storage.getAllSubscriptions();
+      res.json(allSubscriptions);
+    } catch (error) {
+      console.error("Error fetching subscribers:", error);
+      res.status(500).json({ error: "Failed to fetch subscribers" });
+    }
+  });
+
+  // Extend a user's subscription (admin only)
+  app.post("/api/admin/extend-subscription", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId, extensionType } = req.body;
+      
+      if (!userId || !extensionType) {
+        return res.status(400).json({ error: "userId and extensionType are required" });
+      }
+
+      let newPeriodEnd: Date;
+      const now = new Date();
+      
+      // Get existing subscription to extend from current period end
+      const existing = await storage.getSubscription(userId);
+      const baseDate = existing?.currentPeriodEnd && new Date(existing.currentPeriodEnd) > now 
+        ? new Date(existing.currentPeriodEnd) 
+        : now;
+
+      switch (extensionType) {
+        case "days_7":
+          newPeriodEnd = new Date(baseDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+          break;
+        case "days_14":
+          newPeriodEnd = new Date(baseDate.getTime() + 14 * 24 * 60 * 60 * 1000);
+          break;
+        case "days_30":
+          newPeriodEnd = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+          break;
+        case "months_3":
+          newPeriodEnd = new Date(baseDate);
+          newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 3);
+          break;
+        case "months_6":
+          newPeriodEnd = new Date(baseDate);
+          newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 6);
+          break;
+        case "months_12":
+          newPeriodEnd = new Date(baseDate);
+          newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 1);
+          break;
+        case "lifetime":
+          // Set to 100 years from now
+          newPeriodEnd = new Date(baseDate);
+          newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 100);
+          break;
+        default:
+          return res.status(400).json({ error: "Invalid extensionType" });
+      }
+
+      // First ensure subscription exists
+      if (!existing) {
+        await storage.upsertSubscription({
+          userId,
+          status: "active",
+          currentPeriodEnd: newPeriodEnd,
+        });
+      } else {
+        await storage.extendSubscription(userId, newPeriodEnd);
+      }
+
+      const updated = await storage.getSubscription(userId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error extending subscription:", error);
+      res.status(500).json({ error: "Failed to extend subscription" });
+    }
+  });
+
+  // Create invite code (admin only)
+  app.post("/api/admin/invites", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { membershipType, expiresAt } = req.body;
+      
+      if (!membershipType) {
+        return res.status(400).json({ error: "membershipType is required" });
+      }
+
+      const validTypes = ["trial_7", "trial_14", "trial_30", "months_1", "months_3", "months_6", "months_12", "lifetime"];
+      if (!validTypes.includes(membershipType)) {
+        return res.status(400).json({ error: "Invalid membershipType" });
+      }
+
+      // Generate random invite code
+      const code = generateInviteCode();
+
+      const invite = await storage.createInvite({
+        code,
+        membershipType,
+        expiresAt: expiresAt ? new Date(expiresAt) : null,
+      });
+
+      res.status(201).json(invite);
+    } catch (error) {
+      console.error("Error creating invite:", error);
+      res.status(500).json({ error: "Failed to create invite" });
+    }
+  });
+
+  // Get all invites (admin only)
+  app.get("/api/admin/invites", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const allInvites = await storage.getAllInvites();
+      res.json(allInvites);
+    } catch (error) {
+      console.error("Error fetching invites:", error);
+      res.status(500).json({ error: "Failed to fetch invites" });
+    }
+  });
+
+  // Delete invite (admin only)
+  app.delete("/api/admin/invites/:id", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const inviteId = parseInt(req.params.id);
+      await storage.deleteInvite(inviteId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting invite:", error);
+      res.status(500).json({ error: "Failed to delete invite" });
+    }
+  });
+
+  // Redeem invite code (any authenticated user)
+  app.post("/api/invites/redeem", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { code } = req.body;
+      const userId = req.user.claims.sub;
+
+      if (!code) {
+        return res.status(400).json({ error: "Invite code is required" });
+      }
+
+      const invite = await storage.getInviteByCode(code);
+
+      if (!invite) {
+        return res.status(404).json({ error: "Invalid invite code" });
+      }
+
+      if (invite.usedBy) {
+        return res.status(400).json({ error: "This invite code has already been used" });
+      }
+
+      if (invite.expiresAt && new Date(invite.expiresAt) < new Date()) {
+        return res.status(400).json({ error: "This invite code has expired" });
+      }
+
+      // Calculate membership end date based on type
+      const now = new Date();
+      let newPeriodEnd: Date;
+
+      switch (invite.membershipType) {
+        case "trial_7":
+          newPeriodEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+          break;
+        case "trial_14":
+          newPeriodEnd = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+          break;
+        case "trial_30":
+          newPeriodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+          break;
+        case "months_1":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 1);
+          break;
+        case "months_3":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 3);
+          break;
+        case "months_6":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 6);
+          break;
+        case "months_12":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 1);
+          break;
+        case "lifetime":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 100);
+          break;
+        default:
+          return res.status(400).json({ error: "Invalid membership type" });
+      }
+
+      // Mark invite as used
+      await storage.useInvite(code, userId);
+
+      // Update or create subscription
+      await storage.upsertSubscription({
+        userId,
+        status: "active",
+        currentPeriodEnd: newPeriodEnd,
+      });
+
+      res.json({ 
+        success: true, 
+        membershipType: invite.membershipType,
+        expiresAt: newPeriodEnd 
+      });
+    } catch (error) {
+      console.error("Error redeeming invite:", error);
+      res.status(500).json({ error: "Failed to redeem invite" });
+    }
+  });
+
   return httpServer;
+}
+
+// Helper function to generate invite codes
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
 }

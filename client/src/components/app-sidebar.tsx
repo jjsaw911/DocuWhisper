@@ -26,8 +26,13 @@ import {
   HelpCircle,
   LogOut,
   Stethoscope,
+  Crown,
 } from "lucide-react";
 import type { Note } from "@shared/schema";
+
+interface AdminCheckData {
+  isAdmin: boolean;
+}
 
 export function AppSidebar() {
   const { user } = useAuth();
@@ -36,6 +41,13 @@ export function AppSidebar() {
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
   });
+
+  const { data: adminCheck } = useQuery<AdminCheckData>({
+    queryKey: ["/api/admin/check"],
+    enabled: !!user,
+  });
+
+  const isOwner = adminCheck?.isAdmin === true;
 
   const groupNotesByDate = (notes: Note[]) => {
     const groups: { [key: string]: Note[] } = {};
@@ -126,6 +138,16 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {isOwner && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin"}>
+                    <Link href="/admin" data-testid="nav-admin">
+                      <Crown className="h-4 w-4" />
+                      <span>Admin</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
