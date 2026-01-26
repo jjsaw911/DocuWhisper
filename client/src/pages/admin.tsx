@@ -25,7 +25,9 @@ import {
   Check,
   Loader2,
   Crown,
-  Shield
+  Shield,
+  Mail,
+  Send
 } from "lucide-react";
 
 interface Subscription {
@@ -43,6 +45,7 @@ interface Invite {
   id: number;
   code: string;
   membershipType: string;
+  emailSentTo?: string;
   usedBy?: string;
   usedAt?: string;
   createdAt: string;
@@ -82,6 +85,9 @@ export default function Admin() {
   const [newInviteType, setNewInviteType] = useState("trial_30");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [selectedExtension, setSelectedExtension] = useState<{ [key: string]: string }>({});
+  const [emailInviteEmail, setEmailInviteEmail] = useState("");
+  const [emailInviteType, setEmailInviteType] = useState("trial_30");
+  const [emailInviteName, setEmailInviteName] = useState("");
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -152,6 +158,29 @@ export default function Admin() {
     onError: () => {
       toast({
         title: "Failed to extend subscription",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const sendEmailInviteMutation = useMutation({
+    mutationFn: async ({ email, membershipType, patientName }: { email: string; membershipType: string; patientName?: string }) => {
+      const response = await apiRequest("POST", "/api/admin/send-invite", { email, membershipType, patientName });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/invites"] });
+      setEmailInviteEmail("");
+      setEmailInviteName("");
+      toast({
+        title: "Invitation sent!",
+        description: data.message,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to send invitation",
+        description: error.message || "Please check your email service configuration",
         variant: "destructive",
       });
     },
@@ -231,8 +260,12 @@ export default function Admin() {
       </div>
 
       <div className="p-6 max-w-6xl mx-auto">
-        <Tabs defaultValue="subscribers" className="space-y-6">
+        <Tabs defaultValue="email-invites" className="space-y-6">
           <TabsList>
+            <TabsTrigger value="email-invites" data-testid="tab-email-invites">
+              <Mail className="mr-2 h-4 w-4" />
+              Email Invites
+            </TabsTrigger>
             <TabsTrigger value="subscribers" data-testid="tab-subscribers">
               <Users className="mr-2 h-4 w-4" />
               Subscribers
@@ -242,6 +275,140 @@ export default function Admin() {
               Invite Codes
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="email-invites" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Send className="h-5 w-5" />
+                  Send Email Invitation
+                </CardTitle>
+                <CardDescription>
+                  Send an invite link directly to a patient's email address. They'll receive a link to sign up and activate their membership.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="patient-email">Patient Email *</Label>
+                    <Input
+                      id="patient-email"
+                      type="email"
+                      placeholder="patient@example.com"
+                      value={emailInviteEmail}
+                      onChange={(e) => setEmailInviteEmail(e.target.value)}
+                      data-testid="input-patient-email"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="patient-name">Patient Name (optional)</Label>
+                    <Input
+                      id="patient-name"
+                      type="text"
+                      placeholder="Dr. Smith"
+                      value={emailInviteName}
+                      onChange={(e) => setEmailInviteName(e.target.value)}
+                      data-testid="input-patient-name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Membership Type</Label>
+                    <Select value={emailInviteType} onValueChange={setEmailInviteType}>
+                      <SelectTrigger data-testid="select-email-invite-type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MEMBERSHIP_TYPES.map((type) => (
+                          <SelectItem key={type.value} value={type.value}>
+                            {type.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={() => sendEmailInviteMutation.mutate({
+                        email: emailInviteEmail,
+                        membershipType: emailInviteType,
+                        patientName: emailInviteName || undefined,
+                      })}
+                      disabled={!emailInviteEmail || sendEmailInviteMutation.isPending}
+                      className="w-full"
+                      data-testid="button-send-email-invite"
+                    >
+                      {sendEmailInviteMutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="mr-2 h-4 w-4" />
+                      )}
+                      Send Invitation
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Sent Invitations</CardTitle>
+                <CardDescription>
+                  Track invitations sent via email
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {invitesLoading ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : invites && invites.filter(i => i.emailSentTo).length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Code</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Sent</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {invites.filter(i => i.emailSentTo).map((invite) => (
+                          <TableRow key={invite.id} data-testid={`row-email-invite-${invite.id}`}>
+                            <TableCell className="font-medium">
+                              {invite.emailSentTo}
+                            </TableCell>
+                            <TableCell>
+                              <code className="bg-muted px-2 py-1 rounded text-xs font-mono">
+                                {invite.code}
+                              </code>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">
+                                {getMembershipLabel(invite.membershipType)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {invite.usedBy ? (
+                                <Badge variant="secondary">Redeemed</Badge>
+                              ) : (
+                                <Badge variant="default">Pending</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>{formatDate(invite.createdAt)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No email invitations sent yet</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="subscribers" className="space-y-4">
             <Card>

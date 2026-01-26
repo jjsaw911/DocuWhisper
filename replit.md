@@ -20,6 +20,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - $25/month subscription via Stripe
 - **Admin Dashboard:** Owner can view subscribers, extend memberships, create invite codes
 - **Invite System:** Generate codes for free trials, months, or lifetime access
+- **Email Invitations:** Send invite links directly to patient email addresses via Resend
 
 ## Tech Stack
 
@@ -94,6 +95,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `id` - Auto-incrementing primary key
 - `code` - Unique 8-character invite code
 - `membershipType` - Type of membership (trial_7, trial_14, trial_30, months_1, months_3, months_6, months_12, lifetime)
+- `emailSentTo` - Email address the invite was sent to (if sent via email)
 - `usedBy` - User ID who redeemed the code
 - `usedAt` - When the code was used
 - `createdAt` - When the code was created
@@ -137,11 +139,14 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `POST /api/admin/extend-subscription` - Extend a user's subscription
 - `GET /api/admin/invites` - List all invite codes
 - `POST /api/admin/invites` - Create new invite code
+- `POST /api/admin/send-invite` - Send invite email to a patient
 - `DELETE /api/admin/invites/:id` - Delete invite code
 
 ## Environment Variables
 
 - `OWNER_EMAIL` - Email address of the admin/owner (for admin dashboard access)
+- `RESEND_API_KEY` - Resend API key for sending email invitations
+- `RESEND_FROM_EMAIL` - (Optional) Custom from email address for invitations
 
 ## Development
 

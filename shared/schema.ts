@@ -66,6 +66,7 @@ export const invites = pgTable("invites", {
   id: serial("id").primaryKey(),
   code: varchar("code", { length: 32 }).notNull().unique(),
   membershipType: text("membership_type").notNull(), // 'trial_7', 'trial_14', 'trial_30', 'months_1', 'months_3', 'months_6', 'months_12', 'lifetime'
+  emailSentTo: text("email_sent_to"), // Email address the invite was sent to (if sent via email)
   usedBy: varchar("used_by"),
   usedAt: timestamp("used_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),

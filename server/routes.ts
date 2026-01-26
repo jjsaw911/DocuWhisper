@@ -8,6 +8,7 @@ import { insertNoteSchema, insertTemplateSchema } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
+import { Resend } from "resend";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -692,6 +693,122 @@ If the transcript is unclear or empty, use "General Consultation".`
     } catch (error) {
       console.error("Error deleting invite:", error);
       res.status(500).json({ error: "Failed to delete invite" });
+    }
+  });
+
+  // Send invite email (admin only)
+  app.post("/api/admin/send-invite", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { email, membershipType, patientName } = req.body;
+      
+      if (!email || !membershipType) {
+        return res.status(400).json({ error: "Email and membershipType are required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: "Invalid email address" });
+      }
+
+      const validTypes = ["trial_7", "trial_14", "trial_30", "months_1", "months_3", "months_6", "months_12", "lifetime"];
+      if (!validTypes.includes(membershipType)) {
+        return res.status(400).json({ error: "Invalid membershipType" });
+      }
+
+      // Check if Resend API key is configured
+      if (!process.env.RESEND_API_KEY) {
+        return res.status(500).json({ error: "Email service not configured. Please add RESEND_API_KEY." });
+      }
+
+      // Generate invite code
+      const code = generateInviteCode();
+
+      // Create invite in database
+      const invite = await storage.createInvite({
+        code,
+        membershipType,
+        emailSentTo: email,
+        expiresAt: null,
+      });
+
+      // Get membership type label for email
+      const membershipLabels: { [key: string]: string } = {
+        trial_7: "7-day free trial",
+        trial_14: "14-day free trial",
+        trial_30: "30-day free trial",
+        months_1: "1 month free access",
+        months_3: "3 months free access",
+        months_6: "6 months free access",
+        months_12: "1 year free access",
+        lifetime: "lifetime access",
+      };
+      const membershipLabel = membershipLabels[membershipType] || membershipType;
+
+      // Construct invite link
+      const baseUrl = process.env.REPLIT_DEV_DOMAIN 
+        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+        : process.env.REPLIT_DOMAINS?.split(",")[0]
+          ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}`
+          : "https://docuwhisper.com";
+      const inviteLink = `${baseUrl}/invite/${code}`;
+
+      // Send email using Resend
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      const greeting = patientName ? `Dear ${patientName}` : "Hello";
+      
+      const { error: emailError } = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL || "DocuWhisper <onboarding@resend.dev>",
+        to: email,
+        subject: "Your DocuWhisper Invitation",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #0d9488; margin-bottom: 24px;">Welcome to DocuWhisper</h1>
+            <p style="font-size: 16px; color: #374151; line-height: 1.6;">
+              ${greeting},
+            </p>
+            <p style="font-size: 16px; color: #374151; line-height: 1.6;">
+              You've been invited to try DocuWhisper, the AI-powered medical scribing tool that helps healthcare providers 
+              save hours every day by automatically transcribing consultations into structured SOAP notes.
+            </p>
+            <p style="font-size: 16px; color: #374151; line-height: 1.6;">
+              <strong>Your invitation includes: ${membershipLabel}</strong>
+            </p>
+            <div style="margin: 32px 0; text-align: center;">
+              <a href="${inviteLink}" style="background-color: #0d9488; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: 600; display: inline-block;">
+                Accept Invitation
+              </a>
+            </div>
+            <p style="font-size: 14px; color: #6b7280; margin-top: 24px;">
+              Or copy and paste this link into your browser:<br/>
+              <a href="${inviteLink}" style="color: #0d9488;">${inviteLink}</a>
+            </p>
+            <p style="font-size: 14px; color: #6b7280; margin-top: 32px;">
+              Your invite code: <strong>${code}</strong>
+            </p>
+            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0;"/>
+            <p style="font-size: 12px; color: #9ca3af;">
+              This invitation was sent from DocuWhisper. If you didn't expect this email, you can safely ignore it.
+            </p>
+          </div>
+        `,
+      });
+
+      if (emailError) {
+        console.error("Error sending email:", emailError);
+        // Delete the invite since email failed
+        await storage.deleteInvite(invite.id);
+        return res.status(500).json({ error: "Failed to send email. Please check your Resend configuration." });
+      }
+
+      res.status(201).json({ 
+        success: true, 
+        invite,
+        message: `Invite sent to ${email}` 
+      });
+    } catch (error) {
+      console.error("Error sending invite email:", error);
+      res.status(500).json({ error: "Failed to send invite email" });
     }
   });
 

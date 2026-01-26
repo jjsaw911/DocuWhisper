@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useRoute } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -14,6 +14,7 @@ import NoteDetail from "@/pages/note-detail";
 import Subscription from "@/pages/subscription";
 import Templates from "@/pages/templates";
 import Admin from "@/pages/admin";
+import Invite from "@/pages/invite";
 
 function AuthenticatedLayout() {
   const style = {
@@ -49,12 +50,22 @@ function AuthenticatedLayout() {
 
 function Router() {
   const { user, isLoading } = useAuth();
+  const [isInvitePage] = useRoute("/invite/:code");
 
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
+    );
+  }
+
+  // Invite page is accessible to everyone (handles its own auth state)
+  if (isInvitePage) {
+    return (
+      <Switch>
+        <Route path="/invite/:code" component={Invite} />
+      </Switch>
     );
   }
 
