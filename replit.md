@@ -18,6 +18,8 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - Export to PDF and share functionality
 - User authentication via Replit Auth
 - $25/month subscription via Stripe
+- **Admin Dashboard:** Owner can view subscribers, extend memberships, create invite codes
+- **Invite System:** Generate codes for free trials, months, or lifetime access
 
 ## Tech Stack
 
@@ -88,6 +90,15 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `isDefault` - Whether this is the user's default template
 - `createdAt`, `updatedAt` - Timestamps
 
+### Invites Table
+- `id` - Auto-incrementing primary key
+- `code` - Unique 8-character invite code
+- `membershipType` - Type of membership (trial_7, trial_14, trial_30, months_1, months_3, months_6, months_12, lifetime)
+- `usedBy` - User ID who redeemed the code
+- `usedAt` - When the code was used
+- `createdAt` - When the code was created
+- `expiresAt` - Optional expiration date for the code itself
+
 ## API Endpoints
 
 ### Authentication
@@ -118,6 +129,19 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `POST /api/stripe/checkout` - Create Stripe checkout session
 - `POST /api/stripe/portal` - Create Stripe billing portal session
 - `GET /api/stripe/price` - Get product pricing
+- `POST /api/invites/redeem` - Redeem an invite code
+
+### Admin (Owner Only)
+- `GET /api/admin/check` - Check if current user is admin
+- `GET /api/admin/subscribers` - List all subscribers
+- `POST /api/admin/extend-subscription` - Extend a user's subscription
+- `GET /api/admin/invites` - List all invite codes
+- `POST /api/admin/invites` - Create new invite code
+- `DELETE /api/admin/invites/:id` - Delete invite code
+
+## Environment Variables
+
+- `OWNER_EMAIL` - Email address of the admin/owner (for admin dashboard access)
 
 ## Development
 
