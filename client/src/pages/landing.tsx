@@ -19,6 +19,7 @@ export default function Landing() {
             <nav className="hidden md:flex items-center gap-6">
               <a href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-features">Features</a>
               <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-pricing">Pricing</a>
+              <a href="#security" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-security">Security</a>
             </nav>
             <div className="flex items-center gap-2">
               <ThemeToggle />
@@ -211,6 +212,85 @@ export default function Landing() {
           </div>
         </section>
 
+        <section id="security" className="py-20 md:py-28">
+          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="text-center mb-12">
+                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                  <Shield className="h-8 w-8 text-primary" />
+                </div>
+                <h2 className="text-3xl sm:text-4xl font-bold mb-4">Security & Privacy</h2>
+                <p className="text-lg text-muted-foreground">
+                  We take the security of your data seriously
+                </p>
+              </div>
+              
+              <div className="grid md:grid-cols-2 gap-6 mb-8">
+                <Card className="border shadow-sm">
+                  <CardContent className="pt-6">
+                    <h3 className="font-semibold mb-3">Data Protection</h3>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>All data encrypted in transit (TLS/HTTPS)</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>AES-256 encryption for data at rest</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>Secure OAuth authentication</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>User-isolated data access</span>
+                      </li>
+                    </ul>
+                  </CardContent>
+                </Card>
+                
+                <Card className="border shadow-sm">
+                  <CardContent className="pt-6">
+                    <h3 className="font-semibold mb-3">Audio Processing</h3>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>Audio processed in-memory only</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>No permanent audio file storage</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>Transcripts stored securely in database</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                        <span>SOC 2 Type 2 certified infrastructure</span>
+                      </li>
+                    </ul>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
+                <CardContent className="pt-6">
+                  <h3 className="font-semibold mb-2 text-amber-800 dark:text-amber-200">Important Disclaimer</h3>
+                  <p className="text-sm text-amber-700 dark:text-amber-300 leading-relaxed">
+                    DocuWhisper is a documentation assistance tool designed to help healthcare providers streamline their clinical note-taking process. 
+                    While we implement industry-standard security practices, DocuWhisper is <strong>not a certified Electronic Health Record (EHR) system</strong> and 
+                    should not be used as a primary medical records system. Healthcare organizations with specific HIPAA compliance requirements should 
+                    evaluate whether Business Associate Agreements (BAAs) with underlying service providers meet their regulatory needs. 
+                    Users are responsible for ensuring their use of this tool complies with applicable healthcare regulations in their jurisdiction.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </section>
+
         <section className="py-20 md:py-28 bg-sidebar text-sidebar-foreground">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="max-w-3xl mx-auto text-center">
@@ -231,16 +311,24 @@ export default function Landing() {
 
       <footer className="py-8 border-t">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
-                <Stethoscope className="h-4 w-4 text-primary-foreground" />
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
+                  <Stethoscope className="h-4 w-4 text-primary-foreground" />
+                </div>
+                <span className="font-semibold">DocuWhisper</span>
               </div>
-              <span className="font-semibold">DocuWhisper</span>
+              <nav className="flex items-center gap-4">
+                <a href="#security" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-security">Security</a>
+                <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-pricing">Pricing</a>
+              </nav>
             </div>
-            <p className="text-sm text-muted-foreground">
-              &copy; {new Date().getFullYear()} DocuWhisper. All rights reserved.
-            </p>
+            <div className="text-center sm:text-left">
+              <p className="text-sm text-muted-foreground">
+                &copy; {new Date().getFullYear()} DocuWhisper. All rights reserved. Not a certified EHR system.
+              </p>
+            </div>
           </div>
         </div>
       </footer>
