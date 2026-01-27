@@ -200,6 +200,9 @@ export async function registerRoutes(
       }
       
       const { transcript, patientName, specialty, templateId, aiInstructions } = validationResult.data;
+      
+      console.log("SOAP generation request - transcript length:", transcript.length);
+      console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
 
       let customPrompt = "";
       if (templateId) {
@@ -209,18 +212,20 @@ export async function registerRoutes(
         }
       }
 
-      const basePrompt = customPrompt || `You are a medical documentation assistant. Given a transcript of a patient consultation, generate a structured SOAP note.
+      const basePrompt = customPrompt || `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
 
 ${specialty ? `Specialty: ${specialty}` : ""}
 ${patientName ? `Patient: ${patientName}` : ""}
 
-Generate a SOAP note with the following sections:
-- Subjective: Patient's symptoms, complaints, and history as described by the patient
-- Objective: Physical examination findings, vital signs, lab results mentioned
-- Assessment: Clinical diagnosis and reasoning
-- Plan: Treatment plan, medications, follow-up instructions
+CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
 
-Be thorough but concise. Use professional medical terminology. If information for a section is not available in the transcript, write "Not documented in consultation."`;
+Generate a SOAP note with these sections:
+- Subjective: The patient's own description of symptoms, complaints, history, and concerns as stated in the transcript
+- Objective: Any physical examination findings, vital signs, measurements, or test results mentioned in the transcript
+- Assessment: Clinical diagnosis or differential diagnoses based on the transcript content
+- Plan: Treatment plan, medications, follow-up instructions discussed in the transcript
+
+Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."`;
 
       const aiInstructionsSection = aiInstructions ? `
 
@@ -231,12 +236,12 @@ Apply these instructions when generating the SOAP note. If the user asks to omit
 
       const systemPrompt = `${basePrompt}${aiInstructionsSection}
 
-Return ONLY valid JSON in this exact format:
+Based on the transcript, return ONLY valid JSON with the extracted information:
 {
-  "subjective": "...",
-  "objective": "...",
-  "assessment": "...",
-  "plan": "..."
+  "subjective": "<actual patient complaints from transcript>",
+  "objective": "<actual exam findings from transcript>",
+  "assessment": "<actual diagnosis from transcript>",
+  "plan": "<actual treatment plan from transcript>"
 }`;
 
       const response = await openai.chat.completions.create({
