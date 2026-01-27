@@ -368,7 +368,8 @@ export default function NoteDetail() {
             <Textarea
               value={formData.soapNote}
               onChange={(e) => setFormData({ ...formData, soapNote: e.target.value })}
-              className="min-h-[400px] font-mono text-sm"
+              className="min-h-[400px] text-base leading-relaxed"
+              style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
               placeholder="SUBJECTIVE:&#10;Patient's symptoms...&#10;&#10;OBJECTIVE:&#10;Examination findings...&#10;&#10;ASSESSMENT:&#10;Diagnosis...&#10;&#10;PLAN:&#10;Treatment plan..."
               data-testid="textarea-soap"
             />
@@ -461,7 +462,7 @@ export default function NoteDetail() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm whitespace-pre-wrap">{note.transcript}</p>
+                    <p className="text-base whitespace-pre-wrap leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{note.transcript}</p>
                   </div>
                 </CardContent>
               </Card>

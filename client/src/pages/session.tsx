@@ -529,7 +529,7 @@ export default function Session() {
                       <p className="italic">{entry.text} {entry.timestamp}</p>
                     ) : (
                       <div className="bg-muted/50 rounded-lg p-4">
-                        <p className="whitespace-pre-wrap">{entry.text}</p>
+                        <p className="whitespace-pre-wrap text-base leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{entry.text}</p>
                       </div>
                     )}
                   </div>
@@ -570,7 +570,8 @@ export default function Session() {
                           prev ? { ...prev, [key]: e.target.value } : null
                         )
                       }
-                      className="min-h-[100px]"
+                      className="min-h-[100px] text-base leading-relaxed"
+                      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
                       data-testid={`textarea-${key}`}
                     />
                   </div>
