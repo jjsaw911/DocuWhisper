@@ -262,7 +262,21 @@ export default function Session() {
             specialty: "general",
             templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
           });
+          
+          if (!soapResponse.ok) {
+            const errorData = await soapResponse.json().catch(() => ({}));
+            console.error("SOAP generation failed:", errorData);
+            throw new Error(errorData.error || "Failed to generate SOAP note");
+          }
+          
           const generatedSoap = await soapResponse.json();
+          console.log("Generated SOAP:", generatedSoap);
+          
+          if (!generatedSoap.subjective && !generatedSoap.objective && !generatedSoap.assessment && !generatedSoap.plan) {
+            console.error("SOAP response has no content:", generatedSoap);
+            throw new Error("SOAP generation returned empty content");
+          }
+          
           setSoapNote(generatedSoap);
           
           // Generate title from symptoms if no patient name

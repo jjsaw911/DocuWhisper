@@ -250,7 +250,9 @@ Return ONLY valid JSON in this exact format:
       });
 
       const content = response.choices[0]?.message?.content || "{}";
+      console.log("SOAP API response content:", content);
       const soapNote = JSON.parse(content);
+      console.log("Parsed SOAP note:", soapNote);
 
       res.json(soapNote);
     } catch (error) {
