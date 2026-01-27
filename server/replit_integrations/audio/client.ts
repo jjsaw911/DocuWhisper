@@ -1,7 +1,7 @@
 import OpenAI, { toFile } from "openai";
 import { Buffer } from "node:buffer";
 import { spawn } from "child_process";
-import { writeFile, unlink, readFile } from "fs/promises";
+import { writeFile, unlink, readFile, readdir } from "fs/promises";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -86,6 +86,64 @@ export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
     // Clean up temp files
     await unlink(inputPath).catch(() => {});
     await unlink(outputPath).catch(() => {});
+  }
+}
+
+/**
+ * Split audio into chunks of specified duration using ffmpeg.
+ * Returns array of WAV buffers, each chunk approximately chunkDurationSeconds long.
+ */
+export async function splitAudioIntoChunks(
+  audioBuffer: Buffer,
+  chunkDurationSeconds: number = 600 // 10 minutes per chunk
+): Promise<Buffer[]> {
+  const inputPath = join(tmpdir(), `input-${randomUUID()}`);
+  const outputPattern = join(tmpdir(), `chunk-${randomUUID()}-%03d.wav`);
+  const outputDir = tmpdir();
+  const outputPrefix = outputPattern.split('/').pop()!.replace('-%03d.wav', '');
+
+  try {
+    await writeFile(inputPath, audioBuffer);
+
+    // Split audio into chunks using ffmpeg segment
+    await new Promise<void>((resolve, reject) => {
+      const ffmpeg = spawn("ffmpeg", [
+        "-i", inputPath,
+        "-vn",
+        "-f", "segment",
+        "-segment_time", chunkDurationSeconds.toString(),
+        "-ar", "16000",
+        "-ac", "1",
+        "-acodec", "pcm_s16le",
+        "-y",
+        outputPattern,
+      ]);
+
+      ffmpeg.stderr.on("data", () => {});
+      ffmpeg.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg segment exited with code ${code}`));
+      });
+      ffmpeg.on("error", reject);
+    });
+
+    // Read all chunk files
+    const files = await readdir(outputDir);
+    const chunkFiles = files
+      .filter(f => f.startsWith(outputPrefix) && f.endsWith('.wav'))
+      .sort();
+
+    const chunks: Buffer[] = [];
+    for (const file of chunkFiles) {
+      const chunkPath = join(outputDir, file);
+      const chunk = await readFile(chunkPath);
+      chunks.push(chunk);
+      await unlink(chunkPath).catch(() => {});
+    }
+
+    return chunks;
+  } finally {
+    await unlink(inputPath).catch(() => {});
   }
 }
 
@@ -247,6 +305,48 @@ export async function speechToText(
     model: "gpt-4o-mini-transcribe",
   });
   return response.text;
+}
+
+/**
+ * Transcribe long audio files by splitting into chunks.
+ * Handles recordings of any length by processing in 10-minute segments.
+ * OpenAI has a 25MB file limit, so this ensures large files are processed correctly.
+ */
+export async function transcribeLongAudio(
+  audioBuffer: Buffer
+): Promise<string> {
+  // First convert to WAV format
+  const wavBuffer = await convertToWav(audioBuffer);
+  
+  // Check size - if under 20MB, transcribe directly (leave buffer for API limit)
+  const MAX_DIRECT_SIZE = 20 * 1024 * 1024; // 20MB
+  
+  if (wavBuffer.length < MAX_DIRECT_SIZE) {
+    console.log("Audio under 20MB, transcribing directly");
+    return await speechToText(wavBuffer, "wav");
+  }
+  
+  console.log(`Audio is ${(wavBuffer.length / 1024 / 1024).toFixed(1)}MB, splitting into chunks...`);
+  
+  // Split into 10-minute chunks
+  const chunks = await splitAudioIntoChunks(audioBuffer, 600);
+  console.log(`Split into ${chunks.length} chunks`);
+  
+  // Transcribe each chunk
+  const transcripts: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    console.log(`Transcribing chunk ${i + 1}/${chunks.length}...`);
+    try {
+      const transcript = await speechToText(chunks[i], "wav");
+      transcripts.push(transcript);
+    } catch (error: any) {
+      console.error(`Error transcribing chunk ${i + 1}:`, error?.message);
+      transcripts.push(`[Transcription error in segment ${i + 1}]`);
+    }
+  }
+  
+  // Combine all transcripts with proper spacing
+  return transcripts.join(" ");
 }
 
 /**

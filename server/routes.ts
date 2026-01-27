@@ -3,14 +3,14 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
-import { speechToText, ensureCompatibleFormat } from "./replit_integrations/audio/client";
+import { transcribeLongAudio } from "./replit_integrations/audio/client";
 import { insertNoteSchema, insertTemplateSchema } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
 import { Resend } from "resend";
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
 
 const generateSoapSchema = z.object({
   transcript: z.string().min(1, "Transcript is required"),
@@ -167,12 +167,9 @@ export async function registerRoutes(
       });
 
       const audioBuffer = req.file.buffer;
-      console.log("Converting audio format...");
-      const { buffer: compatibleBuffer, format } = await ensureCompatibleFormat(audioBuffer);
-      console.log(`Converted to ${format}, size: ${compatibleBuffer.length}`);
+      console.log("Processing audio for transcription...");
       
-      console.log("Calling OpenAI transcription API...");
-      const transcript = await speechToText(compatibleBuffer, format);
+      const transcript = await transcribeLongAudio(audioBuffer);
       console.log("Transcription successful, length:", transcript.length);
 
       res.json({ transcript });
