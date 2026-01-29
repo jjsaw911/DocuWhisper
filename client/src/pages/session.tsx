@@ -78,10 +78,18 @@ export default function Session() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const accumulatedTranscriptRef = useRef<string[]>([]);
-  const pendingChunksRef = useRef<Blob[]>([]);
   const isTranscribingRef = useRef<boolean>(false);
-  const chunkCountRef = useRef<number>(0);
+  
+  // Chunk tracking with unique IDs to prevent duplicate processing
+  type ChunkItem = { id: number; blob: Blob; processed: boolean };
+  const pendingChunksRef = useRef<ChunkItem[]>([]);
+  const nextChunkIdRef = useRef<number>(0);
+  const processedChunkIdsRef = useRef<Set<number>>(new Set());
+  
+  // Transcript state: committedText (stable) + partialText (interim)
+  const committedTextRef = useRef<string>(""); // Finalized transcript
+  const partialTextRef = useRef<string>(""); // Current interim fragment (not yet finalized)
+  const recentLinesRef = useRef<string[]>([]); // Rolling window for dedup (last 20 lines)
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -127,25 +135,113 @@ export default function Session() {
     }
   };
 
+  // Normalize text: lowercase, collapse whitespace, remove punctuation for comparison
+  const normalize = (text: string): string => {
+    return text.trim().toLowerCase().replace(/[.,!?;:'"]/g, '').replace(/\s+/g, ' ');
+  };
+  
+  // Check if line exists in rolling window (last 20 lines) or last 2000 chars
+  const isInDeduplicationWindow = (line: string): boolean => {
+    const normLine = normalize(line);
+    if (!normLine || normLine.length < 5) return true;
+    
+    // Check rolling window of last 20 lines
+    for (const recentLine of recentLinesRef.current) {
+      if (normalize(recentLine) === normLine) {
+        return true;
+      }
+    }
+    
+    // Check last 2000 chars of committed text
+    const window2000 = normalize(committedTextRef.current.slice(-2000));
+    if (normLine.length > 10 && window2000.includes(normLine)) {
+      return true;
+    }
+    
+    return false;
+  };
+  
+  // Finalize current partial into committed text
+  const finalizePartial = () => {
+    const partial = partialTextRef.current.trim();
+    if (partial) {
+      committedTextRef.current += (committedTextRef.current ? " " : "") + partial;
+      partialTextRef.current = "";
+    }
+  };
+  
+  // Process new transcript: either delta append or partial replacement
+  const processTranscriptUpdate = (newText: string, isPartial: boolean = false): boolean => {
+    const trimmed = newText.trim();
+    if (!trimmed) return false;
+    
+    if (isPartial) {
+      // Replace partial text (interim updates)
+      partialTextRef.current = trimmed;
+      console.log("[Transcript] Partial update:", trimmed.substring(0, 50) + "...");
+      return true;
+    }
+    
+    // This is finalized content (delta) - check for duplicates
+    if (isInDeduplicationWindow(trimmed)) {
+      console.log("[Dedup] Dropping duplicate:", trimmed.substring(0, 50) + "...");
+      return false;
+    }
+    
+    // Finalize any pending partial first
+    finalizePartial();
+    
+    // Add to committed text
+    committedTextRef.current += (committedTextRef.current ? " " : "") + trimmed;
+    
+    // Update rolling window (last 20 lines)
+    recentLinesRef.current.push(trimmed);
+    if (recentLinesRef.current.length > 20) {
+      recentLinesRef.current.shift();
+    }
+    
+    // Add to display
+    addTranscriptEntry(trimmed, "content");
+    console.log("[Dedup] Added:", trimmed.substring(0, 50) + "...");
+    return true;
+  };
+  
+  // For chunk-based transcription (each chunk is independent, not partial)
+  const addTranscriptContent = (newText: string): boolean => {
+    return processTranscriptUpdate(newText, false);
+  };
+
   const processNextChunk = async () => {
-    if (isTranscribingRef.current || pendingChunksRef.current.length === 0) {
+    // Find next unprocessed chunk
+    const chunkItem = pendingChunksRef.current.find(c => !c.processed);
+    if (!chunkItem || isTranscribingRef.current) {
+      return;
+    }
+    
+    // Check if already processed (belt + suspenders)
+    if (processedChunkIdsRef.current.has(chunkItem.id)) {
+      chunkItem.processed = true;
+      processNextChunk();
       return;
     }
 
     isTranscribingRef.current = true;
-    const chunk = pendingChunksRef.current.shift();
+    chunkItem.processed = true;
+    processedChunkIdsRef.current.add(chunkItem.id);
     
-    if (chunk) {
-      const transcript = await transcribeChunk(chunk);
-      if (transcript && transcript.trim()) {
-        accumulatedTranscriptRef.current.push(transcript);
-        addTranscriptEntry(transcript, "content");
-      }
+    console.log(`[Chunk ${chunkItem.id}] Processing...`);
+    const transcript = await transcribeChunk(chunkItem.blob);
+    
+    if (transcript && transcript.trim()) {
+      const added = addTranscriptContent(transcript);
+      console.log(`[Chunk ${chunkItem.id}] Result: ${added ? 'added' : 'duplicate'}`);
     }
 
     isTranscribingRef.current = false;
     
-    if (pendingChunksRef.current.length > 0) {
+    // Process next if any remain
+    const hasMore = pendingChunksRef.current.some(c => !c.processed);
+    if (hasMore) {
       processNextChunk();
     }
   };
@@ -183,15 +279,25 @@ export default function Session() {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
-      accumulatedTranscriptRef.current = [];
       pendingChunksRef.current = [];
-      chunkCountRef.current = 0;
+      nextChunkIdRef.current = 0;
+      processedChunkIdsRef.current.clear();
+      
+      // Reset transcript state
+      committedTextRef.current = "";
+      partialTextRef.current = "";
+      recentLinesRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
-          chunkCountRef.current++;
-          pendingChunksRef.current.push(e.data);
+          
+          // Create unique chunk item
+          const chunkId = nextChunkIdRef.current++;
+          const chunkItem: ChunkItem = { id: chunkId, blob: e.data, processed: false };
+          pendingChunksRef.current.push(chunkItem);
+          console.log(`[Chunk ${chunkId}] Queued (${e.data.size} bytes)`);
+          
           processNextChunk();
         }
       };
@@ -300,12 +406,15 @@ export default function Session() {
     try {
       processNextChunk();
       
+      // Wait for all chunks to be processed
+      const hasUnprocessedChunks = () => pendingChunksRef.current.some(c => !c.processed);
+      
       let waitCount = 0;
       const maxWait = 120;
-      while ((isTranscribingRef.current || pendingChunksRef.current.length > 0) && waitCount < maxWait) {
+      while ((isTranscribingRef.current || hasUnprocessedChunks()) && waitCount < maxWait) {
         await new Promise(resolve => setTimeout(resolve, 500));
         waitCount++;
-        if (!isTranscribingRef.current && pendingChunksRef.current.length > 0) {
+        if (!isTranscribingRef.current && hasUnprocessedChunks()) {
           processNextChunk();
         }
       }
@@ -314,7 +423,9 @@ export default function Session() {
         console.warn("Transcription timeout - using available chunks");
       }
 
-      const fullTranscript = accumulatedTranscriptRef.current.join(" ");
+      // Finalize any pending partial text before generating full transcript
+      finalizePartial();
+      const fullTranscript = committedTextRef.current;
       
       if (!fullTranscript.trim()) {
         toast({
@@ -555,7 +666,11 @@ export default function Session() {
     
     await new Promise(resolve => setTimeout(resolve, 200));
     
-    if (pendingChunksRef.current.length === 0 && accumulatedTranscriptRef.current.length === 0 && audioBlob.size > 0) {
+    // Check if no chunks were queued (short recording) and no transcript yet
+    const hasAnyChunks = pendingChunksRef.current.length > 0;
+    const hasTranscript = committedTextRef.current.trim().length > 0;
+    
+    if (!hasAnyChunks && !hasTranscript && audioBlob.size > 0) {
       setRecordingState("processing");
       addTranscriptEntry("Processing short recording...");
       transcribeMutation.mutate(audioBlob);
