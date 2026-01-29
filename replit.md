@@ -7,6 +7,7 @@ AI-powered medical scribing tool that transforms patient consultations into stru
 DocuWhisper helps healthcare providers save 2+ hours daily by automatically transcribing voice recordings and generating structured clinical documentation.
 
 **Core Features:**
+- **Real-time streaming transcription:** Audio is sent in 15-second chunks during recording, with live transcript display as each chunk is processed
 - Voice recording with pause/resume and audio level visualization
 - AI transcription and automatic SOAP note generation
 - **Auto-save:** Notes are automatically saved after transcription
