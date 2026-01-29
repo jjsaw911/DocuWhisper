@@ -262,34 +262,55 @@ export default function Session() {
         
         if (previousLength > 0) {
           // Find approximate starting position for new content
-          // Look for a word boundary near the previous length position
+          // Look for a sentence boundary near the previous length position
           // Allow for some variance (AI rephrasing may shift things ±20%)
-          const searchStart = Math.max(0, Math.floor(previousLength * 0.8));
-          const searchEnd = Math.min(currentTranscript.length, Math.ceil(previousLength * 1.2));
+          const searchStart = Math.max(0, Math.floor(previousLength * 0.85));
+          const searchEnd = Math.min(currentTranscript.length, Math.ceil(previousLength * 1.15));
           
-          // Find a sentence/clause boundary in that range (period, comma, or word boundary)
+          // Find the LAST sentence boundary in the search range (to minimize overlap)
           let splitPos = previousLength;
+          let lastBoundary = -1;
           
-          // Look for sentence endings (. or ,) near the expected position
+          // Look for sentence endings (. ? !) in the search range - prefer the LAST one
           for (let i = searchStart; i < searchEnd && i < currentTranscript.length; i++) {
             const char = currentTranscript[i];
-            if ((char === '.' || char === ',') && i + 1 < currentTranscript.length && currentTranscript[i + 1] === ' ') {
-              // Found a good split point
-              splitPos = i + 2; // After the punctuation and space
-              break;
+            if ((char === '.' || char === '?' || char === '!') && i + 1 < currentTranscript.length && currentTranscript[i + 1] === ' ') {
+              lastBoundary = i + 2; // After the punctuation and space
             }
           }
           
-          // If no punctuation found, look for word boundary
-          if (splitPos === previousLength && splitPos < currentTranscript.length) {
-            // Find the next space after previousLength
-            const nextSpace = currentTranscript.indexOf(' ', previousLength);
-            if (nextSpace > 0 && nextSpace < searchEnd) {
+          if (lastBoundary > 0) {
+            splitPos = lastBoundary;
+          } else {
+            // No sentence boundary found - look for word boundary near end of search range
+            const nextSpace = currentTranscript.lastIndexOf(' ', searchEnd);
+            if (nextSpace > searchStart) {
               splitPos = nextSpace + 1;
             }
           }
           
           deltaText = currentTranscript.substring(splitPos).trim();
+          
+          // Check if delta starts with content that duplicates end of committed text
+          // This catches cases where the AI slightly re-transcribes the last phrase
+          const committedText = committedTextRef.current;
+          if (committedText && deltaText) {
+            // Look for the first 30-50 chars of delta in the last 100 chars of committed
+            const deltaStart = deltaText.substring(0, Math.min(50, deltaText.length)).toLowerCase();
+            const committedEnd = committedText.substring(Math.max(0, committedText.length - 150)).toLowerCase();
+            
+            const dupIndex = committedEnd.indexOf(deltaStart.substring(0, 25));
+            if (dupIndex >= 0) {
+              // Found a duplicate - try to find where the new content actually starts
+              // Look for the next sentence in delta
+              const nextSentence = deltaText.search(/[.?!]\s+[A-Z]/);
+              if (nextSentence > 0) {
+                deltaText = deltaText.substring(nextSentence + 2).trim();
+                console.log(`[Delta] Removed duplicate prefix, new delta starts: "${deltaText.substring(0, 40)}..."`);
+              }
+            }
+          }
+          
           console.log(`[Delta] Previous ${previousLength} chars, split at ${splitPos}, delta: "${deltaText.substring(0, 50)}..."`);
         }
         
