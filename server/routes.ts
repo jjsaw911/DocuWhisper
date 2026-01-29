@@ -27,6 +27,7 @@ const createTemplateSchema = z.object({
   description: z.string().optional(),
   prompt: z.string().min(1, "Template prompt is required"),
   isDefault: z.boolean().optional(),
+  isPublic: z.boolean().optional(),
 });
 
 const updateTemplateSchema = z.object({
@@ -34,6 +35,7 @@ const updateTemplateSchema = z.object({
   description: z.string().nullable().optional(),
   prompt: z.string().optional(),
   isDefault: z.boolean().optional(),
+  isPublic: z.boolean().optional(),
 });
 
 const updateNoteSchema = z.object({
@@ -1448,6 +1450,98 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error uncompleting task:", error);
       res.status(500).json({ error: "Failed to uncomplete task" });
+    }
+  });
+
+  // Get tasks by note
+  app.get("/api/notes/:noteId/tasks", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const noteId = parseInt(req.params.noteId);
+      const note = await storage.getNote(noteId);
+      
+      if (!note) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+      
+      // Verify ownership
+      const userId = req.user.claims.sub;
+      if (note.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const tasks = await storage.getTasksByNote(noteId);
+      res.json(tasks);
+    } catch (error) {
+      console.error("Error fetching tasks for note:", error);
+      res.status(500).json({ error: "Failed to fetch tasks" });
+    }
+  });
+
+  // Analytics endpoint
+  app.get("/api/analytics", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const analytics = await storage.getAnalytics(userId);
+      res.json(analytics);
+    } catch (error) {
+      console.error("Error fetching analytics:", error);
+      res.status(500).json({ error: "Failed to fetch analytics" });
+    }
+  });
+
+  // Public templates
+  app.get("/api/templates/public", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const templates = await storage.getPublicTemplates();
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching public templates:", error);
+      res.status(500).json({ error: "Failed to fetch public templates" });
+    }
+  });
+
+  // Shared templates (templates shared with current user)
+  app.get("/api/templates/shared", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const templates = await storage.getSharedTemplates(userId);
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching shared templates:", error);
+      res.status(500).json({ error: "Failed to fetch shared templates" });
+    }
+  });
+
+  // Clone a public or shared template
+  app.post("/api/templates/:id/clone", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const templateId = parseInt(req.params.id);
+      const original = await storage.getTemplate(templateId);
+      
+      if (!original) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      
+      const userId = req.user.claims.sub;
+      
+      // Check if user can access this template (owns it, is public, or shared with them)
+      if (original.userId !== userId && !original.isPublic && !(original.sharedWith?.includes(userId))) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const cloned = await storage.createTemplate({
+        userId,
+        name: `${original.name} (Copy)`,
+        description: original.description,
+        prompt: original.prompt,
+        isDefault: false,
+        isPublic: false,
+      });
+      
+      res.status(201).json(cloned);
+    } catch (error) {
+      console.error("Error cloning template:", error);
+      res.status(500).json({ error: "Failed to clone template" });
     }
   });
 

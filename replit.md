@@ -33,6 +33,12 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Context Tab:** Add background patient information (history, medications, allergies) that informs AI generation
 - **Ask AI to do anything:** Persistent AI command bar at the bottom of the session for quick AI interactions
 - **Tasks:** Clinical task management for referrals, orders, coordination, and communication follow-ups with filtering and status tracking
+- **Task Due Dates:** Set due dates on tasks with overdue indicators and "due today" warnings
+- **Task-Note Linking:** Create tasks directly from notes, auto-populating patient name
+- **Patient Context Persistence:** Background patient info (patientContext field) stored with each note
+- **Analytics Dashboard:** View total notes, weekly stats, task completion rates, and time saved
+- **Email Notifications:** Daily task digest emails with configurable delivery time
+- **Template Sharing:** Share templates publicly for other users to clone, browse public templates
 
 ## Tech Stack
 
@@ -101,6 +107,8 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `description` - Optional description
 - `prompt` - Custom AI prompt for SOAP generation
 - `isDefault` - Whether this is the user's default template
+- `isPublic` - Whether template is publicly shared (default: false)
+- `sharedWith` - Array of user IDs template is shared with
 - `createdAt`, `updatedAt` - Timestamps
 
 ### Invites Table
@@ -124,6 +132,8 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `noteStyle` - Note generation style ("detailed", "concise", "bullet_points")
 - `autoSaveEnabled` - Whether to auto-save notes (default: true)
 - `showTimestamps` - Show timestamps in transcript (default: true)
+- `emailNotificationsEnabled` - Whether to receive daily task digest (default: false)
+- `emailDigestTime` - Time to receive daily digest (default: "08:00")
 - `createdAt`, `updatedAt` - Timestamps
 
 ### Tasks Table
@@ -134,6 +144,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `patientName` - Optional patient name
 - `category` - Task category: "document", "order", "coordinate", "communicate"
 - `status` - Task status: "todo", "completed"
+- `dueDate` - Optional due date for the task
 - `completedAt` - When the task was completed
 - `createdAt`, `updatedAt` - Timestamps
 
@@ -161,6 +172,9 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `POST /api/templates` - Create template
 - `PUT /api/templates/:id` - Update template
 - `DELETE /api/templates/:id` - Delete template
+- `GET /api/templates/public` - List all public templates
+- `GET /api/templates/shared` - List templates shared with the user
+- `POST /api/templates/:id/clone` - Clone a template to user's collection
 
 ### Settings
 - `GET /api/settings` - Get user settings

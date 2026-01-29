@@ -1,6 +1,6 @@
 import { notes, subscriptions, templates, invites, userSettings, tasks, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, isNull } from "drizzle-orm";
+import { eq, desc, and, sql, isNull, or, gte, arrayContains, count } from "drizzle-orm";
 
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
@@ -33,12 +33,28 @@ export interface IStorage {
   upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings>;
   // Task functions
   getTasksByUser(userId: string): Promise<Task[]>;
+  getTasksByNote(noteId: number): Promise<Task[]>;
   getTask(id: number): Promise<Task | undefined>;
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined>;
   deleteTask(id: number): Promise<void>;
   completeTask(id: number): Promise<Task | undefined>;
   uncompleteTask(id: number): Promise<Task | undefined>;
+  // Template sharing
+  getPublicTemplates(): Promise<Template[]>;
+  getSharedTemplates(userId: string): Promise<Template[]>;
+  // Analytics
+  getAnalytics(userId: string): Promise<{
+    totalNotes: number;
+    notesThisWeek: number;
+    totalTasks: number;
+    tasksCompleted: number;
+    tasksPending: number;
+    notesThisMonth: number;
+    tasksCompletedThisWeek: number;
+  }>;
+  // Email digest
+  getUsersWithEmailNotifications(): Promise<UserSettings[]>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -245,6 +261,72 @@ class DatabaseStorage implements IStorage {
       .where(eq(tasks.id, id))
       .returning();
     return updated;
+  }
+
+  async getTasksByNote(noteId: number): Promise<Task[]> {
+    return db.select().from(tasks).where(eq(tasks.noteId, noteId)).orderBy(desc(tasks.createdAt));
+  }
+
+  // Template sharing
+  async getPublicTemplates(): Promise<Template[]> {
+    return db.select().from(templates).where(eq(templates.isPublic, true)).orderBy(desc(templates.createdAt));
+  }
+
+  async getSharedTemplates(userId: string): Promise<Template[]> {
+    return db.select().from(templates).where(
+      and(
+        eq(templates.isPublic, false),
+        arrayContains(templates.sharedWith, [userId])
+      )
+    ).orderBy(desc(templates.createdAt));
+  }
+
+  // Analytics
+  async getAnalytics(userId: string): Promise<{
+    totalNotes: number;
+    notesThisWeek: number;
+    totalTasks: number;
+    tasksCompleted: number;
+    tasksPending: number;
+    notesThisMonth: number;
+    tasksCompletedThisWeek: number;
+  }> {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [totalNotesResult] = await db.select({ count: count() }).from(notes).where(eq(notes.userId, userId));
+    const [notesThisWeekResult] = await db.select({ count: count() }).from(notes).where(
+      and(eq(notes.userId, userId), gte(notes.createdAt, weekAgo))
+    );
+    const [notesThisMonthResult] = await db.select({ count: count() }).from(notes).where(
+      and(eq(notes.userId, userId), gte(notes.createdAt, monthAgo))
+    );
+    const [totalTasksResult] = await db.select({ count: count() }).from(tasks).where(eq(tasks.userId, userId));
+    const [tasksCompletedResult] = await db.select({ count: count() }).from(tasks).where(
+      and(eq(tasks.userId, userId), eq(tasks.status, "completed"))
+    );
+    const [tasksPendingResult] = await db.select({ count: count() }).from(tasks).where(
+      and(eq(tasks.userId, userId), eq(tasks.status, "todo"))
+    );
+    const [tasksCompletedThisWeekResult] = await db.select({ count: count() }).from(tasks).where(
+      and(eq(tasks.userId, userId), eq(tasks.status, "completed"), gte(tasks.completedAt, weekAgo))
+    );
+
+    return {
+      totalNotes: totalNotesResult?.count || 0,
+      notesThisWeek: notesThisWeekResult?.count || 0,
+      totalTasks: totalTasksResult?.count || 0,
+      tasksCompleted: tasksCompletedResult?.count || 0,
+      tasksPending: tasksPendingResult?.count || 0,
+      notesThisMonth: notesThisMonthResult?.count || 0,
+      tasksCompletedThisWeek: tasksCompletedThisWeekResult?.count || 0,
+    };
+  }
+
+  // Email digest
+  async getUsersWithEmailNotifications(): Promise<UserSettings[]> {
+    return db.select().from(userSettings).where(eq(userSettings.emailNotificationsEnabled, true));
   }
 }
 

@@ -58,6 +58,8 @@ import {
   ListTodo,
   X,
   ArrowUpDown,
+  Calendar,
+  AlertCircle,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -94,6 +96,28 @@ function formatRelativeTime(date: Date | string) {
   return then.toLocaleDateString();
 }
 
+function formatDueDate(date: Date | string | null | undefined) {
+  if (!date) return null;
+  const now = new Date();
+  const dueDate = new Date(date);
+  const diffMs = dueDate.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  
+  const isOverdue = diffDays < 0;
+  const isDueToday = diffDays === 0;
+  const isDueTomorrow = diffDays === 1;
+  const isDueThisWeek = diffDays > 0 && diffDays <= 7;
+  
+  return {
+    text: isDueToday ? "Today" : isDueTomorrow ? "Tomorrow" : isOverdue ? `${Math.abs(diffDays)} days overdue` : `${diffDays} days`,
+    isOverdue,
+    isDueToday,
+    isDueTomorrow,
+    isDueThisWeek,
+    formatted: dueDate.toLocaleDateString(),
+  };
+}
+
 export default function Tasks() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -105,6 +129,7 @@ export default function Tasks() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskPatient, setNewTaskPatient] = useState("");
   const [newTaskCategory, setNewTaskCategory] = useState<string>("document");
+  const [newTaskDueDate, setNewTaskDueDate] = useState<string>("");
 
   const { data: tasks, isLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
@@ -117,15 +142,17 @@ export default function Tasks() {
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: { title: string; patientName?: string; category: string }) => {
+    mutationFn: async (data: { title: string; patientName?: string; category: string; dueDate?: string }) => {
       return apiRequest("POST", "/api/tasks", data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
       setIsNewTaskOpen(false);
       setNewTaskTitle("");
       setNewTaskPatient("");
       setNewTaskCategory("document");
+      setNewTaskDueDate("");
       toast({
         title: "Task created",
         description: "Your new task has been added",
@@ -218,6 +245,7 @@ export default function Tasks() {
       title: newTaskTitle.trim(),
       patientName: newTaskPatient.trim() || undefined,
       category: newTaskCategory,
+      dueDate: newTaskDueDate || undefined,
     });
   };
 
@@ -292,6 +320,16 @@ export default function Tasks() {
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="task-due-date">Due date (optional)</Label>
+                    <Input
+                      id="task-due-date"
+                      type="date"
+                      value={newTaskDueDate}
+                      onChange={(e) => setNewTaskDueDate(e.target.value)}
+                      data-testid="input-task-due-date"
+                    />
                   </div>
                 </div>
                 <DialogFooter>
@@ -395,6 +433,12 @@ export default function Tasks() {
                     </TableHead>
                     <TableHead>
                       <Button variant="ghost" size="sm" className="-ml-3 h-8">
+                        Due Date
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button variant="ghost" size="sm" className="-ml-3 h-8">
                         Created
                         <ArrowUpDown className="ml-2 h-4 w-4" />
                       </Button>
@@ -439,6 +483,30 @@ export default function Tasks() {
                             <CategoryIcon className="h-3 w-3" />
                             {categoryInfo.label}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {task.dueDate ? (
+                            (() => {
+                              const dueInfo = formatDueDate(task.dueDate);
+                              if (!dueInfo) return <span className="text-muted-foreground">-</span>;
+                              return (
+                                <div className="flex items-center gap-1.5">
+                                  {dueInfo.isOverdue && <AlertCircle className="h-3.5 w-3.5 text-destructive" />}
+                                  <span className={
+                                    dueInfo.isOverdue 
+                                      ? "text-destructive font-medium" 
+                                      : dueInfo.isDueToday 
+                                        ? "text-amber-600 dark:text-amber-400 font-medium"
+                                        : "text-muted-foreground"
+                                  }>
+                                    {dueInfo.text}
+                                  </span>
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
                           {formatRelativeTime(task.createdAt)}

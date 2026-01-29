@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -79,6 +79,8 @@ export default function Settings() {
   const [noteStyle, setNoteStyle] = useState("detailed");
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [showTimestamps, setShowTimestamps] = useState(true);
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
+  const [emailDigestTime, setEmailDigestTime] = useState("08:00");
 
   const { data: settings, isLoading: settingsLoading } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
@@ -100,6 +102,8 @@ export default function Settings() {
       setNoteStyle(settings.noteStyle || "detailed");
       setAutoSaveEnabled(settings.autoSaveEnabled ?? true);
       setShowTimestamps(settings.showTimestamps ?? true);
+      setEmailNotificationsEnabled(settings.emailNotificationsEnabled ?? false);
+      setEmailDigestTime(settings.emailDigestTime || "08:00");
     }
   }, [settings]);
 
@@ -116,6 +120,8 @@ export default function Settings() {
         noteStyle,
         autoSaveEnabled,
         showTimestamps,
+        emailNotificationsEnabled,
+        emailDigestTime,
       });
       return response.json();
     },
@@ -373,6 +379,52 @@ export default function Settings() {
                   data-testid="switch-timestamps"
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Bell className="h-5 w-5 text-primary" />
+                <CardTitle>Email Notifications</CardTitle>
+              </div>
+              <CardDescription>Configure your daily task digest emails</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="emailNotifications">Daily Task Digest</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Receive a daily email summary of your pending tasks
+                  </p>
+                </div>
+                <Switch
+                  id="emailNotifications"
+                  checked={emailNotificationsEnabled}
+                  onCheckedChange={setEmailNotificationsEnabled}
+                  data-testid="switch-email-notifications"
+                />
+              </div>
+
+              {emailNotificationsEnabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="digestTime">Delivery Time</Label>
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="digestTime"
+                      type="time"
+                      value={emailDigestTime}
+                      onChange={(e) => setEmailDigestTime(e.target.value)}
+                      className="w-32"
+                      data-testid="input-digest-time"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Choose when you'd like to receive your daily task summary
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

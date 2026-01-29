@@ -35,7 +35,12 @@ import {
   MessageSquare,
   ClipboardList,
   Send,
-  X
+  X,
+  ListTodo,
+  Plus,
+  ShoppingCart,
+  Users,
+  Info
 } from "lucide-react";
 import {
   Select,
@@ -44,7 +49,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Note } from "@shared/schema";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import type { Note, Task } from "@shared/schema";
+
+const TASK_CATEGORIES = [
+  { value: "document", label: "Document", icon: FileText },
+  { value: "order", label: "Order", icon: ShoppingCart },
+  { value: "coordinate", label: "Coordinate", icon: Users },
+  { value: "communicate", label: "Communicate", icon: MessageSquare },
+];
 
 export default function NoteDetail() {
   const { id } = useParams<{ id: string }>();
@@ -87,6 +108,53 @@ export default function NoteDetail() {
   const [showSummaryPanel, setShowSummaryPanel] = useState(false);
   const [summaryType, setSummaryType] = useState("brief");
   const [generatedSummary, setGeneratedSummary] = useState("");
+  
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskCategory, setNewTaskCategory] = useState("document");
+  const [newTaskDueDate, setNewTaskDueDate] = useState("");
+
+  const { data: noteTasks } = useQuery<Task[]>({
+    queryKey: ["/api/notes", id, "tasks"],
+    enabled: !!user && !!id,
+  });
+
+  const createTaskMutation = useMutation({
+    mutationFn: async (data: { title: string; category: string; noteId: number; patientName?: string; dueDate?: string }) => {
+      return apiRequest("POST", "/api/tasks", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", id, "tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
+      setShowTaskModal(false);
+      setNewTaskTitle("");
+      setNewTaskCategory("document");
+      setNewTaskDueDate("");
+      toast({
+        title: "Task created",
+        description: "Task has been linked to this note",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to create task",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCreateTask = () => {
+    if (!newTaskTitle.trim() || !id) return;
+    createTaskMutation.mutate({
+      title: newTaskTitle.trim(),
+      category: newTaskCategory,
+      noteId: parseInt(id),
+      patientName: formData.patientName || undefined,
+      dueDate: newTaskDueDate || undefined,
+    });
+  };
 
   const formatSoapNote = (note: Note) => {
     const parts = [];
@@ -680,7 +748,18 @@ export default function NoteDetail() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="flex flex-col items-center">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setShowTaskModal(true)}
+                  data-testid="button-create-task"
+                >
+                  <ListTodo className="h-5 w-5" />
+                </Button>
+                <span className="text-xs mt-1 text-muted-foreground">Add Task</span>
+              </div>
               <div className="flex flex-col items-center">
                 <Button
                   variant="outline"
@@ -929,6 +1008,99 @@ export default function NoteDetail() {
                       className="min-h-[300px] text-sm"
                       data-testid="textarea-referral-letter"
                     />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Create Task Modal/Panel */}
+            {showTaskModal && (
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-create-task">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium">Create Task for This Note</h4>
+                  <Button variant="ghost" size="icon" onClick={() => setShowTaskModal(false)} data-testid="button-close-task-modal">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>Task Title</Label>
+                    <Input
+                      placeholder="e.g., Refer patient to GI for evaluation"
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      data-testid="input-new-task-title"
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Category</Label>
+                      <Select value={newTaskCategory} onValueChange={setNewTaskCategory}>
+                        <SelectTrigger data-testid="select-new-task-category">
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TASK_CATEGORIES.map((cat) => (
+                            <SelectItem key={cat.value} value={cat.value}>
+                              <div className="flex items-center gap-2">
+                                <cat.icon className="h-4 w-4" />
+                                {cat.label}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Due Date (optional)</Label>
+                      <Input
+                        type="date"
+                        value={newTaskDueDate}
+                        onChange={(e) => setNewTaskDueDate(e.target.value)}
+                        data-testid="input-new-task-due-date"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <Button 
+                  onClick={handleCreateTask} 
+                  disabled={!newTaskTitle.trim() || createTaskMutation.isPending} 
+                  className="w-full" 
+                  data-testid="button-submit-task"
+                >
+                  {createTaskMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create Task
+                    </>
+                  )}
+                </Button>
+
+                {noteTasks && noteTasks.length > 0 && (
+                  <div className="mt-4 border-t pt-4">
+                    <h5 className="text-sm font-medium mb-2">Tasks linked to this note ({noteTasks.length})</h5>
+                    <div className="space-y-2">
+                      {noteTasks.slice(0, 3).map((task) => (
+                        <div key={task.id} className="flex items-center gap-2 text-sm p-2 bg-background rounded">
+                          <ListTodo className="h-4 w-4 text-muted-foreground" />
+                          <span className={task.status === "completed" ? "line-through text-muted-foreground" : ""}>
+                            {task.title}
+                          </span>
+                        </div>
+                      ))}
+                      {noteTasks.length > 3 && (
+                        <Link href="/tasks" className="text-sm text-primary hover:underline">
+                          View all {noteTasks.length} tasks
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

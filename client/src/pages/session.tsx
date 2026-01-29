@@ -659,6 +659,7 @@ export default function Session() {
         assessment: generatedSoap.assessment || "",
         plan: generatedSoap.plan || "",
         transcript: fullTranscript,
+        patientContext: contextText || null,
       });
       const savedNote = await saveResponse.json();
 
@@ -751,6 +752,7 @@ export default function Session() {
             assessment: generatedSoap.assessment || "",
             plan: generatedSoap.plan || "",
             transcript: data.transcript,
+            patientContext: contextText || null,
           });
           const savedNote = await saveResponse.json();
           
@@ -824,6 +826,7 @@ export default function Session() {
         assessment: soapNote?.assessment || "",
         plan: soapNote?.plan || "",
         transcript,
+        patientContext: contextText || null,
       });
       return response.json();
     },

@@ -24,9 +24,22 @@ import {
   Clock,
   TrendingUp,
   ChevronRight,
-  LayoutTemplate
+  LayoutTemplate,
+  Target,
+  CheckCircle2,
+  Zap
 } from "lucide-react";
 import type { Note } from "@shared/schema";
+
+type Analytics = {
+  totalNotes: number;
+  notesThisWeek: number;
+  totalTasks: number;
+  tasksCompleted: number;
+  tasksPending: number;
+  notesThisMonth: number;
+  tasksCompletedThisWeek: number;
+};
 
 export default function Dashboard() {
   const { user, isLoading: authLoading } = useAuth();
@@ -41,8 +54,17 @@ export default function Dashboard() {
     enabled: !!user,
   });
 
+  const { data: analytics } = useQuery<Analytics>({
+    queryKey: ["/api/analytics"],
+    enabled: !!user,
+  });
+
   const recentNotes = notes?.slice(0, 5) || [];
-  const totalNotes = notes?.length || 0;
+  const totalNotes = analytics?.totalNotes || notes?.length || 0;
+  const taskCompletionRate = analytics && analytics.totalTasks > 0
+    ? Math.round((analytics.tasksCompleted / analytics.totalTasks) * 100)
+    : 0;
+  const timeSavedHours = Math.round(totalNotes * 0.5);
 
   const getInitials = (firstName?: string | null, lastName?: string | null) => {
     const first = firstName?.charAt(0) || "";
@@ -144,40 +166,52 @@ export default function Dashboard() {
               {notesLoading ? (
                 <Skeleton className="h-8 w-16" />
               ) : (
-                <div className="text-2xl font-bold">{totalNotes}</div>
+                <>
+                  <div className="text-2xl font-bold">{totalNotes}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {analytics?.notesThisWeek || 0} this week
+                  </p>
+                </>
               )}
+            </CardContent>
+          </Card>
+
+          <Card className="hover-elevate" data-testid="card-stat-tasks">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Pending Tasks</CardTitle>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{analytics?.tasksPending || 0}</div>
+              <p className="text-xs text-muted-foreground">
+                {analytics?.tasksCompletedThisWeek || 0} completed this week
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="hover-elevate" data-testid="card-stat-completion">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Task Completion</CardTitle>
+              <Target className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{taskCompletionRate}%</div>
+              <p className="text-xs text-muted-foreground">
+                {analytics?.tasksCompleted || 0} of {analytics?.totalTasks || 0} tasks
+              </p>
             </CardContent>
           </Card>
 
           <Card className="hover-elevate" data-testid="card-stat-time">
             <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Time Saved</CardTitle>
-              <Clock className="h-4 w-4 text-muted-foreground" />
+              <Zap className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{Math.round(totalNotes * 15)} min</div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate" data-testid="card-stat-subscription">
-            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Plan</CardTitle>
-              <CreditCard className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold capitalize">
-                {subscription?.status === "active" ? "Pro" : "Trial"}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate" data-testid="card-stat-accuracy">
-            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">AI Accuracy</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">98%</div>
+              <div className="text-2xl font-bold">~{timeSavedHours}h</div>
+              <p className="text-xs text-muted-foreground">
+                Est. 30 min per note
+              </p>
             </CardContent>
           </Card>
         </div>

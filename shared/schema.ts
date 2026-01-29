@@ -17,6 +17,7 @@ export const notes = pgTable("notes", {
   assessment: text("assessment"),
   plan: text("plan"),
   transcript: text("transcript"),
+  patientContext: text("patient_context"), // Background info: history, medications, allergies
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -51,6 +52,8 @@ export const templates = pgTable("templates", {
   description: text("description"),
   prompt: text("prompt").notNull(),
   isDefault: boolean("is_default").default(false),
+  isPublic: boolean("is_public").default(false), // Allow sharing publicly
+  sharedWith: text("shared_with").array(), // Array of user IDs template is shared with
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -94,6 +97,8 @@ export const userSettings = pgTable("user_settings", {
   noteStyle: text("note_style").default("detailed"), // 'detailed', 'concise', 'bullet_points'
   autoSaveEnabled: boolean("auto_save_enabled").default(true),
   showTimestamps: boolean("show_timestamps").default(true), // Show timestamps in transcript
+  emailNotificationsEnabled: boolean("email_notifications_enabled").default(false), // Daily task digest
+  emailDigestTime: text("email_digest_time").default("08:00"), // Time to send digest (HH:mm)
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -124,6 +129,7 @@ export const tasks = pgTable("tasks", {
   patientName: text("patient_name"),
   category: text("category").notNull().default("document"), // 'document', 'order', 'coordinate', 'communicate'
   status: text("status").notNull().default("todo"), // 'todo', 'completed'
+  dueDate: timestamp("due_date"), // Optional due date
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
