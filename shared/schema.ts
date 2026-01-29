@@ -114,3 +114,27 @@ export type Invite = typeof invites.$inferSelect;
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
 export type UserSettings = typeof userSettings.$inferSelect;
 export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;
+
+// Tasks for clinical follow-ups (referrals, refills, scheduling, etc.)
+export const tasks = pgTable("tasks", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  noteId: integer("note_id"), // Optional link to a note
+  title: text("title").notNull(),
+  patientName: text("patient_name"),
+  category: text("category").notNull().default("document"), // 'document', 'order', 'coordinate', 'communicate'
+  status: text("status").notNull().default("todo"), // 'todo', 'completed'
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertTaskSchema = createInsertSchema(tasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  completedAt: true,
+});
+
+export type Task = typeof tasks.$inferSelect;
+export type InsertTask = z.infer<typeof insertTaskSchema>;

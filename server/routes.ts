@@ -84,6 +84,20 @@ const generateSummarySchema = z.object({
   summaryType: z.enum(["brief", "detailed", "handover", "discharge"]).optional(),
 });
 
+const createTaskSchema = z.object({
+  title: z.string().min(1, "Task title is required"),
+  patientName: z.string().optional(),
+  noteId: z.number().optional(),
+  category: z.enum(["document", "order", "coordinate", "communicate"]).optional(),
+});
+
+const updateTaskSchema = z.object({
+  title: z.string().optional(),
+  patientName: z.string().nullable().optional(),
+  category: z.enum(["document", "order", "coordinate", "communicate"]).optional(),
+  status: z.enum(["todo", "completed"]).optional(),
+});
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -1275,6 +1289,165 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error redeeming invite:", error);
       res.status(500).json({ error: "Failed to redeem invite" });
+    }
+  });
+
+  // ========== TASK ROUTES ==========
+  
+  // Get all tasks for current user
+  app.get("/api/tasks", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const tasks = await storage.getTasksByUser(userId);
+      res.json(tasks);
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      res.status(500).json({ error: "Failed to fetch tasks" });
+    }
+  });
+
+  // Get single task
+  app.get("/api/tasks/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const taskId = parseInt(req.params.id);
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Verify ownership
+      const userId = req.user.claims.sub;
+      if (task.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      res.json(task);
+    } catch (error) {
+      console.error("Error fetching task:", error);
+      res.status(500).json({ error: "Failed to fetch task" });
+    }
+  });
+
+  // Create new task
+  app.post("/api/tasks", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = createTaskSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      
+      const userId = req.user.claims.sub;
+      const task = await storage.createTask({
+        ...validationResult.data,
+        userId,
+      });
+      
+      res.status(201).json(task);
+    } catch (error) {
+      console.error("Error creating task:", error);
+      res.status(500).json({ error: "Failed to create task" });
+    }
+  });
+
+  // Update task
+  app.patch("/api/tasks/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const taskId = parseInt(req.params.id);
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Verify ownership
+      const userId = req.user.claims.sub;
+      if (task.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const validationResult = updateTaskSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      
+      const updated = await storage.updateTask(taskId, validationResult.data);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating task:", error);
+      res.status(500).json({ error: "Failed to update task" });
+    }
+  });
+
+  // Delete task
+  app.delete("/api/tasks/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const taskId = parseInt(req.params.id);
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Verify ownership
+      const userId = req.user.claims.sub;
+      if (task.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      await storage.deleteTask(taskId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting task:", error);
+      res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
+
+  // Complete task
+  app.post("/api/tasks/:id/complete", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const taskId = parseInt(req.params.id);
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Verify ownership
+      const userId = req.user.claims.sub;
+      if (task.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const updated = await storage.completeTask(taskId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error completing task:", error);
+      res.status(500).json({ error: "Failed to complete task" });
+    }
+  });
+
+  // Uncomplete task (reopen)
+  app.post("/api/tasks/:id/uncomplete", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const taskId = parseInt(req.params.id);
+      const task = await storage.getTask(taskId);
+      
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Verify ownership
+      const userId = req.user.claims.sub;
+      if (task.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const updated = await storage.uncompleteTask(taskId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error uncompleting task:", error);
+      res.status(500).json({ error: "Failed to uncomplete task" });
     }
   });
 

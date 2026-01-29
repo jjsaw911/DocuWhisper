@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, userSettings, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 
@@ -31,6 +31,14 @@ export interface IStorage {
   // User settings functions
   getUserSettings(userId: string): Promise<UserSettings | undefined>;
   upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings>;
+  // Task functions
+  getTasksByUser(userId: string): Promise<Task[]>;
+  getTask(id: number): Promise<Task | undefined>;
+  createTask(task: InsertTask): Promise<Task>;
+  updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined>;
+  deleteTask(id: number): Promise<void>;
+  completeTask(id: number): Promise<Task | undefined>;
+  uncompleteTask(id: number): Promise<Task | undefined>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -191,6 +199,52 @@ class DatabaseStorage implements IStorage {
       })
       .returning();
     return settings;
+  }
+
+  // Task functions
+  async getTasksByUser(userId: string): Promise<Task[]> {
+    return db.select().from(tasks).where(eq(tasks.userId, userId)).orderBy(desc(tasks.createdAt));
+  }
+
+  async getTask(id: number): Promise<Task | undefined> {
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+    return task;
+  }
+
+  async createTask(task: InsertTask): Promise<Task> {
+    const [created] = await db.insert(tasks).values(task).returning();
+    return created;
+  }
+
+  async updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined> {
+    const [updated] = await db
+      .update(tasks)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(tasks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTask(id: number): Promise<void> {
+    await db.delete(tasks).where(eq(tasks.id, id));
+  }
+
+  async completeTask(id: number): Promise<Task | undefined> {
+    const [updated] = await db
+      .update(tasks)
+      .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
+      .where(eq(tasks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async uncompleteTask(id: number): Promise<Task | undefined> {
+    const [updated] = await db
+      .update(tasks)
+      .set({ status: "todo", completedAt: null, updatedAt: new Date() })
+      .where(eq(tasks.id, id))
+      .returning();
+    return updated;
   }
 }
 
