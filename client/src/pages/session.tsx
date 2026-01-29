@@ -214,12 +214,18 @@ export default function Session() {
   const processNextChunk = async () => {
     // Find next unprocessed chunk
     const chunkItem = pendingChunksRef.current.find(c => !c.processed);
-    if (!chunkItem || isTranscribingRef.current) {
+    if (!chunkItem) {
+      console.log("[Chunk] No unprocessed chunks remaining");
+      return;
+    }
+    if (isTranscribingRef.current) {
+      console.log("[Chunk] Already transcribing, will be picked up later");
       return;
     }
     
     // Check if already processed (belt + suspenders)
     if (processedChunkIdsRef.current.has(chunkItem.id)) {
+      console.log(`[Chunk ${chunkItem.id}] Already in processed set, skipping`);
       chunkItem.processed = true;
       processNextChunk();
       return;
@@ -229,19 +235,28 @@ export default function Session() {
     chunkItem.processed = true;
     processedChunkIdsRef.current.add(chunkItem.id);
     
-    console.log(`[Chunk ${chunkItem.id}] Processing...`);
-    const transcript = await transcribeChunk(chunkItem.blob);
+    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes...`);
     
-    if (transcript && transcript.trim()) {
-      const added = addTranscriptContent(transcript);
-      console.log(`[Chunk ${chunkItem.id}] Result: ${added ? 'added' : 'duplicate'}`);
+    try {
+      const transcript = await transcribeChunk(chunkItem.blob);
+      
+      if (transcript && transcript.trim()) {
+        const added = addTranscriptContent(transcript);
+        console.log(`[Chunk ${chunkItem.id}] Transcript (${transcript.length} chars): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
+        console.log(`[Chunk ${chunkItem.id}] Text preview: "${transcript.substring(0, 100)}..."`);
+      } else {
+        console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty or null)`);
+      }
+    } catch (err) {
+      console.error(`[Chunk ${chunkItem.id}] Error:`, err);
     }
 
     isTranscribingRef.current = false;
     
     // Process next if any remain
-    const hasMore = pendingChunksRef.current.some(c => !c.processed);
-    if (hasMore) {
+    const remaining = pendingChunksRef.current.filter(c => !c.processed);
+    console.log(`[Chunk] ${remaining.length} chunks remaining to process`);
+    if (remaining.length > 0) {
       processNextChunk();
     }
   };
