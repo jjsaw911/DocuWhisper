@@ -24,6 +24,7 @@ import {
   Globe,
   Sparkles,
   AudioLines,
+  AlertCircle,
 } from "lucide-react";
 import {
   Select,
@@ -92,6 +93,48 @@ export default function Session() {
   const partialTextRef = useRef<string>(""); // Current interim fragment (not yet finalized)
   const recentLinesRef = useRef<string[]>([]); // Rolling window for dedup (last 20 lines)
   const lastCumulativeTranscriptRef = useRef<string>(""); // Track cumulative transcript for delta extraction
+  
+  // Backup system - saves transcript to localStorage after each chunk
+  const BACKUP_KEY = "docuwhisper_transcript_backup";
+  const [hasBackup, setHasBackup] = useState(false);
+  
+  const saveBackup = useCallback((transcript: string, patientName: string, specialty: string) => {
+    if (transcript && transcript.trim()) {
+      const backup = {
+        transcript: transcript.trim(),
+        patientName,
+        specialty,
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+      console.log(`[Backup] Saved ${transcript.length} chars to localStorage`);
+    }
+  }, []);
+  
+  const loadBackup = useCallback(() => {
+    try {
+      const saved = localStorage.getItem(BACKUP_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error("[Backup] Failed to load:", e);
+    }
+    return null;
+  }, []);
+  
+  const clearBackup = useCallback(() => {
+    localStorage.removeItem(BACKUP_KEY);
+    setHasBackup(false);
+  }, []);
+  
+  // Check for existing backup on mount
+  useEffect(() => {
+    const backup = loadBackup();
+    if (backup && backup.transcript) {
+      setHasBackup(true);
+    }
+  }, [loadBackup]);
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -320,6 +363,9 @@ export default function Session() {
         if (deltaText) {
           const added = addTranscriptContent(deltaText, chunkItem.timestampSec);
           console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${currentTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
+          
+          // Auto-backup after each chunk - ensures transcript is preserved even if browser crashes
+          saveBackup(committedTextRef.current, patientName, "general");
         } else {
           console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${currentTranscript.length} chars)`);
         }
@@ -592,6 +638,9 @@ export default function Session() {
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
       setActiveTab("soap");
       addTranscriptEntry("Note saved automatically");
+      
+      // Clear backup after successful save
+      clearBackup();
 
       toast({
         title: "Session saved",
@@ -676,6 +725,7 @@ export default function Session() {
           const savedNote = await saveResponse.json();
           
           queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+          clearBackup();
           toast({ title: "Session saved", description: "Your note has been generated and saved" });
           navigate(`/notes/${savedNote.id}`);
         } catch (error) {
@@ -747,6 +797,7 @@ export default function Session() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      clearBackup();
       toast({
         title: "Session saved",
         description: "Your session has been saved successfully",
@@ -801,8 +852,53 @@ export default function Session() {
 
   const hasTranscript = transcriptEntries.some((e) => e.type === "content");
 
+  // Handle backup recovery
+  const handleRecoverBackup = () => {
+    const backup = loadBackup();
+    if (backup && backup.transcript) {
+      setPatientName(backup.patientName || "");
+      // Add transcript content to entries
+      addTranscriptEntry(backup.transcript, "content");
+      committedTextRef.current = backup.transcript;
+      clearBackup();
+      toast({
+        title: "Transcript recovered",
+        description: "Your previous session has been restored",
+      });
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
+      {/* Recovery banner */}
+      {hasBackup && recordingState === "idle" && !hasTranscript && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 text-sm">
+            <AlertCircle className="h-4 w-4" />
+            <span>You have an unsaved transcript from a previous session</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={clearBackup}
+              className="h-7 text-xs"
+              data-testid="button-discard-backup"
+            >
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleRecoverBackup}
+              className="h-7 text-xs"
+              data-testid="button-recover-backup"
+            >
+              Recover
+            </Button>
+          </div>
+        </div>
+      )}
+      
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-4">
