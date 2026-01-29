@@ -19,6 +19,7 @@ const generateSoapSchema = z.object({
   templateId: z.number().optional(),
   aiInstructions: z.string().optional(),
   outputLanguage: z.string().optional(), // ISO 639-1 code (en, es, fr, etc.)
+  context: z.string().optional(), // Background patient info (history, meds, allergies)
 });
 
 const createTemplateSchema = z.object({
@@ -71,7 +72,7 @@ const suggestCodesSchema = z.object({
 
 const aiAssistantSchema = z.object({
   question: z.string().min(1, "Question is required"),
-  context: z.string().optional(),
+  noteContent: z.string().optional(), // Full note context (transcript, SOAP, patient info)
 });
 
 const generateSummarySchema = z.object({
@@ -243,11 +244,12 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage } = validationResult.data;
+      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context } = validationResult.data;
       
       console.log("SOAP generation request - transcript length:", transcript.length);
       console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
       console.log("SOAP generation request - output language:", outputLanguage || "en");
+      console.log("SOAP generation request - context provided:", !!context);
 
       let customPrompt = "";
       if (templateId) {
@@ -270,11 +272,19 @@ export async function registerRoutes(
         ? `\n\nIMPORTANT: Generate ALL content in ${targetLanguage}. The entire SOAP note must be written in ${targetLanguage}, including medical terminology where appropriate.`
         : "";
 
+      // Build context section if provided
+      const contextSection = context ? `
+PATIENT BACKGROUND & CONTEXT:
+${context}
+
+Use this background information to inform your assessment. Include relevant context in the appropriate SOAP sections (e.g., past medical history in Subjective, relevant medications in Plan).
+` : "";
+
       const basePrompt = customPrompt || `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
 
 ${specialty ? `Specialty: ${specialty}` : ""}
 ${patientName ? `Patient: ${patientName}` : ""}
-
+${contextSection}
 CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
 
 Generate a SOAP note with these sections:
@@ -554,12 +564,12 @@ Suggest the most relevant codes based on the documented findings. Include both p
       if (!validationResult.success) {
         return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
       }
-      const { question, context } = validationResult.data;
+      const { question, noteContent } = validationResult.data;
 
-      const systemPrompt = context ? 
+      const systemPrompt = noteContent ? 
         `You are a helpful AI medical documentation assistant. The user has the following clinical context:
 
-${context}
+${noteContent}
 
 Answer their questions helpfully and concisely. If they ask about clinical matters, provide evidence-based guidance but always recommend consulting appropriate clinical resources or specialists for complex cases.` :
         `You are a helpful AI medical documentation assistant. Help healthcare providers with documentation questions, clinical coding, letter writing, and workflow optimization. Be concise and practical.`;

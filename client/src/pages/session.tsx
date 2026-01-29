@@ -25,6 +25,9 @@ import {
   Sparkles,
   AudioLines,
   AlertCircle,
+  FileText,
+  Send,
+  Wand2,
 } from "lucide-react";
 import {
   Select,
@@ -33,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 type Template = {
   id: number;
@@ -42,6 +46,8 @@ type Template = {
 };
 
 type RecordingState = "idle" | "recording" | "paused" | "processing";
+
+type VisitMode = "transcribing" | "dictating" | "upload";
 
 type TranscriptEntry = {
   timestamp: string;
@@ -72,6 +78,12 @@ export default function Session() {
     assessment: string;
     plan: string;
   } | null>(null);
+  
+  // New features: Visit mode, Context, AI command
+  const [visitMode, setVisitMode] = useState<VisitMode>("transcribing");
+  const [contextText, setContextText] = useState("");
+  const [aiCommand, setAiCommand] = useState("");
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -605,6 +617,7 @@ export default function Session() {
         specialty: "general",
         templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
         outputLanguage: transcriptionLanguage,
+        context: contextText || undefined,
       });
 
       if (!soapResponse.ok) {
@@ -708,6 +721,7 @@ export default function Session() {
             specialty: "general",
             templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
             outputLanguage: transcriptionLanguage,
+            context: contextText || undefined,
           });
           
           if (!soapResponse.ok) {
@@ -777,6 +791,7 @@ export default function Session() {
         specialty: "general",
         templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
         outputLanguage: transcriptionLanguage,
+        context: contextText || undefined,
       });
       return response.json();
     },
@@ -845,6 +860,55 @@ export default function Session() {
       transcribeMutation.mutate(audioBlob);
     } else {
       await finalizeRecording();
+    }
+  };
+
+  // AI command handler for "Ask AI to do anything" feature
+  const handleAiCommand = async () => {
+    if (!aiCommand.trim()) return;
+    
+    setIsAiProcessing(true);
+    try {
+      const fullTranscript = committedTextRef.current || transcriptEntries.filter(e => e.type === "content").map(e => e.text).join(" ");
+      
+      const response = await apiRequest("POST", "/api/ai-assistant", {
+        question: aiCommand,
+        noteContent: `
+Patient: ${patientName || "Not specified"}
+Context: ${contextText || "None provided"}
+Transcript: ${fullTranscript || "No transcript yet"}
+${soapNote ? `
+SOAP Note:
+Subjective: ${soapNote.subjective}
+Objective: ${soapNote.objective}
+Assessment: ${soapNote.assessment}
+Plan: ${soapNote.plan}
+` : ""}
+        `.trim(),
+      });
+
+      if (!response.ok) {
+        throw new Error("AI request failed");
+      }
+
+      const data = await response.json();
+      
+      // Add AI response as a system message
+      addTranscriptEntry(`AI Response: ${data.answer}`, "system");
+      setAiCommand("");
+      
+      toast({
+        title: "AI Response",
+        description: "Check the transcript area for the AI's response",
+      });
+    } catch (error) {
+      toast({
+        title: "AI Error",
+        description: "Failed to process AI command. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAiProcessing(false);
     }
   };
 
@@ -963,6 +1027,10 @@ export default function Session() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <div className="flex items-center justify-between">
               <TabsList className="h-8">
+                <TabsTrigger value="context" className="text-xs px-3" data-testid="tab-context">
+                  <FileText className="h-3 w-3 mr-1" />
+                  Context
+                </TabsTrigger>
                 <TabsTrigger value="transcript" className="text-xs px-3" data-testid="tab-transcript">
                   <AudioLines className="h-3 w-3 mr-1" />
                   Transcript
@@ -1006,13 +1074,85 @@ export default function Session() {
 
       <main className="flex-1 overflow-auto p-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsContent value="context" className="mt-0">
+            <div className="max-w-3xl space-y-4">
+              <div>
+                <Label className="text-sm font-medium mb-2 block">Patient Background & Context</Label>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Add relevant patient history, medications, allergies, or other background information. 
+                  This context will be used by the AI when generating clinical notes.
+                </p>
+                <Textarea
+                  value={contextText}
+                  onChange={(e) => setContextText(e.target.value)}
+                  placeholder="e.g., Patient has history of Type 2 Diabetes (diagnosed 2019), on Metformin 1000mg BID. Previous allergic reaction to Penicillin. Last HbA1c: 7.2% (Jan 2024)."
+                  className="min-h-[200px] text-base leading-relaxed"
+                  data-testid="textarea-context"
+                />
+              </div>
+              
+              <div className="bg-muted/50 rounded-lg p-4">
+                <h4 className="font-medium text-sm mb-2">Tips for effective context</h4>
+                <ul className="text-sm text-muted-foreground space-y-1">
+                  <li>- Past medical history relevant to today's visit</li>
+                  <li>- Current medications and dosages</li>
+                  <li>- Known allergies or drug reactions</li>
+                  <li>- Recent test results or imaging findings</li>
+                  <li>- Relevant family or social history</li>
+                </ul>
+              </div>
+            </div>
+          </TabsContent>
+          
           <TabsContent value="transcript" className="mt-0">
             {transcriptEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-                <h2 className="text-xl font-medium mb-2">Start this session using the controls below</h2>
+                <h2 className="text-xl font-medium mb-2">Start this session using the header</h2>
                 <p className="text-muted-foreground mb-6">
-                  Your transcript will appear here once you start recording
+                  Your note will appear here once your session is complete
                 </p>
+                
+                {/* Visit mode selector - shown in empty state */}
+                <div className="flex flex-col items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Select value={visitMode} onValueChange={(v: VisitMode) => setVisitMode(v)}>
+                      <SelectTrigger className="w-[200px]" data-testid="select-visit-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="transcribing">Transcribing</SelectItem>
+                        <SelectItem value="dictating">Dictating</SelectItem>
+                        <SelectItem value="upload">Upload session audio</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    
+                    <Button 
+                      onClick={() => {
+                        if (visitMode === "upload") {
+                          fileInputRef.current?.click();
+                        } else {
+                          startRecording();
+                        }
+                      }}
+                      className="gap-2"
+                      data-testid="button-start-session"
+                    >
+                      {visitMode === "upload" ? (
+                        <>
+                          <Upload className="h-4 w-4" />
+                          Upload
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="h-4 w-4" />
+                          Start
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  
+                  <p className="text-sm text-muted-foreground">Select your visit mode in the dropdown</p>
+                </div>
               </div>
             ) : (
               <div className="space-y-4 max-w-3xl">
@@ -1211,6 +1351,32 @@ export default function Session() {
         <p className="text-xs text-muted-foreground text-center mt-3">
           Review your note before use to ensure it accurately represents the visit
         </p>
+        
+        {/* Ask AI to do anything - persistent input bar */}
+        <div className="mt-4 pt-4 border-t">
+          <div className="flex items-center gap-2 max-w-2xl mx-auto">
+            <div className="flex-1 relative">
+              <Wand2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={aiCommand}
+                onChange={(e) => setAiCommand(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !isAiProcessing && handleAiCommand()}
+                placeholder="Ask AI to do anything..."
+                className="pl-10 h-10"
+                disabled={isAiProcessing}
+                data-testid="input-ai-command"
+              />
+            </div>
+            <Button 
+              size="icon" 
+              onClick={handleAiCommand} 
+              disabled={isAiProcessing || !aiCommand.trim()}
+              data-testid="button-send-ai-command"
+            >
+              {isAiProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
       </footer>
     </div>
   );

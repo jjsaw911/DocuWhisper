@@ -29,6 +29,9 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **ICD-10 & CPT Code Suggestions:** AI-powered billing code recommendations based on encounter documentation
 - **AI Chat Assistant:** Built-in AI assistant for documentation questions and clinical guidance
 - **Patient Summary Generation:** Generate brief, detailed, handover, or discharge summaries
+- **Visit Modes:** Choose between Transcribing, Dictating, or Upload session audio modes
+- **Context Tab:** Add background patient information (history, medications, allergies) that informs AI generation
+- **Ask AI to do anything:** Persistent AI command bar at the bottom of the session for quick AI interactions
 
 ## Tech Stack
 
