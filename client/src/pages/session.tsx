@@ -140,6 +140,18 @@ export default function Session() {
     queryKey: ["/api/templates"],
   });
 
+  // Fetch user settings for language preference
+  const { data: userSettings } = useQuery<{
+    language?: string;
+    autoSaveEnabled?: boolean;
+    defaultTemplateId?: number;
+  }>({
+    queryKey: ["/api/settings"],
+  });
+
+  // Get language from settings (default to English)
+  const transcriptionLanguage = userSettings?.language || "en";
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -167,6 +179,7 @@ export default function Session() {
     try {
       const formData = new FormData();
       formData.append("audio", audioBlob, "chunk.webm");
+      formData.append("language", transcriptionLanguage);
 
       const response = await fetch("/api/transcribe", {
         method: "POST",
@@ -591,6 +604,7 @@ export default function Session() {
         patientName,
         specialty: "general",
         templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+        outputLanguage: transcriptionLanguage,
       });
 
       if (!soapResponse.ok) {
@@ -665,6 +679,7 @@ export default function Session() {
     mutationFn: async (audioBlob: Blob) => {
       const formData = new FormData();
       formData.append("audio", audioBlob, "recording.webm");
+      formData.append("language", transcriptionLanguage);
 
       const response = await fetch("/api/transcribe", {
         method: "POST",
@@ -692,6 +707,7 @@ export default function Session() {
             patientName,
             specialty: "general",
             templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+            outputLanguage: transcriptionLanguage,
           });
           
           if (!soapResponse.ok) {
@@ -760,6 +776,7 @@ export default function Session() {
         patientName,
         specialty: "general",
         templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+        outputLanguage: transcriptionLanguage,
       });
       return response.json();
     },

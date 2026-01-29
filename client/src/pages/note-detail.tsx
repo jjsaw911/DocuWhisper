@@ -28,8 +28,16 @@ import {
   Share2,
   Wand2,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Languages
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { Note } from "@shared/schema";
 
 export default function NoteDetail() {
@@ -52,6 +60,7 @@ export default function NoteDetail() {
   const [showAiInstructions, setShowAiInstructions] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [translateLanguage, setTranslateLanguage] = useState("es");
 
   const formatSoapNote = (note: Note) => {
     const parts = [];
@@ -150,6 +159,61 @@ export default function NoteDetail() {
     onError: () => {
       toast({
         title: "Failed to regenerate",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Parse SOAP note text back to individual sections
+  const parseSoapFromText = (text: string) => {
+    const sections: { subjective?: string; objective?: string; assessment?: string; plan?: string } = {};
+    const sectionPatterns = [
+      { key: 'subjective', pattern: /SUBJECTIVE:\s*([\s\S]*?)(?=OBJECTIVE:|ASSESSMENT:|PLAN:|$)/i },
+      { key: 'objective', pattern: /OBJECTIVE:\s*([\s\S]*?)(?=ASSESSMENT:|PLAN:|$)/i },
+      { key: 'assessment', pattern: /ASSESSMENT:\s*([\s\S]*?)(?=PLAN:|$)/i },
+      { key: 'plan', pattern: /PLAN:\s*([\s\S]*?)$/i },
+    ];
+    for (const { key, pattern } of sectionPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        sections[key as keyof typeof sections] = match[1].trim();
+      }
+    }
+    return sections;
+  };
+
+  const translateMutation = useMutation({
+    mutationFn: async (targetLanguage: string) => {
+      const sections = parseSoapFromText(formData.soapNote);
+      const response = await apiRequest("POST", "/api/translate-note", {
+        subjective: sections.subjective || "",
+        objective: sections.objective || "",
+        assessment: sections.assessment || "",
+        plan: sections.plan || "",
+        targetLanguage,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      const newSoapNote: string[] = [];
+      if (data.subjective) newSoapNote.push(`SUBJECTIVE:\n${data.subjective}`);
+      if (data.objective) newSoapNote.push(`OBJECTIVE:\n${data.objective}`);
+      if (data.assessment) newSoapNote.push(`ASSESSMENT:\n${data.assessment}`);
+      if (data.plan) newSoapNote.push(`PLAN:\n${data.plan}`);
+      
+      setFormData(prev => ({
+        ...prev,
+        soapNote: newSoapNote.join("\n\n"),
+      }));
+      toast({
+        title: "Note translated",
+        description: `The note has been translated to ${translateLanguage === 'es' ? 'Spanish' : translateLanguage === 'fr' ? 'French' : translateLanguage === 'de' ? 'German' : translateLanguage === 'pt' ? 'Portuguese' : 'the selected language'}`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Translation failed",
         description: "Please try again",
         variant: "destructive",
       });
@@ -425,6 +489,41 @@ export default function NoteDetail() {
                 )}
               </div>
             )}
+
+            <div className="flex items-center gap-2 pt-2 border-t">
+              <Select value={translateLanguage} onValueChange={setTranslateLanguage}>
+                <SelectTrigger className="w-[140px]" data-testid="select-translate-language">
+                  <SelectValue placeholder="Language" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="es">Spanish</SelectItem>
+                  <SelectItem value="fr">French</SelectItem>
+                  <SelectItem value="de">German</SelectItem>
+                  <SelectItem value="pt">Portuguese</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => translateMutation.mutate(translateLanguage)}
+                disabled={translateMutation.isPending || !formData.soapNote}
+                className="flex-1"
+                data-testid="button-translate"
+              >
+                {translateMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Translating...
+                  </>
+                ) : (
+                  <>
+                    <Languages className="mr-2 h-4 w-4" />
+                    Translate Note
+                  </>
+                )}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

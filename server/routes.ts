@@ -18,6 +18,7 @@ const generateSoapSchema = z.object({
   specialty: z.string().optional(),
   templateId: z.number().optional(),
   aiInstructions: z.string().optional(),
+  outputLanguage: z.string().optional(), // ISO 639-1 code (en, es, fr, etc.)
 });
 
 const createTemplateSchema = z.object({
@@ -41,6 +42,14 @@ const updateNoteSchema = z.object({
   objective: z.string().nullable().optional(),
   assessment: z.string().nullable().optional(),
   plan: z.string().nullable().optional(),
+});
+
+const translateNoteSchema = z.object({
+  subjective: z.string().optional(),
+  objective: z.string().optional(),
+  assessment: z.string().optional(),
+  plan: z.string().optional(),
+  targetLanguage: z.enum(["en", "es", "fr", "de", "pt"]),
 });
 
 const openai = new OpenAI({
@@ -160,16 +169,20 @@ export async function registerRoutes(
         return res.status(400).json({ error: "No audio file provided" });
       }
 
+      // Get language from request body or user settings
+      const language = req.body?.language;
+
       console.log("Transcription request received:", {
         fileName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
+        language: language || "auto-detect",
       });
 
       const audioBuffer = req.file.buffer;
       console.log("Processing audio for transcription...");
       
-      const transcript = await transcribeLongAudio(audioBuffer);
+      const transcript = await transcribeLongAudio(audioBuffer, language);
       console.log("Transcription successful, length:", transcript.length);
 
       res.json({ transcript });
@@ -199,10 +212,11 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty, templateId, aiInstructions } = validationResult.data;
+      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage } = validationResult.data;
       
       console.log("SOAP generation request - transcript length:", transcript.length);
       console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
+      console.log("SOAP generation request - output language:", outputLanguage || "en");
 
       let customPrompt = "";
       if (templateId) {
@@ -211,6 +225,19 @@ export async function registerRoutes(
           customPrompt = template.prompt;
         }
       }
+
+      // Language-specific instructions
+      const languageNames: Record<string, string> = {
+        en: "English",
+        es: "Spanish (Español)",
+        fr: "French (Français)",
+        de: "German (Deutsch)",
+        pt: "Portuguese (Português)",
+      };
+      const targetLanguage = languageNames[outputLanguage || "en"] || "English";
+      const languageInstruction = outputLanguage && outputLanguage !== "en" 
+        ? `\n\nIMPORTANT: Generate ALL content in ${targetLanguage}. The entire SOAP note must be written in ${targetLanguage}, including medical terminology where appropriate.`
+        : "";
 
       const basePrompt = customPrompt || `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
 
@@ -225,7 +252,7 @@ Generate a SOAP note with these sections:
 - Assessment: Clinical diagnosis or differential diagnoses based on the transcript content
 - Plan: Treatment plan, medications, follow-up instructions discussed in the transcript
 
-Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."`;
+Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."${languageInstruction}`;
 
       const aiInstructionsSection = aiInstructions ? `
 
@@ -310,6 +337,65 @@ If the transcript is unclear or empty, use "General Consultation".`
     } catch (error) {
       console.error("Error generating title:", error);
       res.status(500).json({ error: "Failed to generate title" });
+    }
+  });
+
+  // Translate SOAP note to different language
+  app.post("/api/translate-note", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = translateNoteSchema.safeParse(req.body);
+      
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.flatten().fieldErrors 
+        });
+      }
+
+      const { subjective, objective, assessment, plan, targetLanguage } = validationResult.data;
+
+      const languageNames: Record<string, string> = {
+        en: "English",
+        es: "Spanish (Español)",
+        fr: "French (Français)",
+        de: "German (Deutsch)",
+        pt: "Portuguese (Português)",
+      };
+      const targetLangName = languageNames[targetLanguage] || targetLanguage;
+
+      const soapContent = JSON.stringify({ subjective, objective, assessment, plan }, null, 2);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical translation assistant. Translate the following SOAP note into ${targetLangName}. 
+            
+Maintain all medical terminology accuracy while making the text natural in the target language. 
+Preserve the structure and formatting of the original.
+
+Return ONLY valid JSON with the same structure:
+{
+  "subjective": "<translated subjective section>",
+  "objective": "<translated objective section>",
+  "assessment": "<translated assessment section>",
+  "plan": "<translated plan section>"
+}`
+          },
+          { role: "user", content: soapContent }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2048,
+      });
+
+      const content = response.choices[0]?.message?.content || "{}";
+      const translatedNote = JSON.parse(content);
+
+      res.json(translatedNote);
+    } catch (error) {
+      console.error("Error translating note:", error);
+      res.status(500).json({ error: "Failed to translate note" });
     }
   });
 

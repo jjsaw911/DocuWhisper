@@ -301,15 +301,18 @@ export async function textToSpeechStream(
 /**
  * Speech-to-Text: Transcribes audio using dedicated transcription model.
  * Uses gpt-4o-mini-transcribe for accurate transcription.
+ * @param language - ISO 639-1 language code (e.g., "en", "es", "fr")
  */
 export async function speechToText(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm" = "wav"
+  format: "wav" | "mp3" | "webm" = "wav",
+  language?: string
 ): Promise<string> {
   const file = await toFile(audioBuffer, `audio.${format}`);
   const response = await openai.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
+    ...(language && { language }),
   });
   return response.text;
 }
@@ -318,9 +321,11 @@ export async function speechToText(
  * Transcribe long audio files by splitting into chunks.
  * Handles recordings of any length by processing in 10-minute segments.
  * OpenAI has a 25MB file limit, so this ensures large files are processed correctly.
+ * @param language - ISO 639-1 language code (e.g., "en", "es", "fr")
  */
 export async function transcribeLongAudio(
-  audioBuffer: Buffer
+  audioBuffer: Buffer,
+  language?: string
 ): Promise<string> {
   // First convert to WAV format
   const wavBuffer = await convertToWav(audioBuffer);
@@ -329,8 +334,8 @@ export async function transcribeLongAudio(
   const MAX_DIRECT_SIZE = 20 * 1024 * 1024; // 20MB
   
   if (wavBuffer.length < MAX_DIRECT_SIZE) {
-    console.log("Audio under 20MB, transcribing directly");
-    return await speechToText(wavBuffer, "wav");
+    console.log("Audio under 20MB, transcribing directly", language ? `(language: ${language})` : "");
+    return await speechToText(wavBuffer, "wav", language);
   }
   
   console.log(`Audio is ${(wavBuffer.length / 1024 / 1024).toFixed(1)}MB, splitting into chunks...`);
@@ -344,7 +349,7 @@ export async function transcribeLongAudio(
   for (let i = 0; i < chunks.length; i++) {
     console.log(`Transcribing chunk ${i + 1}/${chunks.length}...`);
     try {
-      const transcript = await speechToText(chunks[i], "wav");
+      const transcript = await speechToText(chunks[i], "wav", language);
       transcripts.push(transcript);
     } catch (error: any) {
       console.error(`Error transcribing chunk ${i + 1}:`, error?.message);

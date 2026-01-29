@@ -23,6 +23,8 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Invite System:** Generate codes for free trials, months, or lifetime access
 - **Email Invitations:** Send invite links directly to patient email addresses via Resend
 - **Settings Page:** Profile editing, clinical preferences, language settings, and recording preferences
+- **Multi-language Support:** Transcription and SOAP generation in English, Spanish, French, German, Portuguese
+- **Note Translation:** Translate existing SOAP notes to different languages
 
 ## Tech Stack
 
