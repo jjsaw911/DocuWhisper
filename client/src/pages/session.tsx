@@ -231,8 +231,8 @@ export default function Session() {
       return;
     }
 
+    // Mark as "in progress" - but NOT processed yet
     isTranscribingRef.current = true;
-    chunkItem.processed = true;
     processedChunkIdsRef.current.add(chunkItem.id);
     
     console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes...`);
@@ -251,6 +251,8 @@ export default function Session() {
       console.error(`[Chunk ${chunkItem.id}] Error:`, err);
     }
 
+    // NOW mark as processed (after transcription completes)
+    chunkItem.processed = true;
     isTranscribingRef.current = false;
     
     // Process next if any remain
