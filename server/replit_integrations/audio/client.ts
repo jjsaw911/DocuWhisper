@@ -52,8 +52,10 @@ export function detectAudioFormat(buffer: Buffer): AudioFormat {
  * require seeking to find the audio track.
  */
 export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
-  const inputPath = join(tmpdir(), `input-${randomUUID()}`);
-  const outputPath = join(tmpdir(), `output-${randomUUID()}.wav`);
+  // Use truly unique IDs to prevent conflicts with concurrent processing
+  const uniqueId = `${randomUUID()}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const inputPath = join(tmpdir(), `input-${uniqueId}`);
+  const outputPath = join(tmpdir(), `output-${uniqueId}.wav`);
 
   try {
     // Write input to temp file (required for video containers that need seeking)
@@ -72,10 +74,14 @@ export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
         outputPath,
       ]);
 
-      ffmpeg.stderr.on("data", () => {}); // Suppress logs
+      let stderrOutput = "";
+      ffmpeg.stderr.on("data", (data) => { stderrOutput += data.toString(); });
       ffmpeg.on("close", (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`ffmpeg exited with code ${code}`));
+        else {
+          console.error(`ffmpeg stderr: ${stderrOutput}`);
+          reject(new Error(`ffmpeg exited with code ${code}`));
+        }
       });
       ffmpeg.on("error", reject);
     });
@@ -97,8 +103,9 @@ export async function splitAudioIntoChunks(
   audioBuffer: Buffer,
   chunkDurationSeconds: number = 600 // 10 minutes per chunk
 ): Promise<Buffer[]> {
-  const inputPath = join(tmpdir(), `input-${randomUUID()}`);
-  const outputPattern = join(tmpdir(), `chunk-${randomUUID()}-%03d.wav`);
+  const uniqueId = `${randomUUID()}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const inputPath = join(tmpdir(), `input-${uniqueId}`);
+  const outputPattern = join(tmpdir(), `chunk-${uniqueId}-%03d.wav`);
   const outputDir = tmpdir();
   const outputPrefix = outputPattern.split('/').pop()!.replace('-%03d.wav', '');
 
