@@ -81,10 +81,11 @@ export default function Session() {
   const isTranscribingRef = useRef<boolean>(false);
   
   // Chunk tracking with unique IDs to prevent duplicate processing
-  type ChunkItem = { id: number; blob: Blob; processed: boolean };
+  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number };
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
+  const chunkIntervalSec = 40; // 40-second chunks
   
   // Transcript state: committedText (stable) + partialText (interim)
   const committedTextRef = useRef<string>(""); // Finalized transcript
@@ -102,12 +103,19 @@ export default function Session() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const addTranscriptEntry = (text: string, type: "system" | "content" = "system") => {
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    }) + " " + now.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
+  const addTranscriptEntry = (text: string, type: "system" | "content" = "system", recordingTimeSec?: number) => {
+    let timestamp: string;
+    if (recordingTimeSec !== undefined) {
+      // Show recording position like "0:00", "0:40", "1:20"
+      timestamp = formatTime(recordingTimeSec);
+    } else {
+      // Show clock time for system messages
+      const now = new Date();
+      timestamp = now.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }) + " " + now.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
+    }
     
     setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
   };
@@ -172,21 +180,22 @@ export default function Session() {
   };
   
   // Process new transcript: either delta append or partial replacement
-  const processTranscriptUpdate = (newText: string, isPartial: boolean = false): boolean => {
+  // Returns the processed text if successful, null if duplicate/empty
+  const processTranscriptUpdate = (newText: string, isPartial: boolean = false): string | null => {
     const trimmed = newText.trim();
-    if (!trimmed) return false;
+    if (!trimmed) return null;
     
     if (isPartial) {
       // Replace partial text (interim updates)
       partialTextRef.current = trimmed;
       console.log("[Transcript] Partial update:", trimmed.substring(0, 50) + "...");
-      return true;
+      return trimmed;
     }
     
     // This is finalized content (delta) - check for duplicates
     if (isInDeduplicationWindow(trimmed)) {
       console.log("[Dedup] Dropping duplicate:", trimmed.substring(0, 50) + "...");
-      return false;
+      return null;
     }
     
     // Finalize any pending partial first
@@ -201,15 +210,18 @@ export default function Session() {
       recentLinesRef.current.shift();
     }
     
-    // Add to display
-    addTranscriptEntry(trimmed, "content");
-    console.log("[Dedup] Added:", trimmed.substring(0, 50) + "...");
-    return true;
+    return trimmed;
   };
   
   // For chunk-based transcription (each chunk is independent, not partial)
-  const addTranscriptContent = (newText: string): boolean => {
-    return processTranscriptUpdate(newText, false);
+  const addTranscriptContent = (newText: string, recordingTimeSec?: number): boolean => {
+    const processedText = processTranscriptUpdate(newText, false);
+    if (processedText) {
+      addTranscriptEntry(processedText, "content", recordingTimeSec);
+      console.log("[Dedup] Added:", processedText.substring(0, 50) + "...");
+      return true;
+    }
+    return false;
   };
 
   const processNextChunk = async () => {
@@ -276,7 +288,7 @@ export default function Session() {
         lastCumulativeTranscriptRef.current = cumulativeTranscript.trim();
         
         if (deltaText) {
-          const added = addTranscriptContent(deltaText);
+          const added = addTranscriptContent(deltaText, chunkItem.timestampSec);
           console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${cumulativeTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
         } else {
           console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${cumulativeTranscript.length} chars)`);
@@ -350,17 +362,18 @@ export default function Session() {
           // Create a COMPLETE blob from all chunks so far (includes header from first chunk)
           const completeBlob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
           
-          // Create unique chunk item with the complete audio
+          // Create unique chunk item with the complete audio and timestamp
           const chunkId = nextChunkIdRef.current++;
-          const chunkItem: ChunkItem = { id: chunkId, blob: completeBlob, processed: false };
+          const timestampSec = chunkId * chunkIntervalSec; // 0, 40, 80, 120...
+          const chunkItem: ChunkItem = { id: chunkId, blob: completeBlob, processed: false, timestampSec };
           pendingChunksRef.current.push(chunkItem);
-          console.log(`[Chunk ${chunkId}] Queued complete blob (${completeBlob.size} bytes from ${chunksRef.current.length} fragments)`);
+          console.log(`[Chunk ${chunkId}] Queued at ${formatTime(timestampSec)} (${completeBlob.size} bytes from ${chunksRef.current.length} fragments)`);
           
           processNextChunk();
         }
       };
 
-      mediaRecorder.start(15000);
+      mediaRecorder.start(40000); // 40-second chunks like Heidi
       setRecordingState("recording");
       setDuration(0);
       addTranscriptEntry("Listening... transcript will appear as you speak");
