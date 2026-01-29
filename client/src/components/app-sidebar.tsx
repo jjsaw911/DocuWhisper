@@ -27,7 +27,7 @@ import {
   LogOut,
   Crown,
 } from "lucide-react";
-import type { Note } from "@shared/schema";
+import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
 
 interface AdminCheckData {
@@ -47,7 +47,15 @@ export function AppSidebar() {
     enabled: !!user,
   });
 
+  const { data: settings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
+    enabled: !!user,
+  });
+
   const isOwner = adminCheck?.isAdmin === true;
+  
+  // Get display name: preferredName > firstName from settings > firstName from auth > email
+  const displayName = settings?.preferredName || settings?.firstName || user?.firstName || user?.email?.split("@")[0] || "User";
 
   const groupNotesByDate = (notes: Note[]) => {
     const groups: { [key: string]: Note[] } = {};
@@ -227,15 +235,12 @@ export function AppSidebar() {
         <div className="flex items-center gap-2 px-2 py-1">
           <Avatar className="h-8 w-8">
             <AvatarFallback className="bg-primary/10 text-primary text-xs">
-              {user?.firstName?.[0] || user?.email?.[0]?.toUpperCase() || "U"}
+              {displayName[0]?.toUpperCase() || "U"}
             </AvatarFallback>
           </Avatar>
-          <div className="flex flex-col flex-1 min-w-0">
-            <span className="text-sm font-medium truncate">
-              {user?.firstName} {user?.lastName}
-            </span>
-            <span className="text-xs text-muted-foreground truncate">{user?.email}</span>
-          </div>
+          <span className="text-sm font-medium truncate flex-1 min-w-0" data-testid="text-user-display-name">
+            {displayName}
+          </span>
         </div>
       </SidebarFooter>
     </Sidebar>

@@ -71,6 +71,7 @@ export default function Settings() {
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [preferredName, setPreferredName] = useState("");
   const [specialty, setSpecialty] = useState("");
   const [practiceName, setPracticeName] = useState("");
   const [language, setLanguage] = useState("en");
@@ -91,6 +92,7 @@ export default function Settings() {
     if (settings) {
       setFirstName(settings.firstName || "");
       setLastName(settings.lastName || "");
+      setPreferredName(settings.preferredName || "");
       setSpecialty(settings.specialty || "");
       setPracticeName(settings.practiceName || "");
       setLanguage(settings.language || "en");
@@ -106,6 +108,7 @@ export default function Settings() {
       const response = await apiRequest("PUT", "/api/settings", {
         firstName: firstName || null,
         lastName: lastName || null,
+        preferredName: preferredName || null,
         specialty: specialty || null,
         practiceName: practiceName || null,
         language,
@@ -184,6 +187,20 @@ export default function Settings() {
                   <p className="font-medium">{user?.email}</p>
                   <p className="text-sm text-muted-foreground">Account email</p>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="preferredName">Preferred Name (displayed in sidebar)</Label>
+                <Input
+                  id="preferredName"
+                  value={preferredName}
+                  onChange={(e) => setPreferredName(e.target.value)}
+                  placeholder="How you'd like to be called"
+                  data-testid="input-preferred-name"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This name will be shown in the sidebar. Leave blank to use your first name.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

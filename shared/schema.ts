@@ -86,6 +86,7 @@ export const userSettings = pgTable("user_settings", {
   userId: varchar("user_id").notNull().unique(),
   firstName: text("first_name"),
   lastName: text("last_name"),
+  preferredName: text("preferred_name"), // Display name to show instead of email
   specialty: text("specialty"), // Medical specialty (e.g., "Primary Care", "Cardiology")
   practiceName: text("practice_name"),
   language: text("language").default("en"), // Preferred language
