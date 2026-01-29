@@ -268,12 +268,12 @@ export default function Settings() {
 
               <div className="space-y-2">
                 <Label htmlFor="defaultTemplate">Default Template</Label>
-                <Select value={defaultTemplateId} onValueChange={setDefaultTemplateId}>
+                <Select value={defaultTemplateId || "none"} onValueChange={(val) => setDefaultTemplateId(val === "none" ? "" : val)}>
                   <SelectTrigger data-testid="select-default-template">
                     <SelectValue placeholder="Select default template" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None (use system default)</SelectItem>
+                    <SelectItem value="none">None (use system default)</SelectItem>
                     {templates.map((template) => (
                       <SelectItem key={template.id} value={template.id.toString()}>
                         {template.name}
