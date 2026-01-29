@@ -90,6 +90,7 @@ export default function Session() {
   const committedTextRef = useRef<string>(""); // Finalized transcript
   const partialTextRef = useRef<string>(""); // Current interim fragment (not yet finalized)
   const recentLinesRef = useRef<string[]>([]); // Rolling window for dedup (last 20 lines)
+  const lastCumulativeTranscriptRef = useRef<string>(""); // Track cumulative transcript for delta extraction
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -239,13 +240,50 @@ export default function Session() {
     addTranscriptEntry(`Processing audio chunk ${chunkItem.id + 1}...`);
     
     try {
-      const transcript = await transcribeChunk(chunkItem.blob);
+      const cumulativeTranscript = await transcribeChunk(chunkItem.blob);
       
-      if (transcript && transcript.trim()) {
-        const added = addTranscriptContent(transcript);
-        console.log(`[Chunk ${chunkItem.id}] Transcript (${transcript.length} chars): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
-        if (!added) {
-          addTranscriptEntry(`Chunk ${chunkItem.id + 1}: duplicate content skipped`);
+      if (cumulativeTranscript && cumulativeTranscript.trim()) {
+        // Extract only the NEW content (delta) from cumulative transcript
+        const previousCumulative = lastCumulativeTranscriptRef.current;
+        let deltaText = cumulativeTranscript.trim();
+        
+        if (previousCumulative && cumulativeTranscript.startsWith(previousCumulative)) {
+          // Simple case: new transcript starts with old transcript
+          deltaText = cumulativeTranscript.substring(previousCumulative.length).trim();
+        } else if (previousCumulative) {
+          // Try to find overlap - transcript might have minor variations
+          // Use word-based comparison to find where new content starts
+          const prevWords = previousCumulative.toLowerCase().split(/\s+/);
+          const currWords = cumulativeTranscript.toLowerCase().split(/\s+/);
+          
+          // Find the longest matching prefix of words
+          let matchedWords = 0;
+          for (let i = 0; i < Math.min(prevWords.length, currWords.length); i++) {
+            if (prevWords[i] === currWords[i]) {
+              matchedWords = i + 1;
+            } else {
+              break;
+            }
+          }
+          
+          // Extract new words after the matched prefix
+          if (matchedWords > 0) {
+            const originalWords = cumulativeTranscript.split(/\s+/);
+            deltaText = originalWords.slice(matchedWords).join(" ").trim();
+          }
+        }
+        
+        // Update cumulative tracker
+        lastCumulativeTranscriptRef.current = cumulativeTranscript.trim();
+        
+        if (deltaText) {
+          const added = addTranscriptContent(deltaText);
+          console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${cumulativeTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
+          if (!added) {
+            addTranscriptEntry(`Chunk ${chunkItem.id + 1}: duplicate content skipped`);
+          }
+        } else {
+          console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${cumulativeTranscript.length} chars)`);
         }
       } else {
         console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty or null)`);
@@ -309,6 +347,7 @@ export default function Session() {
       committedTextRef.current = "";
       partialTextRef.current = "";
       recentLinesRef.current = [];
+      lastCumulativeTranscriptRef.current = "";
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
