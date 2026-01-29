@@ -85,7 +85,7 @@ export default function Session() {
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
-  const chunkIntervalSec = 40; // 40-second chunks
+  const chunkIntervalSec = 20; // 20-second chunks for faster feedback
   
   // Transcript state: committedText (stable) + partialText (interim)
   const committedTextRef = useRef<string>(""); // Finalized transcript
@@ -373,7 +373,7 @@ export default function Session() {
         }
       };
 
-      mediaRecorder.start(40000); // 40-second chunks like Heidi
+      mediaRecorder.start(20000); // 20-second chunks for faster feedback
       setRecordingState("recording");
       setDuration(0);
       addTranscriptEntry("Listening... transcript will appear as you speak");
