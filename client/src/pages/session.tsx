@@ -255,43 +255,52 @@ export default function Session() {
       
       if (cumulativeTranscript && cumulativeTranscript.trim()) {
         // Extract only the NEW content (delta) from cumulative transcript
-        const previousCumulative = lastCumulativeTranscriptRef.current;
-        let deltaText = cumulativeTranscript.trim();
+        // Since AI may rephrase slightly, use character-length-based extraction
+        const previousLength = lastCumulativeTranscriptRef.current.length;
+        const currentTranscript = cumulativeTranscript.trim();
+        let deltaText = currentTranscript;
         
-        if (previousCumulative && cumulativeTranscript.startsWith(previousCumulative)) {
-          // Simple case: new transcript starts with old transcript
-          deltaText = cumulativeTranscript.substring(previousCumulative.length).trim();
-        } else if (previousCumulative) {
-          // Try to find overlap - transcript might have minor variations
-          // Use word-based comparison to find where new content starts
-          const prevWords = previousCumulative.toLowerCase().split(/\s+/);
-          const currWords = cumulativeTranscript.toLowerCase().split(/\s+/);
+        if (previousLength > 0) {
+          // Find approximate starting position for new content
+          // Look for a word boundary near the previous length position
+          // Allow for some variance (AI rephrasing may shift things ±20%)
+          const searchStart = Math.max(0, Math.floor(previousLength * 0.8));
+          const searchEnd = Math.min(currentTranscript.length, Math.ceil(previousLength * 1.2));
           
-          // Find the longest matching prefix of words
-          let matchedWords = 0;
-          for (let i = 0; i < Math.min(prevWords.length, currWords.length); i++) {
-            if (prevWords[i] === currWords[i]) {
-              matchedWords = i + 1;
-            } else {
+          // Find a sentence/clause boundary in that range (period, comma, or word boundary)
+          let splitPos = previousLength;
+          
+          // Look for sentence endings (. or ,) near the expected position
+          for (let i = searchStart; i < searchEnd && i < currentTranscript.length; i++) {
+            const char = currentTranscript[i];
+            if ((char === '.' || char === ',') && i + 1 < currentTranscript.length && currentTranscript[i + 1] === ' ') {
+              // Found a good split point
+              splitPos = i + 2; // After the punctuation and space
               break;
             }
           }
           
-          // Extract new words after the matched prefix
-          if (matchedWords > 0) {
-            const originalWords = cumulativeTranscript.split(/\s+/);
-            deltaText = originalWords.slice(matchedWords).join(" ").trim();
+          // If no punctuation found, look for word boundary
+          if (splitPos === previousLength && splitPos < currentTranscript.length) {
+            // Find the next space after previousLength
+            const nextSpace = currentTranscript.indexOf(' ', previousLength);
+            if (nextSpace > 0 && nextSpace < searchEnd) {
+              splitPos = nextSpace + 1;
+            }
           }
+          
+          deltaText = currentTranscript.substring(splitPos).trim();
+          console.log(`[Delta] Previous ${previousLength} chars, split at ${splitPos}, delta: "${deltaText.substring(0, 50)}..."`);
         }
         
         // Update cumulative tracker
-        lastCumulativeTranscriptRef.current = cumulativeTranscript.trim();
+        lastCumulativeTranscriptRef.current = currentTranscript;
         
         if (deltaText) {
           const added = addTranscriptContent(deltaText, chunkItem.timestampSec);
-          console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${cumulativeTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
+          console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${currentTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
         } else {
-          console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${cumulativeTranscript.length} chars)`);
+          console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${currentTranscript.length} chars)`);
         }
       } else {
         console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty or null)`);
