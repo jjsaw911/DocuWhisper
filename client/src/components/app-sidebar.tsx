@@ -25,7 +25,6 @@ import {
   CreditCard,
   HelpCircle,
   LogOut,
-  Stethoscope,
   Crown,
 } from "lucide-react";
 import type { Note } from "@shared/schema";
@@ -134,6 +133,14 @@ export function AppSidebar() {
                   <Link href="/subscription" data-testid="nav-subscription">
                     <CreditCard className="h-4 w-4" />
                     <span>Subscription</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/settings"}>
+                  <Link href="/settings" data-testid="nav-settings">
+                    <Settings className="h-4 w-4" />
+                    <span>Settings</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

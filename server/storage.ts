@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 
@@ -28,6 +28,9 @@ export interface IStorage {
   getAllInvites(): Promise<Invite[]>;
   useInvite(code: string, userId: string): Promise<Invite | undefined>;
   deleteInvite(id: number): Promise<void>;
+  // User settings functions
+  getUserSettings(userId: string): Promise<UserSettings | undefined>;
+  upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -170,6 +173,24 @@ class DatabaseStorage implements IStorage {
 
   async deleteInvite(id: number): Promise<void> {
     await db.delete(invites).where(eq(invites.id, id));
+  }
+
+  // User settings functions
+  async getUserSettings(userId: string): Promise<UserSettings | undefined> {
+    const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId));
+    return settings;
+  }
+
+  async upsertUserSettings(data: InsertUserSettings): Promise<UserSettings> {
+    const [settings] = await db
+      .insert(userSettings)
+      .values(data)
+      .onConflictDoUpdate({
+        target: userSettings.userId,
+        set: { ...data, updatedAt: new Date() },
+      })
+      .returning();
+    return settings;
   }
 }
 

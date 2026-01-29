@@ -80,6 +80,29 @@ export const insertInviteSchema = createInsertSchema(invites).omit({
   usedAt: true,
 });
 
+// User settings/preferences
+export const userSettings = pgTable("user_settings", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  specialty: text("specialty"), // Medical specialty (e.g., "Primary Care", "Cardiology")
+  practiceName: text("practice_name"),
+  language: text("language").default("en"), // Preferred language
+  defaultTemplateId: integer("default_template_id"), // FK to templates
+  noteStyle: text("note_style").default("detailed"), // 'detailed', 'concise', 'bullet_points'
+  autoSaveEnabled: boolean("auto_save_enabled").default(true),
+  showTimestamps: boolean("show_timestamps").default(true), // Show timestamps in transcript
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertUserSettingsSchema = createInsertSchema(userSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type Note = typeof notes.$inferSelect;
 export type InsertNote = z.infer<typeof insertNoteSchema>;
 export type Subscription = typeof subscriptions.$inferSelect;
@@ -88,3 +111,5 @@ export type Template = typeof templates.$inferSelect;
 export type InsertTemplate = z.infer<typeof insertTemplateSchema>;
 export type Invite = typeof invites.$inferSelect;
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
+export type UserSettings = typeof userSettings.$inferSelect;
+export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;

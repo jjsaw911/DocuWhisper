@@ -22,6 +22,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Admin Dashboard:** Owner can view subscribers, extend memberships, create invite codes
 - **Invite System:** Generate codes for free trials, months, or lifetime access
 - **Email Invitations:** Send invite links directly to patient email addresses via Resend
+- **Settings Page:** Profile editing, clinical preferences, language settings, and recording preferences
 
 ## Tech Stack
 
@@ -102,6 +103,19 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `createdAt` - When the code was created
 - `expiresAt` - Optional expiration date for the code itself
 
+### User Settings Table
+- `id` - Auto-incrementing primary key
+- `userId` - User ID (unique)
+- `firstName`, `lastName` - User's name
+- `specialty` - Medical specialty (e.g., "Primary Care", "Cardiology")
+- `practiceName` - Practice or organization name
+- `language` - Preferred language (default: "en")
+- `defaultTemplateId` - Default template for new sessions
+- `noteStyle` - Note generation style ("detailed", "concise", "bullet_points")
+- `autoSaveEnabled` - Whether to auto-save notes (default: true)
+- `showTimestamps` - Show timestamps in transcript (default: true)
+- `createdAt`, `updatedAt` - Timestamps
+
 ## API Endpoints
 
 ### Authentication
@@ -126,6 +140,10 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `POST /api/templates` - Create template
 - `PUT /api/templates/:id` - Update template
 - `DELETE /api/templates/:id` - Delete template
+
+### Settings
+- `GET /api/settings` - Get user settings
+- `PUT /api/settings` - Update user settings
 
 ### Subscription
 - `GET /api/subscription` - Get subscription status

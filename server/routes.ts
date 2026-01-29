@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
-import { insertNoteSchema, insertTemplateSchema } from "@shared/schema";
+import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
@@ -426,6 +426,57 @@ If the transcript is unclear or empty, use "General Consultation".`
     } catch (error) {
       console.error("Error deleting template:", error);
       res.status(500).json({ error: "Failed to delete template" });
+    }
+  });
+
+  // User Settings routes
+  app.get("/api/settings", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const settings = await storage.getUserSettings(userId);
+      
+      // Return default settings if none exist
+      if (!settings) {
+        return res.json({
+          userId,
+          firstName: req.user.claims.first_name || null,
+          lastName: req.user.claims.last_name || null,
+          specialty: null,
+          practiceName: null,
+          language: "en",
+          defaultTemplateId: null,
+          noteStyle: "detailed",
+          autoSaveEnabled: true,
+          showTimestamps: true,
+        });
+      }
+      
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+      res.status(500).json({ error: "Failed to fetch settings" });
+    }
+  });
+
+  app.put("/api/settings", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Validate request body
+      const validatedData = insertUserSettingsSchema.omit({ userId: true }).parse(req.body);
+      
+      const settings = await storage.upsertUserSettings({
+        userId,
+        ...validatedData,
+      });
+      
+      res.json(settings);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid settings data", details: error.errors });
+      }
+      console.error("Error saving settings:", error);
+      res.status(500).json({ error: "Failed to save settings" });
     }
   });
 

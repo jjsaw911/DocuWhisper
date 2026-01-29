@@ -15,6 +15,7 @@ import Subscription from "@/pages/subscription";
 import Templates from "@/pages/templates";
 import Admin from "@/pages/admin";
 import Invite from "@/pages/invite";
+import Settings from "@/pages/settings";
 
 function AuthenticatedLayout() {
   const style = {
@@ -38,6 +39,7 @@ function AuthenticatedLayout() {
               <Route path="/notes/:id" component={NoteDetail} />
               <Route path="/subscription" component={Subscription} />
               <Route path="/templates" component={Templates} />
+              <Route path="/settings" component={Settings} />
               <Route path="/admin" component={Admin} />
               <Route component={NotFound} />
             </Switch>
