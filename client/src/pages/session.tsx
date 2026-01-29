@@ -140,24 +140,24 @@ export default function Session() {
     return text.trim().toLowerCase().replace(/[.,!?;:'"]/g, '').replace(/\s+/g, ' ');
   };
   
-  // Check if line exists in rolling window (last 20 lines) or last 2000 chars
+  // Check if chunk is an exact duplicate (not substring - that's too aggressive)
   const isInDeduplicationWindow = (line: string): boolean => {
     const normLine = normalize(line);
-    if (!normLine || normLine.length < 5) return true;
+    // Short or empty text should be added, not dropped
+    if (!normLine || normLine.length < 5) return false;
     
-    // Check rolling window of last 20 lines
+    // Only check for EXACT match in rolling window
+    // Each 15-second chunk is independent audio with unique content
+    // We only want to prevent processing the same chunk twice
     for (const recentLine of recentLinesRef.current) {
       if (normalize(recentLine) === normLine) {
+        console.log("[Dedup] Exact duplicate found");
         return true;
       }
     }
     
-    // Check last 2000 chars of committed text
-    const window2000 = normalize(committedTextRef.current.slice(-2000));
-    if (normLine.length > 10 && window2000.includes(normLine)) {
-      return true;
-    }
-    
+    // NO substring checking - removed because it drops legitimate content
+    // Independent audio chunks should have unique content
     return false;
   };
   
