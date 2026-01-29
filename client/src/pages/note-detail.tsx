@@ -29,7 +29,13 @@ import {
   Wand2,
   ChevronDown,
   ChevronUp,
-  Languages
+  Languages,
+  FileSignature,
+  Code2,
+  MessageSquare,
+  ClipboardList,
+  Send,
+  X
 } from "lucide-react";
 import {
   Select,
@@ -61,6 +67,26 @@ export default function NoteDetail() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [copied, setCopied] = useState(false);
   const [translateLanguage, setTranslateLanguage] = useState("es");
+  
+  // New feature states
+  const [showReferralModal, setShowReferralModal] = useState(false);
+  const [referralSpecialty, setReferralSpecialty] = useState("");
+  const [referralReason, setReferralReason] = useState("");
+  const [referralLetter, setReferralLetter] = useState("");
+  
+  const [showCodesPanel, setShowCodesPanel] = useState(false);
+  const [suggestedCodes, setSuggestedCodes] = useState<{
+    codes: { code: string; description: string; category: string; confidence: string }[];
+    cptCodes: { code: string; description: string; rationale: string }[];
+  } | null>(null);
+  
+  const [showAiChat, setShowAiChat] = useState(false);
+  const [chatQuestion, setChatQuestion] = useState("");
+  const [chatHistory, setChatHistory] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  
+  const [showSummaryPanel, setShowSummaryPanel] = useState(false);
+  const [summaryType, setSummaryType] = useState("brief");
+  const [generatedSummary, setGeneratedSummary] = useState("");
 
   const formatSoapNote = (note: Note) => {
     const parts = [];
@@ -219,6 +245,124 @@ export default function NoteDetail() {
       });
     },
   });
+
+  // Generate referral letter mutation
+  const referralMutation = useMutation({
+    mutationFn: async () => {
+      const sections = parseSoapFromText(formData.soapNote);
+      const response = await apiRequest("POST", "/api/generate-referral", {
+        patientName: formData.patientName,
+        subjective: sections.subjective || "",
+        objective: sections.objective || "",
+        assessment: sections.assessment || "",
+        plan: sections.plan || "",
+        referToSpecialty: referralSpecialty,
+        referralReason: referralReason,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setReferralLetter(data.referralLetter);
+      toast({
+        title: "Referral letter generated",
+        description: "You can now copy or edit the letter",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to generate referral",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Suggest codes mutation
+  const codesMutation = useMutation({
+    mutationFn: async () => {
+      const sections = parseSoapFromText(formData.soapNote);
+      const response = await apiRequest("POST", "/api/suggest-codes", {
+        subjective: sections.subjective || "",
+        objective: sections.objective || "",
+        assessment: sections.assessment || "",
+        plan: sections.plan || "",
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setSuggestedCodes(data);
+      setShowCodesPanel(true);
+      toast({
+        title: "Codes suggested",
+        description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to suggest codes",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // AI assistant mutation
+  const aiChatMutation = useMutation({
+    mutationFn: async (question: string) => {
+      const response = await apiRequest("POST", "/api/ai-assistant", {
+        question,
+        context: formData.soapNote,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setChatHistory(prev => [...prev, { role: "assistant", content: data.answer }]);
+      setChatQuestion("");
+    },
+    onError: () => {
+      toast({
+        title: "AI assistant error",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Generate summary mutation
+  const summaryMutation = useMutation({
+    mutationFn: async () => {
+      const sections = parseSoapFromText(formData.soapNote);
+      const response = await apiRequest("POST", "/api/generate-summary", {
+        patientName: formData.patientName,
+        subjective: sections.subjective || "",
+        objective: sections.objective || "",
+        assessment: sections.assessment || "",
+        plan: sections.plan || "",
+        summaryType,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setGeneratedSummary(data.summary);
+      toast({
+        title: "Summary generated",
+        description: "Patient summary is ready",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to generate summary",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendChat = () => {
+    if (!chatQuestion.trim()) return;
+    setChatHistory(prev => [...prev, { role: "user", content: chatQuestion }]);
+    aiChatMutation.mutate(chatQuestion);
+  };
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -524,6 +668,271 @@ export default function NoteDetail() {
                 )}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* AI Tools Section */}
+        <Card className="mb-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              AI Tools
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="flex flex-col items-center">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setShowReferralModal(true)}
+                  data-testid="button-referral"
+                >
+                  <FileSignature className="h-5 w-5" />
+                </Button>
+                <span className="text-xs mt-1 text-muted-foreground">Referral</span>
+              </div>
+              <div className="flex flex-col items-center">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => codesMutation.mutate()}
+                  disabled={codesMutation.isPending}
+                  data-testid="button-codes"
+                >
+                  {codesMutation.isPending ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Code2 className="h-5 w-5" />
+                  )}
+                </Button>
+                <span className="text-xs mt-1 text-muted-foreground">ICD-10</span>
+              </div>
+              <div className="flex flex-col items-center">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setShowAiChat(!showAiChat)}
+                  data-testid="button-ai-chat"
+                >
+                  <MessageSquare className="h-5 w-5" />
+                </Button>
+                <span className="text-xs mt-1 text-muted-foreground">AI Chat</span>
+              </div>
+              <div className="flex flex-col items-center">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setShowSummaryPanel(!showSummaryPanel)}
+                  data-testid="button-summary"
+                >
+                  <ClipboardList className="h-5 w-5" />
+                </Button>
+                <span className="text-xs mt-1 text-muted-foreground">Summary</span>
+              </div>
+            </div>
+
+            {/* ICD-10 Codes Panel */}
+            {showCodesPanel && suggestedCodes && (
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-codes">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium">Suggested Billing Codes</h4>
+                  <Button variant="ghost" size="icon" onClick={() => setShowCodesPanel(false)} data-testid="button-close-codes">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                {suggestedCodes.codes && suggestedCodes.codes.length > 0 && (
+                  <div>
+                    <h5 className="text-sm font-medium mb-2">ICD-10 Diagnosis Codes</h5>
+                    <div className="space-y-2">
+                      {suggestedCodes.codes.map((code, i) => (
+                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
+                          <Badge variant={code.category === "primary" ? "default" : "secondary"}>
+                            {code.code}
+                          </Badge>
+                          <div className="flex-1">
+                            <p className="text-sm">{code.description}</p>
+                            <p className="text-xs text-muted-foreground capitalize">{code.category} - {code.confidence} confidence</p>
+                          </div>
+                          <Button variant="ghost" size="icon" onClick={() => copyToClipboard(code.code)}>
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {suggestedCodes.cptCodes && suggestedCodes.cptCodes.length > 0 && (
+                  <div>
+                    <h5 className="text-sm font-medium mb-2">CPT E/M Codes</h5>
+                    <div className="space-y-2">
+                      {suggestedCodes.cptCodes.map((code, i) => (
+                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
+                          <Badge variant="outline">{code.code}</Badge>
+                          <div className="flex-1">
+                            <p className="text-sm">{code.description}</p>
+                            <p className="text-xs text-muted-foreground">{code.rationale}</p>
+                          </div>
+                          <Button variant="ghost" size="icon" onClick={() => copyToClipboard(code.code)}>
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AI Chat Panel */}
+            {showAiChat && (
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-ai-chat">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium">AI Assistant</h4>
+                  <Button variant="ghost" size="icon" onClick={() => setShowAiChat(false)} data-testid="button-close-ai-chat">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                <div className="max-h-[300px] overflow-auto space-y-3">
+                  {chatHistory.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      Ask questions about documentation, coding, or clinical guidance
+                    </p>
+                  )}
+                  {chatHistory.map((msg, i) => (
+                    <div key={i} className={`p-3 rounded-lg ${msg.role === "user" ? "bg-primary/10 ml-8" : "bg-background mr-8 border"}`}>
+                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Ask a question..."
+                    value={chatQuestion}
+                    onChange={(e) => setChatQuestion(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
+                    data-testid="input-ai-chat"
+                  />
+                  <Button onClick={handleSendChat} disabled={aiChatMutation.isPending || !chatQuestion.trim()} data-testid="button-send-ai-chat">
+                    {aiChatMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Patient Summary Panel */}
+            {showSummaryPanel && (
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-summary">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium">Generate Patient Summary</h4>
+                  <Button variant="ghost" size="icon" onClick={() => setShowSummaryPanel(false)} data-testid="button-close-summary">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                <div className="flex gap-2">
+                  <Select value={summaryType} onValueChange={setSummaryType}>
+                    <SelectTrigger className="w-[180px]" data-testid="select-summary-type">
+                      <SelectValue placeholder="Summary type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="brief">Brief Summary</SelectItem>
+                      <SelectItem value="detailed">Detailed Summary</SelectItem>
+                      <SelectItem value="handover">Handover Summary</SelectItem>
+                      <SelectItem value="discharge">Discharge Instructions</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button onClick={() => summaryMutation.mutate()} disabled={summaryMutation.isPending} className="flex-1" data-testid="button-generate-summary">
+                    {summaryMutation.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      "Generate"
+                    )}
+                  </Button>
+                </div>
+                
+                {generatedSummary && (
+                  <div className="p-3 bg-background rounded border">
+                    <div className="flex justify-end mb-2">
+                      <Button variant="ghost" size="icon" onClick={() => copyToClipboard(generatedSummary)} data-testid="button-copy-summary">
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="text-sm whitespace-pre-wrap" data-testid="text-summary">{generatedSummary}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Referral Letter Modal/Panel */}
+            {showReferralModal && (
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-referral">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium">Generate Referral Letter</h4>
+                  <Button variant="ghost" size="icon" onClick={() => setShowReferralModal(false)} data-testid="button-close-referral">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Refer to Specialty</Label>
+                    <Input
+                      placeholder="e.g., Cardiology, Orthopedics"
+                      value={referralSpecialty}
+                      onChange={(e) => setReferralSpecialty(e.target.value)}
+                      data-testid="input-referral-specialty"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Reason for Referral</Label>
+                    <Input
+                      placeholder="e.g., Further evaluation"
+                      value={referralReason}
+                      onChange={(e) => setReferralReason(e.target.value)}
+                      data-testid="input-referral-reason"
+                    />
+                  </div>
+                </div>
+                
+                <Button onClick={() => referralMutation.mutate()} disabled={referralMutation.isPending} className="w-full" data-testid="button-generate-referral">
+                  {referralMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <FileSignature className="mr-2 h-4 w-4" />
+                      Generate Referral Letter
+                    </>
+                  )}
+                </Button>
+                
+                {referralLetter && (
+                  <div className="p-3 bg-background rounded border">
+                    <div className="flex justify-end mb-2 gap-2">
+                      <Button variant="ghost" size="icon" onClick={() => copyToClipboard(referralLetter)} data-testid="button-copy-referral">
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={referralLetter}
+                      onChange={(e) => setReferralLetter(e.target.value)}
+                      className="min-h-[300px] text-sm"
+                      data-testid="textarea-referral-letter"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 

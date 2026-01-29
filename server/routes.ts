@@ -52,6 +52,37 @@ const translateNoteSchema = z.object({
   targetLanguage: z.enum(["en", "es", "fr", "de", "pt"]),
 });
 
+const generateReferralSchema = z.object({
+  patientName: z.string().optional(),
+  subjective: z.string().optional(),
+  objective: z.string().optional(),
+  assessment: z.string().optional(),
+  plan: z.string().optional(),
+  referToSpecialty: z.string().optional(),
+  referralReason: z.string().optional(),
+});
+
+const suggestCodesSchema = z.object({
+  subjective: z.string().optional(),
+  objective: z.string().optional(),
+  assessment: z.string().optional(),
+  plan: z.string().optional(),
+});
+
+const aiAssistantSchema = z.object({
+  question: z.string().min(1, "Question is required"),
+  context: z.string().optional(),
+});
+
+const generateSummarySchema = z.object({
+  patientName: z.string().optional(),
+  subjective: z.string().optional(),
+  objective: z.string().optional(),
+  assessment: z.string().optional(),
+  plan: z.string().optional(),
+  summaryType: z.enum(["brief", "detailed", "handover", "discharge"]).optional(),
+});
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -396,6 +427,207 @@ Return ONLY valid JSON with the same structure:
     } catch (error) {
       console.error("Error translating note:", error);
       res.status(500).json({ error: "Failed to translate note" });
+    }
+  });
+
+  // Generate referral letter from SOAP note
+  app.post("/api/generate-referral", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = generateReferralSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      const { patientName, subjective, objective, assessment, plan, referToSpecialty, referralReason } = validationResult.data;
+      
+      const soapContent = `
+Patient: ${patientName || "Patient"}
+
+SUBJECTIVE: ${subjective || "Not provided"}
+
+OBJECTIVE: ${objective || "Not provided"}
+
+ASSESSMENT: ${assessment || "Not provided"}
+
+PLAN: ${plan || "Not provided"}
+      `.trim();
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical documentation assistant. Generate a professional referral letter based on the clinical notes provided.
+
+The referral should be to: ${referToSpecialty || "a specialist"}
+Reason for referral: ${referralReason || "Evaluation and management"}
+
+Format the letter professionally with:
+- Date
+- RE: Patient name
+- Dear Colleague/Dear Doctor
+- Brief clinical summary
+- Reason for referral
+- Relevant history and findings
+- Current medications (if mentioned)
+- Specific questions or concerns for the specialist
+- Closing with "Thank you for seeing this patient"
+- Signature line for the referring physician
+
+Keep the letter concise but comprehensive.`
+          },
+          { role: "user", content: soapContent }
+        ],
+        max_completion_tokens: 1500,
+      });
+
+      const letter = response.choices[0]?.message?.content || "";
+      res.json({ referralLetter: letter });
+    } catch (error) {
+      console.error("Error generating referral letter:", error);
+      res.status(500).json({ error: "Failed to generate referral letter" });
+    }
+  });
+
+  // Generate ICD-10 code suggestions from encounter
+  app.post("/api/suggest-codes", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = suggestCodesSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      const { subjective, objective, assessment, plan } = validationResult.data;
+      
+      const clinicalContent = `
+SUBJECTIVE: ${subjective || ""}
+OBJECTIVE: ${objective || ""}
+ASSESSMENT: ${assessment || ""}
+PLAN: ${plan || ""}
+      `.trim();
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical coding assistant. Based on the clinical documentation provided, suggest appropriate ICD-10 diagnosis codes.
+
+Return a JSON object with an array of suggested codes:
+{
+  "codes": [
+    {
+      "code": "ICD-10 code (e.g., J06.9)",
+      "description": "Code description",
+      "category": "primary" or "secondary",
+      "confidence": "high", "medium", or "low"
+    }
+  ],
+  "cptCodes": [
+    {
+      "code": "CPT code (e.g., 99213)",
+      "description": "E/M level description",
+      "rationale": "Brief rationale for this level"
+    }
+  ]
+}
+
+Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.`
+          },
+          { role: "user", content: clinicalContent }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 1000,
+      });
+
+      const content = response.choices[0]?.message?.content || "{}";
+      const codes = JSON.parse(content);
+      res.json(codes);
+    } catch (error) {
+      console.error("Error suggesting codes:", error);
+      res.status(500).json({ error: "Failed to suggest codes" });
+    }
+  });
+
+  // AI Chat assistant for documentation help
+  app.post("/api/ai-assistant", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = aiAssistantSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      const { question, context } = validationResult.data;
+
+      const systemPrompt = context ? 
+        `You are a helpful AI medical documentation assistant. The user has the following clinical context:
+
+${context}
+
+Answer their questions helpfully and concisely. If they ask about clinical matters, provide evidence-based guidance but always recommend consulting appropriate clinical resources or specialists for complex cases.` :
+        `You are a helpful AI medical documentation assistant. Help healthcare providers with documentation questions, clinical coding, letter writing, and workflow optimization. Be concise and practical.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question }
+        ],
+        max_completion_tokens: 1000,
+      });
+
+      const answer = response.choices[0]?.message?.content || "";
+      res.json({ answer });
+    } catch (error) {
+      console.error("Error with AI assistant:", error);
+      res.status(500).json({ error: "Failed to get AI response" });
+    }
+  });
+
+  // Generate patient summary from notes
+  app.post("/api/generate-summary", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = generateSummarySchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      const { patientName, subjective, objective, assessment, plan, summaryType } = validationResult.data;
+      
+      const soapContent = `
+Patient: ${patientName || "Patient"}
+
+SUBJECTIVE: ${subjective || "Not provided"}
+
+OBJECTIVE: ${objective || "Not provided"}
+
+ASSESSMENT: ${assessment || "Not provided"}
+
+PLAN: ${plan || "Not provided"}
+      `.trim();
+
+      const typeInstructions: Record<string, string> = {
+        brief: "Generate a brief 2-3 sentence summary suitable for a quick handover.",
+        detailed: "Generate a detailed summary paragraph covering all key clinical points.",
+        handover: "Generate a structured handover summary with key concerns, active issues, and pending actions.",
+        discharge: "Generate discharge summary instructions for the patient including diagnosis, treatment, and follow-up."
+      };
+
+      const instruction = typeInstructions[summaryType || "brief"] || typeInstructions.brief;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical documentation assistant. ${instruction}`
+          },
+          { role: "user", content: soapContent }
+        ],
+        max_completion_tokens: 800,
+      });
+
+      const summary = response.choices[0]?.message?.content || "";
+      res.json({ summary });
+    } catch (error) {
+      console.error("Error generating summary:", error);
+      res.status(500).json({ error: "Failed to generate summary" });
     }
   });
 

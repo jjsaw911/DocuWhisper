@@ -25,6 +25,10 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Settings Page:** Profile editing, clinical preferences, language settings, and recording preferences
 - **Multi-language Support:** Transcription and SOAP generation in English, Spanish, French, German, Portuguese
 - **Note Translation:** Translate existing SOAP notes to different languages
+- **Referral Letter Generation:** AI-generated professional referral letters from SOAP notes
+- **ICD-10 & CPT Code Suggestions:** AI-powered billing code recommendations based on encounter documentation
+- **AI Chat Assistant:** Built-in AI assistant for documentation questions and clinical guidance
+- **Patient Summary Generation:** Generate brief, detailed, handover, or discharge summaries
 
 ## Tech Stack
 
