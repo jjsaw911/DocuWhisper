@@ -32,6 +32,7 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Visit Modes:** Choose between Transcribing, Dictating, or Upload session audio modes
 - **Context Tab:** Add background patient information (history, medications, allergies) that informs AI generation
 - **Ask AI to do anything:** Persistent AI command bar at the bottom of the session for quick AI interactions
+- **Tasks:** Clinical task management for referrals, orders, coordination, and communication follow-ups with filtering and status tracking
 
 ## Tech Stack
 
@@ -125,6 +126,17 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `showTimestamps` - Show timestamps in transcript (default: true)
 - `createdAt`, `updatedAt` - Timestamps
 
+### Tasks Table
+- `id` - Auto-incrementing primary key
+- `userId` - Owner's user ID
+- `noteId` - Optional link to a note
+- `title` - Task description
+- `patientName` - Optional patient name
+- `category` - Task category: "document", "order", "coordinate", "communicate"
+- `status` - Task status: "todo", "completed"
+- `completedAt` - When the task was completed
+- `createdAt`, `updatedAt` - Timestamps
+
 ## API Endpoints
 
 ### Authentication
@@ -153,6 +165,15 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 ### Settings
 - `GET /api/settings` - Get user settings
 - `PUT /api/settings` - Update user settings
+
+### Tasks
+- `GET /api/tasks` - List user's tasks
+- `GET /api/tasks/:id` - Get single task
+- `POST /api/tasks` - Create task
+- `PATCH /api/tasks/:id` - Update task
+- `DELETE /api/tasks/:id` - Delete task
+- `POST /api/tasks/:id/complete` - Mark task complete
+- `POST /api/tasks/:id/uncomplete` - Reopen task
 
 ### Subscription
 - `GET /api/subscription` - Get subscription status
