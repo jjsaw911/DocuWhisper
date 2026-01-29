@@ -26,6 +26,7 @@ import {
   HelpCircle,
   LogOut,
   Crown,
+  ListTodo,
 } from "lucide-react";
 import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
@@ -125,6 +126,14 @@ export function AppSidebar() {
                   <Link href="/" data-testid="nav-scribe">
                     <FileText className="h-4 w-4" />
                     <span>Scribe</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/tasks"}>
+                  <Link href="/tasks" data-testid="nav-tasks">
+                    <ListTodo className="h-4 w-4" />
+                    <span>Tasks</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

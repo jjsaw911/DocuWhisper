@@ -13,6 +13,7 @@ import Session from "@/pages/session";
 import NoteDetail from "@/pages/note-detail";
 import Subscription from "@/pages/subscription";
 import Templates from "@/pages/templates";
+import Tasks from "@/pages/tasks";
 import Admin from "@/pages/admin";
 import Invite from "@/pages/invite";
 import Settings from "@/pages/settings";
@@ -37,6 +38,7 @@ function AuthenticatedLayout() {
               <Route path="/session/new" component={Session} />
               <Route path="/session/:id" component={Session} />
               <Route path="/notes/:id" component={NoteDetail} />
+              <Route path="/tasks" component={Tasks} />
               <Route path="/subscription" component={Subscription} />
               <Route path="/templates" component={Templates} />
               <Route path="/settings" component={Settings} />
