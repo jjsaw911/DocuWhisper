@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Mic, FileText, Clock, Shield, Stethoscope, Sparkles, Check, ArrowRight } from "lucide-react";
+import { Mic, FileText, Clock, Shield, Sparkles, Check, ArrowRight, Stethoscope } from "lucide-react";
 import { Link } from "wouter";
+import logoImage from "@/assets/logo.png";
 
 export default function Landing() {
   return (
@@ -11,9 +12,7 @@ export default function Landing() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary">
-                <Stethoscope className="h-5 w-5 text-primary-foreground" />
-              </div>
+              <img src={logoImage} alt="DocuWhisper" className="h-9 w-9 rounded-md" />
               <span className="text-xl font-semibold tracking-tight">DocuWhisper</span>
             </div>
             <nav className="hidden md:flex items-center gap-6">
@@ -314,9 +313,7 @@ export default function Landing() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
-                  <Stethoscope className="h-4 w-4 text-primary-foreground" />
-                </div>
+                <img src={logoImage} alt="DocuWhisper" className="h-7 w-7 rounded-md" />
                 <span className="font-semibold">DocuWhisper</span>
               </div>
               <nav className="flex items-center gap-4">

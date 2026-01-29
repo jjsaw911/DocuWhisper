@@ -29,6 +29,7 @@ import {
   Crown,
 } from "lucide-react";
 import type { Note } from "@shared/schema";
+import logoImage from "@/assets/logo.png";
 
 interface AdminCheckData {
   isAdmin: boolean;
@@ -88,9 +89,7 @@ export function AppSidebar() {
     <Sidebar className="border-r">
       <SidebarHeader className="p-4">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-            <Stethoscope className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <img src={logoImage} alt="DocuWhisper" className="h-8 w-8 rounded-lg" />
           <span className="font-semibold text-lg">DocuWhisper</span>
         </div>
       </SidebarHeader>
