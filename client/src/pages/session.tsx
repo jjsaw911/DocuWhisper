@@ -78,6 +78,10 @@ export default function Session() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const accumulatedTranscriptRef = useRef<string[]>([]);
+  const pendingChunksRef = useRef<Blob[]>([]);
+  const isTranscribingRef = useRef<boolean>(false);
+  const chunkCountRef = useRef<number>(0);
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -97,6 +101,53 @@ export default function Session() {
     }) + " " + now.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
     
     setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
+  };
+
+  const transcribeChunk = async (audioBlob: Blob): Promise<string | null> => {
+    try {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "chunk.webm");
+
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        console.error("Chunk transcription failed");
+        return null;
+      }
+
+      const data = await response.json();
+      return data.transcript || null;
+    } catch (error) {
+      console.error("Chunk transcription error:", error);
+      return null;
+    }
+  };
+
+  const processNextChunk = async () => {
+    if (isTranscribingRef.current || pendingChunksRef.current.length === 0) {
+      return;
+    }
+
+    isTranscribingRef.current = true;
+    const chunk = pendingChunksRef.current.shift();
+    
+    if (chunk) {
+      const transcript = await transcribeChunk(chunk);
+      if (transcript && transcript.trim()) {
+        accumulatedTranscriptRef.current.push(transcript);
+        addTranscriptEntry(transcript, "content");
+      }
+    }
+
+    isTranscribingRef.current = false;
+    
+    if (pendingChunksRef.current.length > 0) {
+      processNextChunk();
+    }
   };
 
   const updateAudioLevel = useCallback(() => {
@@ -132,17 +183,23 @@ export default function Session() {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+      accumulatedTranscriptRef.current = [];
+      pendingChunksRef.current = [];
+      chunkCountRef.current = 0;
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
+          chunkCountRef.current++;
+          pendingChunksRef.current.push(e.data);
+          processNextChunk();
         }
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(15000);
       setRecordingState("recording");
       setDuration(0);
-      addTranscriptEntry("Transcript started");
+      addTranscriptEntry("Listening... transcript will appear as you speak");
 
       timerRef.current = setInterval(() => {
         setDuration((d) => d + 1);
@@ -194,11 +251,19 @@ export default function Session() {
   const stopRecording = () => {
     return new Promise<Blob>((resolve) => {
       if (mediaRecorderRef.current) {
+        if (mediaRecorderRef.current.state === "recording") {
+          mediaRecorderRef.current.requestData();
+        }
+        
         mediaRecorderRef.current.onstop = () => {
-          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-          resolve(blob);
+          setTimeout(() => {
+            const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+            resolve(blob);
+          }, 100);
         };
         mediaRecorderRef.current.stop();
+      } else {
+        resolve(new Blob([], { type: "audio/webm" }));
       }
 
       if (streamRef.current) {
@@ -228,6 +293,113 @@ export default function Session() {
     },
   });
 
+  const finalizeRecording = async () => {
+    setRecordingState("processing");
+    addTranscriptEntry("Finalizing transcription...");
+
+    try {
+      processNextChunk();
+      
+      let waitCount = 0;
+      const maxWait = 120;
+      while ((isTranscribingRef.current || pendingChunksRef.current.length > 0) && waitCount < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        waitCount++;
+        if (!isTranscribingRef.current && pendingChunksRef.current.length > 0) {
+          processNextChunk();
+        }
+      }
+      
+      if (waitCount >= maxWait) {
+        console.warn("Transcription timeout - using available chunks");
+      }
+
+      const fullTranscript = accumulatedTranscriptRef.current.join(" ");
+      
+      if (!fullTranscript.trim()) {
+        toast({
+          title: "No speech detected",
+          description: "The recording didn't capture any speech. Please try again.",
+          variant: "destructive",
+        });
+        setRecordingState("idle");
+        return;
+      }
+
+      addTranscriptEntry("Generating clinical note...");
+
+      const soapResponse = await apiRequest("POST", "/api/generate-soap", {
+        transcript: fullTranscript,
+        patientName,
+        specialty: "general",
+        templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+      });
+
+      if (!soapResponse.ok) {
+        const errorData = await soapResponse.json().catch(() => ({}));
+        console.error("SOAP generation failed:", errorData);
+        throw new Error(errorData.error || "Failed to generate SOAP note");
+      }
+
+      const generatedSoap = await soapResponse.json();
+      console.log("Generated SOAP:", generatedSoap);
+
+      if (!generatedSoap.subjective && !generatedSoap.objective && !generatedSoap.assessment && !generatedSoap.plan) {
+        console.error("SOAP response has no content:", generatedSoap);
+        throw new Error("SOAP generation returned empty content");
+      }
+
+      setSoapNote(generatedSoap);
+
+      let noteTitle = patientName
+        ? `${patientName} - ${new Date().toLocaleDateString()}`
+        : `Session - ${new Date().toLocaleDateString()}`;
+
+      if (!patientName) {
+        try {
+          const titleResult = await generateTitleMutation.mutateAsync(fullTranscript);
+          if (titleResult.title) {
+            noteTitle = titleResult.title;
+          }
+        } catch {
+        }
+      }
+
+      const saveResponse = await apiRequest("POST", "/api/notes", {
+        title: noteTitle,
+        patientName: patientName || null,
+        specialty: "general",
+        subjective: generatedSoap.subjective || "",
+        objective: generatedSoap.objective || "",
+        assessment: generatedSoap.assessment || "",
+        plan: generatedSoap.plan || "",
+        transcript: fullTranscript,
+      });
+      const savedNote = await saveResponse.json();
+
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      setActiveTab("soap");
+      addTranscriptEntry("Note saved automatically");
+
+      toast({
+        title: "Session saved",
+        description: "Your note has been generated and saved",
+      });
+
+      navigate(`/notes/${savedNote.id}`);
+
+    } catch (error) {
+      console.error("Finalization failed:", error);
+      toast({
+        title: "Save failed",
+        description: "Could not generate and save the note. Please try again.",
+        variant: "destructive",
+      });
+    }
+
+    setRecordingState("idle");
+  };
+
   const transcribeMutation = useMutation({
     mutationFn: async (audioBlob: Blob) => {
       const formData = new FormData();
@@ -250,12 +422,10 @@ export default function Session() {
       if (data.transcript) {
         addTranscriptEntry(data.transcript, "content");
         
-        // Auto-save: Generate SOAP note and save automatically
         setRecordingState("processing");
         addTranscriptEntry("Generating clinical note...");
         
         try {
-          // Generate SOAP note
           const soapResponse = await apiRequest("POST", "/api/generate-soap", {
             transcript: data.transcript,
             patientName,
@@ -264,38 +434,23 @@ export default function Session() {
           });
           
           if (!soapResponse.ok) {
-            const errorData = await soapResponse.json().catch(() => ({}));
-            console.error("SOAP generation failed:", errorData);
-            throw new Error(errorData.error || "Failed to generate SOAP note");
+            throw new Error("Failed to generate SOAP note");
           }
           
           const generatedSoap = await soapResponse.json();
-          console.log("Generated SOAP:", generatedSoap);
-          
-          if (!generatedSoap.subjective && !generatedSoap.objective && !generatedSoap.assessment && !generatedSoap.plan) {
-            console.error("SOAP response has no content:", generatedSoap);
-            throw new Error("SOAP generation returned empty content");
-          }
-          
           setSoapNote(generatedSoap);
           
-          // Generate title from symptoms if no patient name
-          let noteTitle = patientName 
+          let noteTitle = patientName
             ? `${patientName} - ${new Date().toLocaleDateString()}`
             : `Session - ${new Date().toLocaleDateString()}`;
           
           if (!patientName) {
             try {
               const titleResult = await generateTitleMutation.mutateAsync(data.transcript);
-              if (titleResult.title) {
-                noteTitle = titleResult.title;
-              }
-            } catch {
-              // Fall back to default title
-            }
+              if (titleResult.title) noteTitle = titleResult.title;
+            } catch {}
           }
           
-          // Auto-save the note
           const saveResponse = await apiRequest("POST", "/api/notes", {
             title: noteTitle,
             patientName: patientName || null,
@@ -309,24 +464,11 @@ export default function Session() {
           const savedNote = await saveResponse.json();
           
           queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-          setActiveTab("soap");
-          addTranscriptEntry("Note saved automatically");
-          
-          toast({
-            title: "Session saved",
-            description: "Your note has been generated and saved",
-          });
-          
-          // Navigate to the saved note
+          toast({ title: "Session saved", description: "Your note has been generated and saved" });
           navigate(`/notes/${savedNote.id}`);
-          
         } catch (error) {
-          console.error("Auto-save failed:", error);
-          toast({
-            title: "Auto-save failed",
-            description: "Transcription complete, but automatic save failed. You can manually save.",
-            variant: "destructive",
-          });
+          console.error("Upload processing failed:", error);
+          toast({ title: "Processing failed", description: "Could not generate note from uploaded audio.", variant: "destructive" });
         }
         
         setRecordingState("idle");
@@ -409,9 +551,17 @@ export default function Session() {
   });
 
   const handleStopAndTranscribe = async () => {
-    setRecordingState("processing");
     const audioBlob = await stopRecording();
-    transcribeMutation.mutate(audioBlob);
+    
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    if (pendingChunksRef.current.length === 0 && accumulatedTranscriptRef.current.length === 0 && audioBlob.size > 0) {
+      setRecordingState("processing");
+      addTranscriptEntry("Processing short recording...");
+      transcribeMutation.mutate(audioBlob);
+    } else {
+      await finalizeRecording();
+    }
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
