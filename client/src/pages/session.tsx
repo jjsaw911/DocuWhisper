@@ -314,11 +314,14 @@ export default function Session() {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
           
-          // Create unique chunk item
+          // Create a COMPLETE blob from all chunks so far (includes header from first chunk)
+          const completeBlob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
+          
+          // Create unique chunk item with the complete audio
           const chunkId = nextChunkIdRef.current++;
-          const chunkItem: ChunkItem = { id: chunkId, blob: e.data, processed: false };
+          const chunkItem: ChunkItem = { id: chunkId, blob: completeBlob, processed: false };
           pendingChunksRef.current.push(chunkItem);
-          console.log(`[Chunk ${chunkId}] Queued (${e.data.size} bytes)`);
+          console.log(`[Chunk ${chunkId}] Queued complete blob (${completeBlob.size} bytes from ${chunksRef.current.length} fragments)`);
           
           processNextChunk();
         }
