@@ -237,7 +237,6 @@ export default function Session() {
     processedChunkIdsRef.current.add(chunkItem.id);
     
     console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes...`);
-    addTranscriptEntry(`Processing audio chunk ${chunkItem.id + 1}...`);
     
     try {
       const cumulativeTranscript = await transcribeChunk(chunkItem.blob);
@@ -279,19 +278,14 @@ export default function Session() {
         if (deltaText) {
           const added = addTranscriptContent(deltaText);
           console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${cumulativeTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
-          if (!added) {
-            addTranscriptEntry(`Chunk ${chunkItem.id + 1}: duplicate content skipped`);
-          }
         } else {
           console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${cumulativeTranscript.length} chars)`);
         }
       } else {
         console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty or null)`);
-        addTranscriptEntry(`Chunk ${chunkItem.id + 1}: no speech detected`);
       }
     } catch (err) {
       console.error(`[Chunk ${chunkItem.id}] Error:`, err);
-      addTranscriptEntry(`Chunk ${chunkItem.id + 1}: transcription error`);
     }
 
     // NOW mark as processed (after transcription completes)
