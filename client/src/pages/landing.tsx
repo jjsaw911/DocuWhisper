@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Mic, FileText, Clock, Shield, Sparkles, Check, ArrowRight, Stethoscope } from "lucide-react";
+import { Mic, FileText, Clock, Shield, Sparkles, Check, ArrowRight, Stethoscope, X, Zap, Users, Globe, AlertTriangle, Brain } from "lucide-react";
 import { Link } from "wouter";
 import logoImage from "@/assets/logo.png";
 
@@ -162,7 +162,162 @@ export default function Landing() {
           </div>
         </section>
 
-        <section id="pricing" className="py-20 md:py-28">
+        {/* Why Choose DocuWhisper - Competitive Advantages */}
+        <section className="py-20 md:py-28">
+          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center mb-16">
+              <h2 className="text-3xl sm:text-4xl font-bold mb-4">Why Healthcare Providers Choose DocuWhisper</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                See how we compare to other medical scribing solutions
+              </p>
+            </div>
+
+            {/* Comparison Table */}
+            <div className="max-w-4xl mx-auto mb-16 overflow-x-auto">
+              <div className="min-w-[600px]">
+                <div className="grid grid-cols-4 gap-4 mb-4">
+                  <div className="font-semibold text-lg">Feature</div>
+                  <div className="text-center font-semibold text-lg text-primary">DocuWhisper</div>
+                  <div className="text-center font-semibold text-muted-foreground">Heidi Health</div>
+                  <div className="text-center font-semibold text-muted-foreground">Nuance DAX</div>
+                </div>
+                
+                {[
+                  { feature: "Drug Interaction Alerts", us: true, heidi: false, nuance: false },
+                  { feature: "Medical Autocomplete", us: true, heidi: false, nuance: false },
+                  { feature: "Real-time Team Co-editing", us: true, heidi: false, nuance: false },
+                  { feature: "ICD-10 & CPT Suggestions", us: true, heidi: true, nuance: true },
+                  { feature: "Multi-language Support", us: true, heidi: true, nuance: false },
+                  { feature: "Custom SOAP Templates", us: true, heidi: true, nuance: false },
+                  { feature: "Practice/Team Management", us: true, heidi: false, nuance: true },
+                  { feature: "Task Management", us: true, heidi: false, nuance: false },
+                  { feature: "Analytics Dashboard", us: true, heidi: false, nuance: true },
+                  { feature: "Starting Price", us: "$25/mo", heidi: "$99/mo", nuance: "Enterprise" },
+                ].map((row, i) => (
+                  <div key={i} className={`grid grid-cols-4 gap-4 py-3 ${i % 2 === 0 ? 'bg-muted/30' : ''} rounded-lg px-2`}>
+                    <div className="font-medium">{row.feature}</div>
+                    <div className="text-center">
+                      {typeof row.us === 'boolean' ? (
+                        row.us ? <Check className="h-5 w-5 text-primary mx-auto" /> : <X className="h-5 w-5 text-muted-foreground mx-auto" />
+                      ) : (
+                        <span className="font-semibold text-primary">{row.us}</span>
+                      )}
+                    </div>
+                    <div className="text-center">
+                      {typeof row.heidi === 'boolean' ? (
+                        row.heidi ? <Check className="h-5 w-5 text-muted-foreground mx-auto" /> : <X className="h-5 w-5 text-muted-foreground/50 mx-auto" />
+                      ) : (
+                        <span className="text-muted-foreground">{row.heidi}</span>
+                      )}
+                    </div>
+                    <div className="text-center">
+                      {typeof row.nuance === 'boolean' ? (
+                        row.nuance ? <Check className="h-5 w-5 text-muted-foreground mx-auto" /> : <X className="h-5 w-5 text-muted-foreground/50 mx-auto" />
+                      ) : (
+                        <span className="text-muted-foreground">{row.nuance}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Key Differentiators */}
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-safety">
+                <CardContent className="pt-6">
+                  <div className="w-12 h-12 rounded-lg bg-red-100 dark:bg-red-950 flex items-center justify-center mb-4">
+                    <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Drug Interaction Alerts</h3>
+                  <p className="text-muted-foreground mb-3">
+                    <span className="font-semibold text-primary">Only DocuWhisper</span> automatically detects and warns about potential drug-drug interactions with severity levels.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Catch dangerous combinations like warfarin + aspirin before they become patient safety issues.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-autocomplete">
+                <CardContent className="pt-6">
+                  <div className="w-12 h-12 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center mb-4">
+                    <Brain className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Medical Terminology AI</h3>
+                  <p className="text-muted-foreground mb-3">
+                    <span className="font-semibold text-primary">Only DocuWhisper</span> provides intelligent autocomplete for 200+ medical terms as you type.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Symptoms, diagnoses, medications, procedures - all at your fingertips for faster, more accurate documentation.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-collab">
+                <CardContent className="pt-6">
+                  <div className="w-12 h-12 rounded-lg bg-green-100 dark:bg-green-950 flex items-center justify-center mb-4">
+                    <Users className="h-6 w-6 text-green-600 dark:text-green-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Real-time Team Collaboration</h3>
+                  <p className="text-muted-foreground mb-3">
+                    <span className="font-semibold text-primary">Only DocuWhisper</span> lets your team co-edit notes simultaneously with live presence indicators.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Perfect for teaching hospitals, group practices, and care coordination teams.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-price">
+                <CardContent className="pt-6">
+                  <div className="w-12 h-12 rounded-lg bg-amber-100 dark:bg-amber-950 flex items-center justify-center mb-4">
+                    <Zap className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">75% Lower Cost</h3>
+                  <p className="text-muted-foreground mb-3">
+                    At <span className="font-semibold text-primary">$25/month</span>, DocuWhisper costs a fraction of competitors charging $99-299/month.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Enterprise-grade features at a price independent practices can actually afford.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-languages">
+                <CardContent className="pt-6">
+                  <div className="w-12 h-12 rounded-lg bg-purple-100 dark:bg-purple-950 flex items-center justify-center mb-4">
+                    <Globe className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">5 Languages Built-in</h3>
+                  <p className="text-muted-foreground mb-3">
+                    Transcribe and generate notes in English, Spanish, French, German, and Portuguese.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Serve diverse patient populations without switching tools or paying extra.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-complete">
+                <CardContent className="pt-6">
+                  <div className="w-12 h-12 rounded-lg bg-teal-100 dark:bg-teal-950 flex items-center justify-center mb-4">
+                    <Sparkles className="h-6 w-6 text-teal-600 dark:text-teal-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Complete Clinical Suite</h3>
+                  <p className="text-muted-foreground mb-3">
+                    Referral letters, patient summaries, billing codes, task management, and analytics - all included.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Everything you need to run an efficient practice, not just transcription.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </section>
+
+        <section id="pricing" className="py-20 md:py-28 bg-muted/30">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-16">
               <h2 className="text-3xl sm:text-4xl font-bold mb-4">Simple, transparent pricing</h2>
