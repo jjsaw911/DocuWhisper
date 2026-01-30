@@ -30,8 +30,6 @@ import {
   Wand2,
   Settings,
   ChevronDown,
-  PanelRightClose,
-  PanelRightOpen,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -83,7 +81,7 @@ export default function Session() {
   const [audioLevel, setAudioLevel] = useState<number[]>([0, 0, 0, 0, 0]);
   const [transcriptEntries, setTranscriptEntries] = useState<TranscriptEntry[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("default");
-  const [activeTab, setActiveTab] = useState("transcript");
+  const [activeTab, setActiveTab] = useState("context");
   const [soapNote, setSoapNote] = useState<{
     subjective: string;
     objective: string;
@@ -101,9 +99,7 @@ export default function Session() {
   const [availableMicrophones, setAvailableMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicrophoneId, setSelectedMicrophoneId] = useState<string>("");
 
-  // Panel collapse state
-  const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
-
+  
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1124,9 +1120,29 @@ Plan: ${soapNote.plan}
 
         <div className="flex items-center justify-between px-4 py-2 border-t">
           <div className="flex items-center gap-2">
+            {/* Content tabs */}
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsList className="h-8">
+                <TabsTrigger value="context" className="text-xs px-3" data-testid="tab-context">
+                  <FileText className="h-3 w-3 mr-1" />
+                  Context
+                </TabsTrigger>
+                <TabsTrigger value="transcript" className="text-xs px-3" data-testid="tab-transcript">
+                  <AudioLines className="h-3 w-3 mr-1" />
+                  Transcript
+                </TabsTrigger>
+                <TabsTrigger value="soap" className="text-xs px-3" data-testid="tab-soap" disabled={!soapNote}>
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  SOAP
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          <div className="flex items-center gap-2">
             <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-              <SelectTrigger className="h-8 w-48" data-testid="select-template">
-                <SelectValue placeholder="Select template" />
+              <SelectTrigger className="h-8 w-40" data-testid="select-template">
+                <SelectValue placeholder="Template" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="default">Default Template</SelectItem>
@@ -1137,147 +1153,94 @@ Plan: ${soapNote.plan}
                 ))}
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="flex items-center gap-2">
+            
             <Button variant="outline" size="sm" className="h-8" data-testid="button-copy">
               <Copy className="h-3 w-3 mr-1" />
               Copy
-            </Button>
-            
-            {/* Panel toggle button */}
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="h-8"
-              onClick={() => setIsPanelCollapsed(!isPanelCollapsed)}
-              data-testid="button-toggle-panel"
-            >
-              {isPanelCollapsed ? (
-                <>
-                  <PanelRightOpen className="h-3 w-3 mr-1" />
-                  Show Panel
-                </>
-              ) : (
-                <>
-                  <PanelRightClose className="h-3 w-3 mr-1" />
-                  Hide Panel
-                </>
-              )}
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Main content area - Context input */}
-        <main className={`flex-1 overflow-auto p-6 transition-all duration-300 ${isPanelCollapsed ? '' : 'border-r'}`}>
-          <div className="max-w-3xl space-y-4">
-            <div>
-              <Label className="text-sm font-medium mb-2 block">Patient Background & Context</Label>
-              <p className="text-sm text-muted-foreground mb-3">
-                Add relevant patient history, medications, allergies, or other background information. 
-                This context will be used by the AI when generating clinical notes.
-              </p>
-              <Textarea
-                value={contextText}
-                onChange={(e) => setContextText(e.target.value)}
-                placeholder="e.g., Patient has history of Type 2 Diabetes (diagnosed 2019), on Metformin 1000mg BID. Previous allergic reaction to Penicillin. Last HbA1c: 7.2% (Jan 2024)."
-                className="min-h-[200px] text-base leading-relaxed"
-                data-testid="textarea-context"
-              />
-            </div>
-            
-            <div className="bg-muted/50 rounded-lg p-4">
-              <h4 className="font-medium text-sm mb-2">Tips for effective context</h4>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                <li>- Past medical history relevant to today's visit</li>
-                <li>- Current medications and dosages</li>
-                <li>- Known allergies or drug reactions</li>
-                <li>- Recent test results or imaging findings</li>
-                <li>- Relevant family or social history</li>
-              </ul>
-            </div>
-
-            {/* Visit mode selector */}
-            {transcriptEntries.length === 0 && recordingState === "idle" && (
-              <div className="flex flex-col items-center gap-4 py-8">
-                <h2 className="text-xl font-medium">Ready to start your session</h2>
-                <p className="text-muted-foreground text-center">
-                  Use the Transcribe button in the header or select a mode below
-                </p>
-                <div className="flex items-center gap-2">
-                  <Select value={visitMode} onValueChange={(v: VisitMode) => setVisitMode(v)}>
-                    <SelectTrigger className="w-[200px]" data-testid="select-visit-mode">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="transcribing">Transcribing</SelectItem>
-                      <SelectItem value="dictating">Dictating</SelectItem>
-                      <SelectItem value="upload">Upload session audio</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  <Button 
-                    onClick={() => {
-                      if (visitMode === "upload") {
-                        fileInputRef.current?.click();
-                      } else {
-                        startRecording();
-                      }
-                    }}
-                    className="gap-2"
-                    data-testid="button-start-session"
-                  >
-                    {visitMode === "upload" ? (
-                      <>
-                        <Upload className="h-4 w-4" />
-                        Upload
-                      </>
-                    ) : (
-                      <>
-                        <Mic className="h-4 w-4" />
-                        Start
-                      </>
-                    )}
-                  </Button>
+      <div className="flex-1 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+          {/* Main content area - changes based on selected tab */}
+          <main className="flex-1 overflow-auto p-6">
+            <div className="max-w-3xl mx-auto">
+              {/* Context Tab */}
+              <TabsContent value="context" className="mt-0 space-y-4">
+                <div>
+                  <Label className="text-sm font-medium mb-2 block">Patient Background & Context</Label>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Add relevant patient history, medications, allergies, or other background information. 
+                    This context will be used by the AI when generating clinical notes.
+                  </p>
+                  <Textarea
+                    value={contextText}
+                    onChange={(e) => setContextText(e.target.value)}
+                    placeholder="e.g., Patient has history of Type 2 Diabetes (diagnosed 2019), on Metformin 1000mg BID. Previous allergic reaction to Penicillin. Last HbA1c: 7.2% (Jan 2024)."
+                    className="min-h-[200px] text-base leading-relaxed"
+                    data-testid="textarea-context"
+                  />
                 </div>
-              </div>
-            )}
-          </div>
-        </main>
+                
+                <div className="bg-muted/50 rounded-lg p-4">
+                  <h4 className="font-medium text-sm mb-2">Tips for effective context</h4>
+                  <ul className="text-sm text-muted-foreground space-y-1">
+                    <li>- Past medical history relevant to today's visit</li>
+                    <li>- Current medications and dosages</li>
+                    <li>- Known allergies or drug reactions</li>
+                    <li>- Recent test results or imaging findings</li>
+                    <li>- Relevant family or social history</li>
+                  </ul>
+                </div>
+              </TabsContent>
 
-        {/* Collapsible right panel for Transcript/SOAP */}
-        <aside 
-          className={`bg-muted/30 overflow-hidden transition-all duration-300 ease-in-out flex flex-col ${
-            isPanelCollapsed ? 'w-0' : 'w-[480px]'
-          }`}
-        >
-          <div className="flex-1 overflow-auto p-4 min-w-[480px]">
-            {/* Panel header with tabs */}
-            <div className="flex items-center justify-between mb-4">
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
-                <TabsList className="h-8">
-                  <TabsTrigger value="transcript" className="text-xs px-3" data-testid="tab-transcript-panel">
-                    <AudioLines className="h-3 w-3 mr-1" />
-                    Transcript
-                  </TabsTrigger>
-                  <TabsTrigger value="soap" className="text-xs px-3" data-testid="tab-soap-panel" disabled={!soapNote}>
-                    <Sparkles className="h-3 w-3 mr-1" />
-                    SOAP
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              {/* Transcript Tab */}
               <TabsContent value="transcript" className="mt-0">
                 {transcriptEntries.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-[40vh] text-center">
-                    <AudioLines className="h-12 w-12 text-muted-foreground/30 mb-4" />
-                    <p className="text-muted-foreground text-sm">
-                      Your transcript will appear here
+                  <div className="flex flex-col items-center justify-center h-[50vh] text-center">
+                    <AudioLines className="h-16 w-16 text-muted-foreground/30 mb-4" />
+                    <h2 className="text-xl font-medium mb-2">Ready to start your session</h2>
+                    <p className="text-muted-foreground mb-6">
+                      Click Transcribe in the header to begin recording
                     </p>
+                    <div className="flex items-center gap-2">
+                      <Select value={visitMode} onValueChange={(v: VisitMode) => setVisitMode(v)}>
+                        <SelectTrigger className="w-[200px]" data-testid="select-visit-mode">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="transcribing">Transcribing</SelectItem>
+                          <SelectItem value="dictating">Dictating</SelectItem>
+                          <SelectItem value="upload">Upload session audio</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      
+                      <Button 
+                        onClick={() => {
+                          if (visitMode === "upload") {
+                            fileInputRef.current?.click();
+                          } else {
+                            startRecording();
+                          }
+                        }}
+                        className="gap-2"
+                        data-testid="button-start-session"
+                      >
+                        {visitMode === "upload" ? (
+                          <>
+                            <Upload className="h-4 w-4" />
+                            Upload
+                          </>
+                        ) : (
+                          <>
+                            <Mic className="h-4 w-4" />
+                            Start
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1286,8 +1249,8 @@ Plan: ${soapNote.plan}
                         {entry.type === "system" ? (
                           <p className="italic text-xs">{entry.text} {entry.timestamp}</p>
                         ) : (
-                          <div className="bg-background rounded-lg p-3 shadow-sm">
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed">{entry.text}</p>
+                          <div className="bg-muted/30 rounded-lg p-4">
+                            <p className="whitespace-pre-wrap text-base leading-relaxed">{entry.text}</p>
                           </div>
                         )}
                       </div>
@@ -1308,6 +1271,7 @@ Plan: ${soapNote.plan}
                 )}
               </TabsContent>
 
+              {/* SOAP Tab */}
               <TabsContent value="soap" className="mt-0">
                 {soapNote ? (
                   <div className="space-y-4">
@@ -1330,25 +1294,26 @@ Plan: ${soapNote.plan}
                               prev ? { ...prev, [key]: value } : null
                             )
                           }
-                          className="min-h-[80px] text-sm"
-                          rows={3}
-                          data-testid={`textarea-panel-${key}`}
+                          className="min-h-[100px] text-base"
+                          rows={4}
+                          data-testid={`textarea-${key}`}
                         />
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-[40vh] text-center">
-                    <Sparkles className="h-12 w-12 text-muted-foreground/30 mb-4" />
-                    <p className="text-muted-foreground text-sm">
-                      SOAP note will appear here
+                  <div className="flex flex-col items-center justify-center h-[50vh] text-center">
+                    <Sparkles className="h-16 w-16 text-muted-foreground/30 mb-4" />
+                    <h2 className="text-xl font-medium mb-2">No SOAP note yet</h2>
+                    <p className="text-muted-foreground">
+                      Record a transcript first, then click "Generate SOAP"
                     </p>
                   </div>
                 )}
               </TabsContent>
-            </Tabs>
-          </div>
-        </aside>
+            </div>
+          </main>
+        </Tabs>
       </div>
 
       <footer className="border-t bg-background p-3">
