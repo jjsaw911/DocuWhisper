@@ -55,6 +55,8 @@ export interface IStorage {
   }>;
   // Email digest
   getUsersWithEmailNotifications(): Promise<UserSettings[]>;
+  // Admin - get all users
+  getAllUserSettings(): Promise<UserSettings[]>;
   // Practice/Team functions
   createPractice(practice: InsertPractice): Promise<Practice>;
   getPractice(id: number): Promise<Practice | undefined>;
@@ -406,6 +408,10 @@ class DatabaseStorage implements IStorage {
   // Email digest
   async getUsersWithEmailNotifications(): Promise<UserSettings[]> {
     return db.select().from(userSettings).where(eq(userSettings.emailNotificationsEnabled, true));
+  }
+
+  async getAllUserSettings(): Promise<UserSettings[]> {
+    return db.select().from(userSettings).orderBy(desc(userSettings.createdAt));
   }
 
   // Practice/Team functions

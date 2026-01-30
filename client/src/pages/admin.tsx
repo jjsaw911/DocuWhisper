@@ -27,7 +27,8 @@ import {
   Crown,
   Shield,
   Mail,
-  Send
+  Send,
+  CreditCard
 } from "lucide-react";
 
 interface Subscription {
@@ -67,6 +68,18 @@ interface Organization {
   emrLicenseExpiry?: string;
   emrMaxUsers?: number;
   emrActiveUsers?: number;
+  createdAt: string;
+}
+
+interface UserInfo {
+  id: number;
+  userId: string;
+  firstName?: string;
+  lastName?: string;
+  preferredName?: string;
+  specialty?: string;
+  practiceName?: string;
+  language?: string;
   createdAt: string;
 }
 
@@ -117,6 +130,12 @@ export default function Admin() {
   const [emailInviteName, setEmailInviteName] = useState("");
   const [selectedEmrLicense, setSelectedEmrLicense] = useState<{ [key: number]: string }>({});
   const [selectedMaxUsers, setSelectedMaxUsers] = useState<{ [key: number]: string }>({});
+  const [newOrgName, setNewOrgName] = useState("");
+  const [newOrgOwnerId, setNewOrgOwnerId] = useState("");
+  const [newOrgDescription, setNewOrgDescription] = useState("");
+  const [selectedOrgForMember, setSelectedOrgForMember] = useState<number | null>(null);
+  const [newMemberUserId, setNewMemberUserId] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState("member");
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -135,6 +154,11 @@ export default function Admin() {
 
   const { data: organizations, isLoading: orgsLoading } = useQuery<Organization[]>({
     queryKey: ["/api/admin/organizations"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  const { data: allUsers, isLoading: usersLoading } = useQuery<UserInfo[]>({
+    queryKey: ["/api/admin/users"],
     enabled: !!user && adminCheck?.isAdmin === true,
   });
 
@@ -292,6 +316,53 @@ export default function Admin() {
     },
   });
 
+  const createOrganizationMutation = useMutation({
+    mutationFn: async ({ name, ownerId, description }: { name: string; ownerId: string; description?: string }) => {
+      const response = await apiRequest("POST", "/api/admin/organizations", { name, ownerId, description });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/organizations"] });
+      setNewOrgName("");
+      setNewOrgOwnerId("");
+      setNewOrgDescription("");
+      toast({
+        title: "Organization Created",
+        description: "The new organization has been created successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to create organization",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addMemberMutation = useMutation({
+    mutationFn: async ({ organizationId, userId, role }: { organizationId: number; userId: string; role: string }) => {
+      const response = await apiRequest("POST", `/api/admin/organizations/${organizationId}/members`, { userId, role });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/organizations"] });
+      setNewMemberUserId("");
+      setSelectedOrgForMember(null);
+      toast({
+        title: "Member Added",
+        description: "The user has been added to the organization",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to add member",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const copyCode = async (code: string) => {
     try {
       await navigator.clipboard.writeText(code);
@@ -368,6 +439,10 @@ export default function Admin() {
       <div className="p-6 max-w-6xl mx-auto">
         <Tabs defaultValue="organizations" className="space-y-6">
           <TabsList className="flex-wrap">
+            <TabsTrigger value="users" data-testid="tab-users">
+              <Users className="mr-2 h-4 w-4" />
+              Users
+            </TabsTrigger>
             <TabsTrigger value="organizations" data-testid="tab-organizations">
               <Shield className="mr-2 h-4 w-4" />
               Organizations
@@ -377,7 +452,7 @@ export default function Admin() {
               Email Invites
             </TabsTrigger>
             <TabsTrigger value="subscribers" data-testid="tab-subscribers">
-              <Users className="mr-2 h-4 w-4" />
+              <CreditCard className="mr-2 h-4 w-4" />
               Subscribers
             </TabsTrigger>
             <TabsTrigger value="invites" data-testid="tab-invites">
@@ -386,7 +461,218 @@ export default function Admin() {
             </TabsTrigger>
           </TabsList>
 
+          <TabsContent value="users" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  All Users
+                </CardTitle>
+                <CardDescription>
+                  View all registered users and their settings
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {usersLoading ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : allUsers && allUsers.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>User ID</TableHead>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Specialty</TableHead>
+                          <TableHead>Practice</TableHead>
+                          <TableHead>Joined</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {allUsers.map((userInfo) => (
+                          <TableRow key={userInfo.id} data-testid={`row-user-${userInfo.id}`}>
+                            <TableCell className="font-mono text-xs max-w-[150px] truncate">
+                              {userInfo.userId}
+                            </TableCell>
+                            <TableCell>
+                              {userInfo.preferredName || `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || "-"}
+                            </TableCell>
+                            <TableCell>{userInfo.specialty || "-"}</TableCell>
+                            <TableCell>{userInfo.practiceName || "-"}</TableCell>
+                            <TableCell>{formatDate(userInfo.createdAt)}</TableCell>
+                            <TableCell>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(userInfo.userId);
+                                  toast({ title: "User ID copied" });
+                                }}
+                                data-testid={`button-copy-userid-${userInfo.id}`}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No users yet</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="organizations" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Plus className="h-5 w-5" />
+                  Create Organization
+                </CardTitle>
+                <CardDescription>
+                  Create a new organization/practice. Copy a User ID from the Users tab to set as owner.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="org-name">Organization Name *</Label>
+                    <Input
+                      id="org-name"
+                      placeholder="Clinic Name"
+                      value={newOrgName}
+                      onChange={(e) => setNewOrgName(e.target.value)}
+                      data-testid="input-org-name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="org-owner">Owner User ID *</Label>
+                    <Input
+                      id="org-owner"
+                      placeholder="Paste User ID"
+                      value={newOrgOwnerId}
+                      onChange={(e) => setNewOrgOwnerId(e.target.value)}
+                      data-testid="input-org-owner"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="org-description">Description</Label>
+                    <Input
+                      id="org-description"
+                      placeholder="Optional description"
+                      value={newOrgDescription}
+                      onChange={(e) => setNewOrgDescription(e.target.value)}
+                      data-testid="input-org-description"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={() => createOrganizationMutation.mutate({
+                        name: newOrgName,
+                        ownerId: newOrgOwnerId,
+                        description: newOrgDescription || undefined,
+                      })}
+                      disabled={!newOrgName || !newOrgOwnerId || createOrganizationMutation.isPending}
+                      className="w-full"
+                      data-testid="button-create-org"
+                    >
+                      {createOrganizationMutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Plus className="mr-2 h-4 w-4" />
+                      )}
+                      Create
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Add Member to Organization
+                </CardTitle>
+                <CardDescription>
+                  Add a user to an existing organization
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>Organization *</Label>
+                    <Select
+                      value={selectedOrgForMember?.toString() || ""}
+                      onValueChange={(value) => setSelectedOrgForMember(parseInt(value))}
+                    >
+                      <SelectTrigger data-testid="select-org-for-member">
+                        <SelectValue placeholder="Select organization" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {organizations?.map((org) => (
+                          <SelectItem key={org.id} value={org.id.toString()}>
+                            {org.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="member-userid">User ID *</Label>
+                    <Input
+                      id="member-userid"
+                      placeholder="Paste User ID"
+                      value={newMemberUserId}
+                      onChange={(e) => setNewMemberUserId(e.target.value)}
+                      data-testid="input-member-userid"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Role</Label>
+                    <Select value={newMemberRole} onValueChange={setNewMemberRole}>
+                      <SelectTrigger data-testid="select-member-role">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="member">Member</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={() => {
+                        if (selectedOrgForMember) {
+                          addMemberMutation.mutate({
+                            organizationId: selectedOrgForMember,
+                            userId: newMemberUserId,
+                            role: newMemberRole,
+                          });
+                        }
+                      }}
+                      disabled={!selectedOrgForMember || !newMemberUserId || addMemberMutation.isPending}
+                      className="w-full"
+                      data-testid="button-add-member"
+                    >
+                      {addMemberMutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Plus className="mr-2 h-4 w-4" />
+                      )}
+                      Add Member
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

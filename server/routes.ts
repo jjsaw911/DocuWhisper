@@ -1108,6 +1108,63 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // Get all users (admin only)
+  app.get("/api/admin/users", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const users = await storage.getAllUserSettings();
+      res.json(users);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // Create organization (admin only)
+  app.post("/api/admin/organizations", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { name, ownerId, description } = req.body;
+      
+      if (!name || !ownerId) {
+        return res.status(400).json({ error: "name and ownerId are required" });
+      }
+
+      const organization = await storage.createPractice({
+        name,
+        ownerId,
+        description: description || null,
+      });
+      
+      res.status(201).json(organization);
+    } catch (error) {
+      console.error("Error creating organization:", error);
+      res.status(500).json({ error: "Failed to create organization" });
+    }
+  });
+
+  // Add member to organization (admin only)
+  app.post("/api/admin/organizations/:id/members", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const { userId, role } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const member = await storage.addPracticeMember({
+        practiceId,
+        userId,
+        role: role || "member",
+        invitedBy: req.user.claims.sub,
+      });
+      
+      res.status(201).json(member);
+    } catch (error) {
+      console.error("Error adding member:", error);
+      res.status(500).json({ error: "Failed to add member" });
+    }
+  });
+
   // Extend a user's subscription (admin only)
   app.post("/api/admin/extend-subscription", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
