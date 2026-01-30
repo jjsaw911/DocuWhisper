@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
@@ -22,6 +23,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -52,6 +61,7 @@ interface AdminCheckData {
 export function AppSidebar() {
   const { user } = useAuth();
   const [location, navigate] = useLocation();
+  const [scribeMenuOpen, setScribeMenuOpen] = useState(false);
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
@@ -75,7 +85,6 @@ export function AppSidebar() {
   const isOwner = adminCheck?.isAdmin === true;
   const hasEmrAccess = emrAccess?.hasAccess === true;
   
-  // Get display name: preferredName > firstName from settings > firstName from auth > email
   const displayName = settings?.preferredName || settings?.firstName || user?.firstName || user?.email?.split("@")[0] || "User";
 
   const groupNotesByDate = (notes: Note[]) => {
@@ -112,6 +121,7 @@ export function AppSidebar() {
   };
 
   const groupedNotes = groupNotesByDate(notes);
+  const recentNotes = notes.slice(0, 10);
 
   return (
     <Sidebar className="border-r">
@@ -138,21 +148,93 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Scribe - navigates to notes page, no longer expands in sidebar */}
+              {/* Scribe with flyout submenu */}
               <SidebarMenuItem>
-                <SidebarMenuButton 
-                  asChild
-                  isActive={location === "/" || location.startsWith("/session") || location.startsWith("/notes")}
-                  data-testid="nav-scribe"
-                >
-                  <Link href="/notes">
-                    <FileText className="h-4 w-4" />
-                    <span>Scribe</span>
-                    {notes.length > 0 && (
-                      <span className="ml-auto text-xs text-muted-foreground">{notes.length}</span>
+                <DropdownMenu open={scribeMenuOpen} onOpenChange={setScribeMenuOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <SidebarMenuButton
+                      isActive={location === "/" || location.startsWith("/session") || location.startsWith("/notes")}
+                      data-testid="nav-scribe"
+                      className="w-full"
+                    >
+                      <FileText className="h-4 w-4" />
+                      <span>Scribe</span>
+                      <ChevronRight className="ml-auto h-4 w-4" />
+                    </SidebarMenuButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent 
+                    side="right" 
+                    align="start" 
+                    sideOffset={8}
+                    className="w-72"
+                  >
+                    <DropdownMenuLabel className="flex items-center justify-between">
+                      <span>Recent Sessions</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          setScribeMenuOpen(false);
+                          navigate("/notes");
+                        }}
+                        data-testid="button-view-all-notes"
+                      >
+                        View all
+                      </Button>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {recentNotes.length === 0 ? (
+                      <div className="px-2 py-4 text-center text-sm text-muted-foreground">
+                        No sessions yet. Start a new session to begin.
+                      </div>
+                    ) : (
+                      <ScrollArea className="h-[300px]">
+                        {Object.entries(groupNotesByDate(recentNotes)).map(([date, dateNotes]) => (
+                          <div key={date}>
+                            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                              {date}
+                            </div>
+                            {dateNotes.map((note) => (
+                              <DropdownMenuItem
+                                key={note.id}
+                                className="cursor-pointer"
+                                onClick={() => {
+                                  setScribeMenuOpen(false);
+                                  navigate(`/notes/${note.id}`);
+                                }}
+                                data-testid={`note-item-${note.id}`}
+                              >
+                                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                  <span className="truncate font-medium text-sm">
+                                    {note.title || note.patientName || "Untitled"}
+                                  </span>
+                                  {note.patientName && note.title !== note.patientName && (
+                                    <span className="truncate text-xs text-muted-foreground">
+                                      {note.patientName}
+                                    </span>
+                                  )}
+                                </div>
+                              </DropdownMenuItem>
+                            ))}
+                          </div>
+                        ))}
+                      </ScrollArea>
                     )}
-                  </Link>
-                </SidebarMenuButton>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      onClick={() => {
+                        setScribeMenuOpen(false);
+                        navigate("/session/new");
+                      }}
+                      data-testid="dropdown-new-session"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      New session
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location === "/tasks"}>
