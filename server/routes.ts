@@ -86,23 +86,40 @@ const createAppointmentSchema = z.object({
 });
 
 // EMR access middleware - checks if user has EMR access
+// Owner (vendor) automatically gets full EMR access to all organizations
 const hasEmrAccess = async (req: any, res: Response, next: Function) => {
   try {
     const userId = req.user?.claims?.sub;
+    const userEmail = req.user?.claims?.email;
+    const ownerEmail = process.env.OWNER_EMAIL;
+    
     if (!userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
     
+    // Owner (vendor) automatically has EMR access to all organizations
+    if (ownerEmail && userEmail === ownerEmail) {
+      req.isVendorOwner = true; // Flag for routes to know this is vendor access
+      return next();
+    }
+    
+    // Check for individual EMR access (legacy)
     const subscription = await storage.getSubscription(userId);
-    if (!subscription || subscription.status !== "active") {
-      return res.status(403).json({ error: "Active subscription required for EMR access" });
+    if (subscription?.status === "active" && subscription?.hasEmrAccess) {
+      return next();
     }
     
-    if (!subscription.hasEmrAccess) {
-      return res.status(403).json({ error: "EMR access not enabled. Contact admin for an EMR invite code." });
+    // Check for organization-based EMR access
+    const emrOrgs = await storage.getUserEmrOrganizations(userId);
+    if (emrOrgs.length > 0) {
+      req.emrOrganizations = emrOrgs; // Store org info for routes
+      return next();
     }
     
-    next();
+    // No EMR access found
+    return res.status(403).json({ 
+      error: "EMR access not enabled. Contact your organization admin or get an EMR invite code." 
+    });
   } catch (error) {
     console.error("EMR access check failed:", error);
     res.status(500).json({ error: "Failed to verify EMR access" });
@@ -2398,14 +2415,36 @@ PLAN: ${plan || "Not provided"}
   app.get("/api/emr/access", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
+      
       const subscription = await storage.getSubscription(userId);
       const settings = await storage.getUserSettings(userId);
+      const emrOrgs = await storage.getUserEmrOrganizations(userId);
+      
+      // Check if user is owner (vendor)
+      const isVendorOwner = ownerEmail && userEmail === ownerEmail;
+      
+      // Has access if: owner, individual EMR access, or org-based EMR access
+      const hasIndividualAccess = subscription?.hasEmrAccess === true && subscription?.status === "active";
+      const hasOrgAccess = emrOrgs.length > 0;
+      const hasAccess = isVendorOwner || hasIndividualAccess || hasOrgAccess;
+      
+      // For owner, get all EMR organizations
+      let organizations = emrOrgs;
+      if (isVendorOwner) {
+        const allOrgs = await storage.getAllOrganizationsWithEmr();
+        organizations = allOrgs.map(org => ({ practice: org, emrRole: 'vendor' as string | null }));
+      }
       
       res.json({
-        hasAccess: subscription?.hasEmrAccess === true && subscription?.status === "active",
+        hasAccess,
+        isVendorOwner,
         subscriptionStatus: subscription?.status || "none",
         consentAcknowledged: settings?.emrConsentAcknowledged || false,
         consentDate: settings?.emrConsentDate,
+        organizations, // List of orgs user has EMR access to
+        accessType: isVendorOwner ? 'vendor' : hasIndividualAccess ? 'individual' : hasOrgAccess ? 'organization' : 'none',
       });
     } catch (error) {
       console.error("Error checking EMR access:", error);
