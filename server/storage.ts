@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, auditLogs, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type AuditLog, type InsertAuditLog } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull, or, gte, arrayContains, count, inArray } from "drizzle-orm";
 
@@ -102,6 +102,9 @@ export interface IStorage {
   linkNoteToPatient(noteId: number, patientId: number): Promise<Note | undefined>;
   // EMR access
   grantEmrAccess(userId: string): Promise<Subscription | undefined>;
+  // Audit logging - HIPAA compliance
+  createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -709,6 +712,35 @@ class DatabaseStorage implements IStorage {
       .where(eq(subscriptions.userId, userId))
       .returning();
     return updated;
+  }
+
+  // Audit logging - HIPAA compliance
+  async createAuditLog(log: InsertAuditLog): Promise<AuditLog> {
+    const [created] = await db.insert(auditLogs).values(log).returning();
+    return created;
+  }
+
+  async getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]> {
+    const conditions = [];
+    
+    if (filters?.userId) {
+      conditions.push(eq(auditLogs.userId, filters.userId));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(auditLogs.patientId, filters.patientId));
+    }
+    if (filters?.resourceType) {
+      conditions.push(eq(auditLogs.resourceType, filters.resourceType));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(auditLogs.timestamp, filters.startDate));
+    }
+    
+    if (conditions.length === 0) {
+      return db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp)).limit(1000);
+    }
+    
+    return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.timestamp)).limit(1000);
   }
 }
 

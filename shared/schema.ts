@@ -292,3 +292,26 @@ export const insertPatientDocumentSchema = createInsertSchema(patientDocuments).
 
 export type PatientDocument = typeof patientDocuments.$inferSelect;
 export type InsertPatientDocument = z.infer<typeof insertPatientDocumentSchema>;
+
+// Audit Logs - HIPAA compliance for tracking PHI access
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  userEmail: text("user_email"),
+  action: text("action").notNull(), // 'view', 'create', 'update', 'delete', 'export', 'login', 'logout'
+  resourceType: text("resource_type").notNull(), // 'patient', 'note', 'appointment', 'document'
+  resourceId: integer("resource_id"),
+  patientId: integer("patient_id"), // For tracking patient-specific access
+  details: text("details"), // JSON string with additional context
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  timestamp: timestamp("timestamp").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
+  id: true,
+  timestamp: true,
+});
+
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;

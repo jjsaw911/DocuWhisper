@@ -109,6 +109,37 @@ const hasEmrAccess = async (req: any, res: Response, next: Function) => {
   }
 };
 
+// HIPAA Audit Logging Helper
+const logAudit = async (
+  req: any,
+  action: string,
+  resourceType: string,
+  resourceId?: number,
+  patientId?: number,
+  details?: object
+) => {
+  try {
+    const userId = req.user?.claims?.sub;
+    const userEmail = req.user?.claims?.email;
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    
+    await storage.createAuditLog({
+      userId: userId || 'anonymous',
+      userEmail,
+      action,
+      resourceType,
+      resourceId,
+      patientId,
+      details: details ? JSON.stringify(details) : undefined,
+      ipAddress: typeof ipAddress === 'string' ? ipAddress : ipAddress?.[0],
+      userAgent,
+    });
+  } catch (error) {
+    console.error("Failed to create audit log:", error);
+  }
+};
+
 const generateReferralSchema = z.object({
   patientName: z.string().optional(),
   subjective: z.string().optional(),
@@ -1149,6 +1180,26 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // Get audit logs (admin only) - HIPAA compliance
+  app.get("/api/admin/audit-logs", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId, patientId, resourceType, startDate, endDate } = req.query;
+      
+      const filters: any = {};
+      if (userId) filters.userId = userId;
+      if (patientId) filters.patientId = parseInt(patientId as string);
+      if (resourceType) filters.resourceType = resourceType;
+      if (startDate) filters.startDate = new Date(startDate as string);
+      if (endDate) filters.endDate = new Date(endDate as string);
+      
+      const logs = await storage.getAuditLogs(Object.keys(filters).length > 0 ? filters : undefined);
+      res.json(logs);
+    } catch (error) {
+      console.error("Error fetching audit logs:", error);
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  });
+
   // Send invite email (admin only)
   app.post("/api/admin/send-invite", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
@@ -2037,6 +2088,9 @@ PLAN: ${plan || "Not provided"}
         return res.status(404).json({ error: "Patient not found" });
       }
       
+      // HIPAA audit log - patient record viewed
+      await logAudit(req, 'view', 'patient', patientId, patientId, { patientName: `${patient.firstName} ${patient.lastName}` });
+      
       res.json(patient);
     } catch (error) {
       console.error("Error fetching patient:", error);
@@ -2058,6 +2112,9 @@ PLAN: ${plan || "Not provided"}
         ...parsed.data,
         userId,
       });
+      
+      // HIPAA audit log - patient record created
+      await logAudit(req, 'create', 'patient', patient.id, patient.id, { patientName: `${patient.firstName} ${patient.lastName}` });
       
       res.status(201).json(patient);
     } catch (error) {
@@ -2083,6 +2140,10 @@ PLAN: ${plan || "Not provided"}
       }
       
       const updated = await storage.updatePatient(patientId, parsed.data);
+      
+      // HIPAA audit log - patient record updated
+      await logAudit(req, 'update', 'patient', patientId, patientId, { fieldsUpdated: Object.keys(parsed.data) });
+      
       res.json(updated);
     } catch (error) {
       console.error("Error updating patient:", error);
@@ -2100,6 +2161,9 @@ PLAN: ${plan || "Not provided"}
       if (!patient || patient.userId !== userId) {
         return res.status(404).json({ error: "Patient not found" });
       }
+      
+      // HIPAA audit log - patient record deleted (log before deletion)
+      await logAudit(req, 'delete', 'patient', patientId, patientId, { patientName: `${patient.firstName} ${patient.lastName}` });
       
       await storage.deletePatient(patientId);
       res.status(204).send();

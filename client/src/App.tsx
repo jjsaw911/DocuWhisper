@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/use-auth";
+import { useSessionTimeout } from "@/hooks/use-session-timeout";
 import { AppSidebar } from "@/components/app-sidebar";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
@@ -24,6 +25,8 @@ import EMRPatientDetail from "@/pages/emr/patient-detail";
 import EMRSchedule from "@/pages/emr/schedule";
 
 function AuthenticatedLayout() {
+  useSessionTimeout(); // HIPAA compliance - auto-logout after 30 min inactivity
+  
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
