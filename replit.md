@@ -53,11 +53,19 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
   - Document storage: Upload and manage patient documents
 
 **HIPAA Compliance Features:**
-- **Audit Logging:** All PHI access logged with user, action, timestamp, IP address
+- **Comprehensive Audit Logging:** All PHI access logged with user, action, timestamp, IP address, user agent
+  - Patient records: view, create, update, delete operations
+  - Notes: view, create, update, delete operations
+  - Appointments: create, update, delete operations
+  - Documents: view, delete operations
+  - Login/logout security events
+  - EMR consent acknowledgments
 - **Session Timeout:** Auto-logout after 30 minutes of inactivity with 5-minute warning
 - **Access Control:** Role-based access with EMR invite requirement
+- **EMR Consent System:** Users must acknowledge HIPAA privacy practices before accessing patient data
 - **HTTPS/TLS:** All data encrypted in transit
 - **Admin Audit Log Viewer:** Admins can review all PHI access at `/api/admin/audit-logs`
+- **Audit Log Export:** Export compliance reports as CSV at `/api/admin/audit-logs/export`
 
 ## Tech Stack
 
