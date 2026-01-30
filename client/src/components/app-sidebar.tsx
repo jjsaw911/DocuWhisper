@@ -27,6 +27,8 @@ import {
   LogOut,
   Crown,
   ListTodo,
+  Share2,
+  TrendingUp,
 } from "lucide-react";
 import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
@@ -142,6 +144,22 @@ export function AppSidebar() {
                   <Link href="/templates" data-testid="nav-templates">
                     <LayoutTemplate className="h-4 w-4" />
                     <span>Templates</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/shared-notes"}>
+                  <Link href="/shared-notes" data-testid="nav-shared-notes">
+                    <Share2 className="h-4 w-4" />
+                    <span>Shared Notes</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/analytics"}>
+                  <Link href="/analytics" data-testid="nav-analytics">
+                    <TrendingUp className="h-4 w-4" />
+                    <span>Analytics</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

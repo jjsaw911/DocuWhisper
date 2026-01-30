@@ -72,6 +72,7 @@ export interface IStorage {
   getSharedNotesForUser(userId: string): Promise<{ note: Note; sharedBy: string; permission: string }[]>;
   getSharedNotesForPractice(practiceId: number): Promise<{ note: Note; sharedBy: string; permission: string }[]>;
   getNoteShareInfo(noteId: number): Promise<SharedNote[]>;
+  getShareById(shareId: number): Promise<SharedNote | undefined>;
   unshareNote(sharedNoteId: number): Promise<void>;
   // Advanced analytics
   getProductivityTrends(userId: string, days: number): Promise<{ date: string; noteCount: number }[]>;
@@ -472,6 +473,11 @@ class DatabaseStorage implements IStorage {
 
   async getNoteShareInfo(noteId: number): Promise<SharedNote[]> {
     return db.select().from(sharedNotes).where(eq(sharedNotes.noteId, noteId));
+  }
+
+  async getShareById(shareId: number): Promise<SharedNote | undefined> {
+    const [share] = await db.select().from(sharedNotes).where(eq(sharedNotes.id, shareId));
+    return share;
   }
 
   async unshareNote(sharedNoteId: number): Promise<void> {

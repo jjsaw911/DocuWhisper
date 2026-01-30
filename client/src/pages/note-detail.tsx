@@ -58,7 +58,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { Note, Task, Template } from "@shared/schema";
+import type { Note, Task, Template, Practice, SharedNote } from "@shared/schema";
 
 const TASK_CATEGORIES = [
   { value: "document", label: "Document", icon: FileText },
@@ -102,6 +102,69 @@ export default function NoteDetail() {
   } | null>(null);
   
   const [showAiChat, setShowAiChat] = useState(false);
+  
+  // Team sharing state
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [selectedPracticeId, setSelectedPracticeId] = useState<string>("");
+  
+  // Practices query for sharing
+  const { data: practices = [] } = useQuery<{ practice: Practice; role: string }[]>({
+    queryKey: ["/api/practices"],
+    enabled: !!user,
+  });
+  
+  // Note shares query
+  const { data: noteShares = [] } = useQuery<SharedNote[]>({
+    queryKey: ["/api/notes", id, "shares"],
+    enabled: !!user && !!id && showShareDialog,
+  });
+  
+  // Share with practice mutation
+  const shareWithPracticeMutation = useMutation({
+    mutationFn: async (practiceId: number) => {
+      const response = await apiRequest("POST", `/api/notes/${id}/share`, {
+        sharedWithPracticeId: practiceId,
+        permission: "view",
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", id, "shares"] });
+      toast({
+        title: "Note shared",
+        description: "Your note has been shared with the practice",
+      });
+      setSelectedPracticeId("");
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to share note",
+        variant: "destructive",
+      });
+    },
+  });
+  
+  // Unshare mutation
+  const unshareMutation = useMutation({
+    mutationFn: async (shareId: number) => {
+      await apiRequest("DELETE", `/api/notes/shares/${shareId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", id, "shares"] });
+      toast({
+        title: "Share removed",
+        description: "The note is no longer shared",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to remove share",
+        variant: "destructive",
+      });
+    },
+  });
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatHistory, setChatHistory] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   
@@ -557,9 +620,96 @@ export default function NoteDetail() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={shareNote} data-testid="button-share">
-              <Share2 className="h-4 w-4" />
-            </Button>
+            <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="icon" data-testid="button-share">
+                  <Share2 className="h-4 w-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Share Note</DialogTitle>
+                  <DialogDescription>
+                    Share this note with your team or copy it to clipboard
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  {practices.length > 0 && (
+                    <div className="space-y-3">
+                      <Label>Share with Practice</Label>
+                      <div className="flex gap-2">
+                        <Select value={selectedPracticeId} onValueChange={setSelectedPracticeId}>
+                          <SelectTrigger className="flex-1" data-testid="select-share-practice">
+                            <SelectValue placeholder="Select a practice" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {practices.map(({ practice }) => (
+                              <SelectItem key={practice.id} value={practice.id.toString()}>
+                                {practice.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          onClick={() => {
+                            if (selectedPracticeId) {
+                              shareWithPracticeMutation.mutate(parseInt(selectedPracticeId));
+                            }
+                          }}
+                          disabled={!selectedPracticeId || shareWithPracticeMutation.isPending}
+                          data-testid="button-share-with-practice"
+                        >
+                          {shareWithPracticeMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Users className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      
+                      {noteShares.length > 0 && (
+                        <div className="space-y-2">
+                          <Label className="text-sm text-muted-foreground">Currently shared with:</Label>
+                          {noteShares.map((share) => {
+                            const practice = practices.find(p => p.practice.id === share.sharedWithPracticeId);
+                            return (
+                              <div key={share.id} className="flex items-center justify-between p-2 bg-muted rounded">
+                                <span className="text-sm">
+                                  {practice?.practice.name || `Practice #${share.sharedWithPracticeId}`}
+                                </span>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => unshareMutation.mutate(share.id)}
+                                  disabled={unshareMutation.isPending}
+                                  data-testid={`button-unshare-${share.id}`}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  <div className="border-t pt-4">
+                    <Label className="mb-2 block">Or share via:</Label>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1" onClick={shareNote} data-testid="button-share-native">
+                        <Share2 className="h-4 w-4 mr-2" />
+                        Share
+                      </Button>
+                      <Button variant="outline" className="flex-1" onClick={() => copyToClipboard(formData.soapNote)} data-testid="button-copy-note">
+                        <Copy className="h-4 w-4 mr-2" />
+                        Copy to Clipboard
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Button variant="outline" size="icon" onClick={exportToPDF} data-testid="button-export">
               <Download className="h-4 w-4" />
             </Button>

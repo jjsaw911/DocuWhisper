@@ -39,6 +39,10 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Analytics Dashboard:** View total notes, weekly stats, task completion rates, and time saved
 - **Email Notifications:** Daily task digest emails with configurable delivery time
 - **Template Sharing:** Share templates publicly for other users to clone, browse public templates
+- **Team Collaboration:** Create practices/teams, invite team members, assign roles (owner, admin, member)
+- **Note Sharing:** Share notes with team practices, view notes shared with you, manage share permissions
+- **Shared Notes Page:** Dedicated view for notes shared with you by team members
+- **Advanced Analytics:** Productivity trends (notes per day chart), trending diagnoses (most common conditions), insights summary
 
 ## Tech Stack
 
@@ -204,6 +208,26 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - `POST /api/admin/invites` - Create new invite code
 - `POST /api/admin/send-invite` - Send invite email to a patient
 - `DELETE /api/admin/invites/:id` - Delete invite code
+
+### Practices/Teams
+- `GET /api/practices` - List practices user belongs to
+- `POST /api/practices` - Create new practice
+- `PATCH /api/practices/:id` - Update practice
+- `DELETE /api/practices/:id` - Delete practice
+- `GET /api/practices/:id/members` - Get practice members
+- `POST /api/practices/:id/members` - Add member to practice
+- `DELETE /api/practices/:id/members/:userId` - Remove member
+
+### Note Sharing
+- `POST /api/notes/:id/share` - Share note with user/practice
+- `GET /api/notes/:id/shares` - Get share info for a note
+- `DELETE /api/notes/shares/:shareId` - Unshare a note
+- `GET /api/shared-notes` - Get notes shared with current user
+
+### Analytics
+- `GET /api/analytics` - Get basic analytics (total notes, tasks, etc.)
+- `GET /api/analytics/productivity` - Get productivity trends (notes per day)
+- `GET /api/analytics/diagnoses` - Get trending diagnoses
 
 ## Environment Variables
 

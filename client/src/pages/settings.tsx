@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -17,7 +17,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Template, UserSettings } from "@shared/schema";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import type { Template, UserSettings, Practice, PracticeMember } from "@shared/schema";
 
 const SPECIALTIES = [
   "Primary Care",
@@ -82,12 +93,102 @@ export default function Settings() {
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
 
+  // Team/Practice management state
+  const [newPracticeName, setNewPracticeName] = useState("");
+  const [newPracticeDescription, setNewPracticeDescription] = useState("");
+  const [createPracticeOpen, setCreatePracticeOpen] = useState(false);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [selectedPractice, setSelectedPractice] = useState<{ practice: Practice; role: string } | null>(null);
+  const [newMemberUserId, setNewMemberUserId] = useState("");
+
   const { data: settings, isLoading: settingsLoading } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
   });
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
+  });
+
+  // Practices query
+  const { data: practices = [], isLoading: practicesLoading } = useQuery<{ practice: Practice; role: string }[]>({
+    queryKey: ["/api/practices"],
+  });
+
+  // Create practice mutation
+  const createPracticeMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/practices", {
+        name: newPracticeName,
+        description: newPracticeDescription || null,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/practices"] });
+      setCreatePracticeOpen(false);
+      setNewPracticeName("");
+      setNewPracticeDescription("");
+      toast({
+        title: "Practice created",
+        description: "Your new practice has been created successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create practice",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete practice mutation
+  const deletePracticeMutation = useMutation({
+    mutationFn: async (practiceId: number) => {
+      await apiRequest("DELETE", `/api/practices/${practiceId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/practices"] });
+      toast({
+        title: "Practice deleted",
+        description: "The practice has been removed",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete practice",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Add member mutation
+  const addMemberMutation = useMutation({
+    mutationFn: async ({ practiceId, userId }: { practiceId: number; userId: string }) => {
+      const response = await apiRequest("POST", `/api/practices/${practiceId}/members`, {
+        userId,
+        role: "member",
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/practices"] });
+      setAddMemberOpen(false);
+      setNewMemberUserId("");
+      setSelectedPractice(null);
+      toast({
+        title: "Member added",
+        description: "Team member has been added to the practice",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to add team member",
+        variant: "destructive",
+      });
+    },
   });
 
   useEffect(() => {
@@ -427,6 +528,203 @@ export default function Settings() {
               )}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-primary" />
+                  <CardTitle>Team & Practices</CardTitle>
+                </div>
+                <Dialog open={createPracticeOpen} onOpenChange={setCreatePracticeOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" data-testid="button-create-practice">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create Practice
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Create New Practice</DialogTitle>
+                      <DialogDescription>
+                        Create a practice to collaborate with your team members and share notes.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="practiceName">Practice Name</Label>
+                        <Input
+                          id="practiceName"
+                          value={newPracticeName}
+                          onChange={(e) => setNewPracticeName(e.target.value)}
+                          placeholder="e.g., City Medical Center"
+                          data-testid="input-new-practice-name"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="practiceDescription">Description (optional)</Label>
+                        <Textarea
+                          id="practiceDescription"
+                          value={newPracticeDescription}
+                          onChange={(e) => setNewPracticeDescription(e.target.value)}
+                          placeholder="Brief description of your practice"
+                          data-testid="input-practice-description"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setCreatePracticeOpen(false)}
+                        data-testid="button-cancel-practice"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => createPracticeMutation.mutate()}
+                        disabled={!newPracticeName.trim() || createPracticeMutation.isPending}
+                        data-testid="button-confirm-create-practice"
+                      >
+                        {createPracticeMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : null}
+                        Create Practice
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <CardDescription>Manage your practices and team collaboration</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {practicesLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : practices.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Users className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p className="font-medium">No practices yet</p>
+                  <p className="text-sm">Create a practice to start collaborating with your team</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {practices.map(({ practice, role }) => (
+                    <div
+                      key={practice.id}
+                      className="flex items-center justify-between p-4 border rounded-lg"
+                      data-testid={`practice-item-${practice.id}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Users className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{practice.name}</p>
+                            <Badge variant={role === "owner" ? "default" : role === "admin" ? "secondary" : "outline"}>
+                              {role === "owner" && <Crown className="h-3 w-3 mr-1" />}
+                              {role === "admin" && <Shield className="h-3 w-3 mr-1" />}
+                              {role}
+                            </Badge>
+                          </div>
+                          {practice.description && (
+                            <p className="text-sm text-muted-foreground">{practice.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {(role === "owner" || role === "admin") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedPractice({ practice, role });
+                              setAddMemberOpen(true);
+                            }}
+                            data-testid={`button-add-member-${practice.id}`}
+                          >
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            Add Member
+                          </Button>
+                        )}
+                        {role === "owner" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              if (confirm("Are you sure you want to delete this practice? All shared notes will be unshared.")) {
+                                deletePracticeMutation.mutate(practice.id);
+                              }
+                            }}
+                            data-testid={`button-delete-practice-${practice.id}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Add Member Dialog */}
+          <Dialog open={addMemberOpen} onOpenChange={setAddMemberOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add Team Member</DialogTitle>
+                <DialogDescription>
+                  Add a member to {selectedPractice?.practice.name} by entering their user ID.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="memberId">User ID</Label>
+                  <Input
+                    id="memberId"
+                    value={newMemberUserId}
+                    onChange={(e) => setNewMemberUserId(e.target.value)}
+                    placeholder="Enter user ID"
+                    data-testid="input-new-member-id"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Ask your team member for their user ID from their profile settings
+                  </p>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setAddMemberOpen(false);
+                    setNewMemberUserId("");
+                    setSelectedPractice(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (selectedPractice && newMemberUserId.trim()) {
+                      addMemberMutation.mutate({
+                        practiceId: selectedPractice.practice.id,
+                        userId: newMemberUserId.trim(),
+                      });
+                    }
+                  }}
+                  disabled={!newMemberUserId.trim() || addMemberMutation.isPending}
+                  data-testid="button-confirm-add-member"
+                >
+                  {addMemberMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : null}
+                  Add Member
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     </div>

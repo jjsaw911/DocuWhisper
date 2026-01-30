@@ -1751,11 +1751,21 @@ PLAN: ${plan || "Not provided"}
         return res.status(400).json({ error: "Must specify a user or practice to share with" });
       }
       
+      // If sharing to a practice, verify the user is a member of that practice
+      if (sharedWithPracticeId) {
+        const userPractices = await storage.getUserPractices(userId);
+        const isMember = userPractices.some(p => p.practice.id === parseInt(sharedWithPracticeId));
+        
+        if (!isMember) {
+          return res.status(403).json({ error: "You can only share notes with practices you belong to" });
+        }
+      }
+      
       const sharedNote = await storage.shareNote({
         noteId,
         sharedBy: userId,
         sharedWithUserId: sharedWithUserId || null,
-        sharedWithPracticeId: sharedWithPracticeId || null,
+        sharedWithPracticeId: sharedWithPracticeId ? parseInt(sharedWithPracticeId) : null,
         permission,
       });
       
@@ -1795,8 +1805,25 @@ PLAN: ${plan || "Not provided"}
       const shareId = parseInt(req.params.shareId);
       const userId = req.user.claims.sub;
       
-      // Get share info to verify ownership
-      // For now, we'll just delete - in production, verify the note owner
+      // Get the specific share record
+      const share = await storage.getShareById(shareId);
+      
+      if (!share) {
+        return res.status(404).json({ error: "Share not found" });
+      }
+      
+      // Get the actual note to verify ownership (defense in depth)
+      const note = await storage.getNote(share.noteId);
+      
+      if (!note) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+      
+      // Verify the current user owns the note (primary check)
+      if (note.userId !== userId) {
+        return res.status(403).json({ error: "Only the note owner can unshare it" });
+      }
+      
       await storage.unshareNote(shareId);
       res.status(204).send();
     } catch (error) {

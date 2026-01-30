@@ -17,6 +17,8 @@ import Tasks from "@/pages/tasks";
 import Admin from "@/pages/admin";
 import Invite from "@/pages/invite";
 import Settings from "@/pages/settings";
+import SharedNotes from "@/pages/shared-notes";
+import Analytics from "@/pages/analytics";
 
 function AuthenticatedLayout() {
   const style = {
@@ -42,6 +44,8 @@ function AuthenticatedLayout() {
               <Route path="/subscription" component={Subscription} />
               <Route path="/templates" component={Templates} />
               <Route path="/settings" component={Settings} />
+              <Route path="/shared-notes" component={SharedNotes} />
+              <Route path="/analytics" component={Analytics} />
               <Route path="/admin" component={Admin} />
               <Route component={NotFound} />
             </Switch>
