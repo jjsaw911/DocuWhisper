@@ -44,8 +44,24 @@ import {
   Mail,
   Calendar,
   Users,
+  Building2,
+  Shield,
 } from "lucide-react";
 import type { Patient } from "@shared/schema";
+
+interface Organization {
+  id: number;
+  name: string;
+  hasEmrLicense: boolean;
+}
+
+interface EmrAccessResponse {
+  hasAccess: boolean;
+  consentAcknowledged: boolean;
+  consentDate?: string;
+  accessType?: "vendor" | "organization" | "individual";
+  organizations?: Organization[];
+}
 
 const createPatientSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
@@ -67,16 +83,16 @@ export default function PatientsPage() {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
 
   const [showConsentDialog, setShowConsentDialog] = useState(false);
   
-  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ 
-    hasAccess: boolean;
-    consentAcknowledged: boolean;
-    consentDate?: string;
-  }>({
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<EmrAccessResponse>({
     queryKey: ["/api/emr/access"],
   });
+
+  const isVendor = emrAccess?.accessType === "vendor";
+  const emrOrganizations = emrAccess?.organizations?.filter(org => org.hasEmrLicense) || [];
 
   useEffect(() => {
     if (!isCheckingAccess && emrAccess && !emrAccess.hasAccess) {
@@ -87,15 +103,25 @@ export default function PatientsPage() {
       });
       setLocation("/");
     }
-    // Show consent dialog if user has access but hasn't acknowledged consent
     if (!isCheckingAccess && emrAccess?.hasAccess && !emrAccess.consentAcknowledged) {
       setShowConsentDialog(true);
     }
-  }, [emrAccess, isCheckingAccess, setLocation, toast]);
+    if (!isCheckingAccess && emrAccess?.hasAccess && emrOrganizations.length > 0 && !selectedOrgId) {
+      setSelectedOrgId(emrOrganizations[0].id);
+    }
+  }, [emrAccess, isCheckingAccess, setLocation, toast, emrOrganizations, selectedOrgId]);
 
   const { data: patients = [], isLoading } = useQuery<Patient[]>({
-    queryKey: ["/api/emr/patients"],
-    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
+    queryKey: ["/api/emr/patients", selectedOrgId],
+    queryFn: async () => {
+      const url = selectedOrgId 
+        ? `/api/emr/patients?organizationId=${selectedOrgId}` 
+        : "/api/emr/patients";
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch patients");
+      return response.json();
+    },
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
   });
 
   if (isCheckingAccess || !emrAccess?.hasAccess) {
@@ -133,11 +159,12 @@ export default function PatientsPage() {
 
   const createPatientMutation = useMutation({
     mutationFn: async (data: CreatePatientFormData) => {
-      const response = await apiRequest("POST", "/api/emr/patients", data);
+      const payload = selectedOrgId ? { ...data, organizationId: selectedOrgId } : data;
+      const response = await apiRequest("POST", "/api/emr/patients", payload);
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/emr/patients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/emr/patients", selectedOrgId] });
       toast({
         title: "Patient created",
         description: "New patient record has been added",
@@ -183,7 +210,34 @@ export default function PatientsPage() {
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+        {isVendor && emrOrganizations.length > 0 && (
+          <div className="mb-4 p-3 bg-muted/50 rounded-lg border flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Vendor View</span>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+              <Select
+                value={selectedOrgId?.toString() || ""}
+                onValueChange={(value) => setSelectedOrgId(parseInt(value))}
+              >
+                <SelectTrigger className="w-[250px]" data-testid="select-organization">
+                  <SelectValue placeholder="Select organization..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {emrOrganizations.map((org) => (
+                    <SelectItem key={org.id} value={org.id.toString()}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+        
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
           <div>
             <h1 className="text-2xl font-bold">Patients</h1>
             <p className="text-muted-foreground">

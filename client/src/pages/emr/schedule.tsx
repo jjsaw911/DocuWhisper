@@ -44,8 +44,24 @@ import {
   User,
   MapPin,
   CalendarDays,
+  Building2,
+  Shield,
 } from "lucide-react";
 import type { Appointment, Patient } from "@shared/schema";
+
+interface Organization {
+  id: number;
+  name: string;
+  hasEmrLicense: boolean;
+}
+
+interface EmrAccessResponse {
+  hasAccess: boolean;
+  consentAcknowledged: boolean;
+  consentDate?: string;
+  accessType?: "vendor" | "organization" | "individual";
+  organizations?: Organization[];
+}
 
 const createAppointmentSchema = z.object({
   patientId: z.number({ required_error: "Patient is required" }),
@@ -66,13 +82,14 @@ export default function SchedulePage() {
   const [, setLocation] = useLocation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [showConsentDialog, setShowConsentDialog] = useState(false);
+  const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
 
-  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ 
-    hasAccess: boolean;
-    consentAcknowledged: boolean;
-  }>({
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<EmrAccessResponse>({
     queryKey: ["/api/emr/access"],
   });
+
+  const isVendor = emrAccess?.accessType === "vendor";
+  const emrOrganizations = emrAccess?.organizations?.filter(org => org.hasEmrLicense) || [];
 
   useEffect(() => {
     if (!isCheckingAccess && emrAccess && !emrAccess.hasAccess) {
@@ -86,21 +103,48 @@ export default function SchedulePage() {
     if (!isCheckingAccess && emrAccess?.hasAccess && !emrAccess.consentAcknowledged) {
       setShowConsentDialog(true);
     }
-  }, [emrAccess, isCheckingAccess, setLocation, toast]);
+    if (!isCheckingAccess && emrAccess?.hasAccess && emrOrganizations.length > 0 && !selectedOrgId) {
+      setSelectedOrgId(emrOrganizations[0].id);
+    }
+  }, [emrAccess, isCheckingAccess, setLocation, toast, emrOrganizations, selectedOrgId]);
 
   const { data: appointments = [], isLoading } = useQuery<Appointment[]>({
-    queryKey: ["/api/emr/appointments"],
-    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
+    queryKey: ["/api/emr/appointments", selectedOrgId],
+    queryFn: async () => {
+      const url = selectedOrgId 
+        ? `/api/emr/appointments?organizationId=${selectedOrgId}` 
+        : "/api/emr/appointments";
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch appointments");
+      return response.json();
+    },
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
   });
 
   const { data: upcomingAppointments = [] } = useQuery<Appointment[]>({
-    queryKey: ["/api/emr/appointments/upcoming"],
-    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
+    queryKey: ["/api/emr/appointments/upcoming", selectedOrgId],
+    queryFn: async () => {
+      const url = selectedOrgId 
+        ? `/api/emr/appointments/upcoming?organizationId=${selectedOrgId}` 
+        : "/api/emr/appointments/upcoming";
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch appointments");
+      return response.json();
+    },
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
   });
 
   const { data: patients = [] } = useQuery<Patient[]>({
-    queryKey: ["/api/emr/patients"],
-    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
+    queryKey: ["/api/emr/patients", selectedOrgId],
+    queryFn: async () => {
+      const url = selectedOrgId 
+        ? `/api/emr/patients?organizationId=${selectedOrgId}` 
+        : "/api/emr/patients";
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch patients");
+      return response.json();
+    },
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
   });
 
   if (isCheckingAccess || !emrAccess?.hasAccess) {
@@ -238,7 +282,34 @@ export default function SchedulePage() {
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+        {isVendor && emrOrganizations.length > 0 && (
+          <div className="mb-4 p-3 bg-muted/50 rounded-lg border flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Vendor View</span>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+              <Select
+                value={selectedOrgId?.toString() || ""}
+                onValueChange={(value) => setSelectedOrgId(parseInt(value))}
+              >
+                <SelectTrigger className="w-[250px]" data-testid="select-organization">
+                  <SelectValue placeholder="Select organization..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {emrOrganizations.map((org) => (
+                    <SelectItem key={org.id} value={org.id.toString()}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+        
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
           <div>
             <h1 className="text-2xl font-bold">Schedule</h1>
             <p className="text-muted-foreground">

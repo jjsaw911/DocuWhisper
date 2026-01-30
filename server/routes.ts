@@ -2489,12 +2489,40 @@ PLAN: ${plan || "Not provided"}
 
   // ========== EMR PATIENT ROUTES ==========
 
-  // Get all patients for current user
+  // Get all patients - for vendors filter by organization, for regular users by their organization access
   app.get("/api/emr/patients", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const patients = await storage.getPatientsByUser(userId);
-      res.json(patients);
+      const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
+      
+      // Check if user is owner (vendor)
+      const ownerEmail = process.env.OWNER_EMAIL;
+      let userEmail: string | null = null;
+      const user = await storage.getUser(userId);
+      if (user) {
+        userEmail = user.email || null;
+      }
+      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      
+      if (isVendor && organizationId) {
+        // Vendor can access any organization's patients
+        const patients = await storage.getPatientsByOrganization(organizationId);
+        res.json(patients);
+      } else if (organizationId) {
+        // Check if user has access to this organization
+        const members = await storage.getPracticeMembers(organizationId);
+        const isMember = members.some((m: { userId: string }) => m.userId === userId);
+        if (isMember) {
+          const patients = await storage.getPatientsByOrganization(organizationId);
+          res.json(patients);
+        } else {
+          res.status(403).json({ error: "Access denied to this organization" });
+        }
+      } else {
+        // Default: get patients by user
+        const patients = await storage.getPatientsByUser(userId);
+        res.json(patients);
+      }
     } catch (error) {
       console.error("Error fetching patients:", error);
       res.status(500).json({ error: "Failed to fetch patients" });
@@ -2661,25 +2689,78 @@ PLAN: ${plan || "Not provided"}
 
   // ========== EMR APPOINTMENT ROUTES ==========
 
-  // Get all appointments for current user
+  // Get all appointments - for vendors filter by organization
   app.get("/api/emr/appointments", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const appointments = await storage.getAppointmentsByUser(userId);
-      res.json(appointments);
+      const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
+      
+      // Check if user is owner (vendor)
+      const ownerEmail = process.env.OWNER_EMAIL;
+      let userEmail: string | null = null;
+      const user = await storage.getUser(userId);
+      if (user) {
+        userEmail = user.email || null;
+      }
+      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      
+      if (isVendor && organizationId) {
+        // Vendor can access any organization's appointments
+        const appointments = await storage.getAppointmentsByOrganization(organizationId);
+        res.json(appointments);
+      } else if (organizationId) {
+        // Check if user has access to this organization
+        const members = await storage.getPracticeMembers(organizationId);
+        const isMember = members.some((m: { userId: string }) => m.userId === userId);
+        if (isMember) {
+          const appointments = await storage.getAppointmentsByOrganization(organizationId);
+          res.json(appointments);
+        } else {
+          res.status(403).json({ error: "Access denied to this organization" });
+        }
+      } else {
+        // Default: get appointments by user
+        const appointments = await storage.getAppointmentsByUser(userId);
+        res.json(appointments);
+      }
     } catch (error) {
       console.error("Error fetching appointments:", error);
       res.status(500).json({ error: "Failed to fetch appointments" });
     }
   });
 
-  // Get upcoming appointments
+  // Get upcoming appointments - for vendors filter by organization
   app.get("/api/emr/appointments/upcoming", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
       const days = parseInt(req.query.days as string) || 7;
-      const appointments = await storage.getUpcomingAppointments(userId, Math.min(days, 90));
-      res.json(appointments);
+      const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
+      
+      // Check if user is owner (vendor)
+      const ownerEmail = process.env.OWNER_EMAIL;
+      let userEmail: string | null = null;
+      const user = await storage.getUser(userId);
+      if (user) {
+        userEmail = user.email || null;
+      }
+      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      
+      if (isVendor && organizationId) {
+        const appointments = await storage.getUpcomingAppointmentsByOrganization(organizationId, Math.min(days, 90));
+        res.json(appointments);
+      } else if (organizationId) {
+        const members = await storage.getPracticeMembers(organizationId);
+        const isMember = members.some((m: { userId: string }) => m.userId === userId);
+        if (isMember) {
+          const appointments = await storage.getUpcomingAppointmentsByOrganization(organizationId, Math.min(days, 90));
+          res.json(appointments);
+        } else {
+          res.status(403).json({ error: "Access denied to this organization" });
+        }
+      } else {
+        const appointments = await storage.getUpcomingAppointments(userId, Math.min(days, 90));
+        res.json(appointments);
+      }
     } catch (error) {
       console.error("Error fetching upcoming appointments:", error);
       res.status(500).json({ error: "Failed to fetch upcoming appointments" });

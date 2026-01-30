@@ -116,6 +116,7 @@ export interface IStorage {
   // Organization-scoped EMR data
   getPatientsByOrganization(organizationId: number): Promise<Patient[]>;
   getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]>;
+  getUpcomingAppointmentsByOrganization(organizationId: number, days?: number): Promise<Appointment[]>;
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
@@ -874,6 +875,18 @@ class DatabaseStorage implements IStorage {
 
   async getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]> {
     return db.select().from(appointments).where(eq(appointments.organizationId, organizationId)).orderBy(desc(appointments.startTime));
+  }
+
+  async getUpcomingAppointmentsByOrganization(organizationId: number, days: number = 7): Promise<Appointment[]> {
+    const now = new Date();
+    const futureDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+    return db.select().from(appointments).where(
+      and(
+        eq(appointments.organizationId, organizationId),
+        gte(appointments.startTime, now),
+        lte(appointments.startTime, futureDate)
+      )
+    ).orderBy(appointments.startTime);
   }
 
   // Audit logging - HIPAA compliance
