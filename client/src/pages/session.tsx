@@ -627,7 +627,7 @@ export default function Session() {
 
   const finalizeRecording = async () => {
     setRecordingState("processing");
-    addTranscriptEntry("Finalizing transcription...");
+    addTranscriptEntry("Finishing transcription...");
 
     try {
       processNextChunk();
@@ -649,7 +649,7 @@ export default function Session() {
         console.warn("Transcription timeout - using available chunks");
       }
 
-      // Finalize any pending partial text before generating full transcript
+      // Finalize any pending partial text
       finalizePartial();
       const fullTranscript = committedTextRef.current;
       
@@ -663,79 +663,19 @@ export default function Session() {
         return;
       }
 
-      addTranscriptEntry("Generating clinical note...");
-
-      const soapResponse = await apiRequest("POST", "/api/generate-soap", {
-        transcript: fullTranscript,
-        patientName,
-        specialty: "general",
-        templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
-        outputLanguage: transcriptionLanguage,
-        context: contextText || undefined,
-      });
-
-      if (!soapResponse.ok) {
-        const errorData = await soapResponse.json().catch(() => ({}));
-        console.error("SOAP generation failed:", errorData);
-        throw new Error(errorData.error || "Failed to generate SOAP note");
-      }
-
-      const generatedSoap = await soapResponse.json();
-      console.log("Generated SOAP:", generatedSoap);
-
-      if (!generatedSoap.subjective && !generatedSoap.objective && !generatedSoap.assessment && !generatedSoap.plan) {
-        console.error("SOAP response has no content:", generatedSoap);
-        throw new Error("SOAP generation returned empty content");
-      }
-
-      setSoapNote(generatedSoap);
-
-      let noteTitle = patientName
-        ? `${patientName} - ${new Date().toLocaleDateString()}`
-        : `Session - ${new Date().toLocaleDateString()}`;
-
-      if (!patientName) {
-        try {
-          const titleResult = await generateTitleMutation.mutateAsync(fullTranscript);
-          if (titleResult.title) {
-            noteTitle = titleResult.title;
-          }
-        } catch {
-        }
-      }
-
-      const saveResponse = await apiRequest("POST", "/api/notes", {
-        title: noteTitle,
-        patientName: patientName || null,
-        specialty: "general",
-        subjective: generatedSoap.subjective || "",
-        objective: generatedSoap.objective || "",
-        assessment: generatedSoap.assessment || "",
-        plan: generatedSoap.plan || "",
-        transcript: fullTranscript,
-        patientContext: contextText || null,
-      });
-      const savedNote = await saveResponse.json();
-
-      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-      setActiveTab("soap");
-      addTranscriptEntry("Note saved automatically");
+      // Just show ready message - don't auto-generate or save
+      addTranscriptEntry("Ready. Click Resume to add more audio, or Generate SOAP when done.");
       
-      // Clear backup after successful save
-      clearBackup();
-
       toast({
-        title: "Session saved",
-        description: "Your note has been generated and saved",
+        title: "Recording complete",
+        description: "Click Resume to add more, or Generate SOAP when ready.",
       });
-
-      navigate(`/notes/${savedNote.id}`);
 
     } catch (error) {
       console.error("Finalization failed:", error);
       toast({
-        title: "Save failed",
-        description: "Could not generate and save the note. Please try again.",
+        title: "Processing failed",
+        description: "There was an issue processing the recording.",
         variant: "destructive",
       });
     }
