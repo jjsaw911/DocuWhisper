@@ -43,6 +43,9 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Note Sharing:** Share notes with team practices, view notes shared with you, manage share permissions
 - **Shared Notes Page:** Dedicated view for notes shared with you by team members
 - **Advanced Analytics:** Productivity trends (notes per day chart), trending diagnoses (most common conditions), insights summary
+- **Medical Terminology Autocomplete:** Smart suggestions while typing medical terms (symptoms, diagnoses, medications, procedures)
+- **Drug Interaction Alerts:** Automatic detection and warnings for potential drug-drug interactions with severity levels
+- **Real-time Co-editing:** WebSocket-based live collaboration on shared notes with presence indicators
 
 ## Tech Stack
 

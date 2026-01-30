@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams } from "wouter";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { 
   ArrowLeft, 
   Save,
@@ -40,8 +40,15 @@ import {
   Plus,
   ShoppingCart,
   Users,
-  Info
+  Info,
+  Pill,
+  Wifi,
+  WifiOff
 } from "lucide-react";
+import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
+import { useCollaboration } from "@/hooks/use-collaboration";
+import { CollaboratorAvatars } from "@/components/collaborator-avatars";
+import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import {
   Select,
   SelectContent,
@@ -76,6 +83,35 @@ export default function NoteDetail() {
   const { data: note, isLoading } = useQuery<Note>({
     queryKey: ["/api/notes", id],
     enabled: !!user && !!id,
+  });
+
+  // Handle remote updates from collaborators
+  const handleRemoteUpdate = useCallback((field: string, value: string) => {
+    if (field === "soapNote") {
+      setFormData(prev => ({ ...prev, soapNote: value }));
+    }
+  }, []);
+
+  // Format initial SOAP content for collaboration seeding
+  const initialSoapContent = useMemo(() => {
+    if (!note) return "";
+    const parts = [];
+    if (note.subjective) parts.push(`SUBJECTIVE:\n${note.subjective}`);
+    if (note.objective) parts.push(`OBJECTIVE:\n${note.objective}`);
+    if (note.assessment) parts.push(`ASSESSMENT:\n${note.assessment}`);
+    if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    return parts.join("\n\n");
+  }, [note]);
+
+  // Real-time collaboration hook
+  const noteId = id ? parseInt(id) : 0;
+  const { isConnected, collaborators, sendUpdate } = useCollaboration({
+    noteId,
+    userId: user?.id || "",
+    userName: user?.firstName || user?.email || "Anonymous",
+    onRemoteUpdate: handleRemoteUpdate,
+    initialContent: initialSoapContent, // Seed room with existing note content
+    enabled: !!user && noteId > 0 && !!note,
   });
 
   const [formData, setFormData] = useState({
@@ -618,8 +654,22 @@ export default function NoteDetail() {
             <span className="text-lg font-semibold truncate max-w-[300px]">
               {note.title}
             </span>
+            
+            {/* Collaboration indicator */}
+            {isConnected && (
+              <div className="flex items-center gap-2 ml-2">
+                <Badge variant="outline" className="gap-1 text-green-600 border-green-600" data-testid="collaboration-status">
+                  <Wifi className="h-3 w-3" />
+                  Live
+                </Badge>
+                <CollaboratorAvatars collaborators={collaborators} />
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
+            {/* Drug interaction check button */}
+            <DrugInteractionDialog text={formData.soapNote} />
+            
             <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="icon" data-testid="button-share">
@@ -798,12 +848,29 @@ export default function NoteDetail() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Textarea
+            {/* Drug interaction alert */}
+            <DrugInteractionAlert text={formData.soapNote} />
+            
+            <MedicalAutocomplete
               value={formData.soapNote}
-              onChange={(e) => setFormData({ ...formData, soapNote: e.target.value })}
+              onChange={(value) => {
+                setFormData({ ...formData, soapNote: value });
+                // Send update to collaborators
+                sendUpdate("soapNote", value);
+              }}
               className="min-h-[400px] text-base leading-relaxed"
-              style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
-              placeholder="SUBJECTIVE:&#10;Patient's symptoms...&#10;&#10;OBJECTIVE:&#10;Examination findings...&#10;&#10;ASSESSMENT:&#10;Diagnosis...&#10;&#10;PLAN:&#10;Treatment plan..."
+              rows={16}
+              placeholder="SUBJECTIVE:
+Patient's symptoms...
+
+OBJECTIVE:
+Examination findings...
+
+ASSESSMENT:
+Diagnosis...
+
+PLAN:
+Treatment plan..."
               data-testid="textarea-soap"
             />
             

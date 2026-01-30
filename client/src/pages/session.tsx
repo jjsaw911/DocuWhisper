@@ -10,6 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useParams } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { MedicalAutocomplete } from "@/components/medical-autocomplete";
+import { DrugInteractionAlert } from "@/components/drug-interaction-alert";
 import {
   Mic,
   Square,
@@ -1191,6 +1193,11 @@ Plan: ${soapNote.plan}
           <TabsContent value="soap" className="mt-0">
             {soapNote ? (
               <div className="space-y-6 max-w-3xl">
+                {/* Drug interaction alert */}
+                <DrugInteractionAlert 
+                  text={`${soapNote.subjective} ${soapNote.objective} ${soapNote.assessment} ${soapNote.plan}`} 
+                />
+                
                 {[
                   { key: "subjective", label: "Subjective" },
                   { key: "objective", label: "Objective" },
@@ -1199,15 +1206,15 @@ Plan: ${soapNote.plan}
                 ].map(({ key, label }) => (
                   <div key={key}>
                     <h3 className="font-medium mb-2">{label}</h3>
-                    <Textarea
+                    <MedicalAutocomplete
                       value={soapNote[key as keyof typeof soapNote]}
-                      onChange={(e) =>
+                      onChange={(value) =>
                         setSoapNote((prev) =>
-                          prev ? { ...prev, [key]: e.target.value } : null
+                          prev ? { ...prev, [key]: value } : null
                         )
                       }
                       className="min-h-[100px] text-base leading-relaxed"
-                      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+                      rows={4}
                       data-testid={`textarea-${key}`}
                     />
                   </div>
