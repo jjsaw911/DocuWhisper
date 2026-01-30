@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useParams, useLocation } from "wouter";
@@ -83,20 +83,43 @@ export default function PatientDetailPage() {
   const queryClient = useQueryClient();
   const patientId = parseInt(id || "0");
 
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ hasAccess: boolean }>({
+    queryKey: ["/api/emr/access"],
+  });
+
+  useEffect(() => {
+    if (!isCheckingAccess && emrAccess && !emrAccess.hasAccess) {
+      toast({
+        title: "Access Denied",
+        description: "You don't have access to the EMR system. Please contact your administrator.",
+        variant: "destructive",
+      });
+      navigate("/");
+    }
+  }, [emrAccess, isCheckingAccess, navigate, toast]);
+
   const { data: patient, isLoading } = useQuery<Patient>({
     queryKey: ["/api/emr/patients", patientId],
-    enabled: !!patientId,
+    enabled: !!patientId && emrAccess?.hasAccess === true,
   });
 
   const { data: patientNotes = [] } = useQuery<Note[]>({
     queryKey: ["/api/emr/patients", patientId, "notes"],
-    enabled: !!patientId,
+    enabled: !!patientId && emrAccess?.hasAccess === true,
   });
 
   const { data: patientAppointments = [] } = useQuery<Appointment[]>({
     queryKey: ["/api/emr/patients", patientId, "appointments"],
-    enabled: !!patientId,
+    enabled: !!patientId && emrAccess?.hasAccess === true,
   });
+
+  if (isCheckingAccess || !emrAccess?.hasAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Skeleton className="h-8 w-48" />
+      </div>
+    );
+  }
 
   const form = useForm<UpdatePatientFormData>({
     resolver: zodResolver(updatePatientSchema),

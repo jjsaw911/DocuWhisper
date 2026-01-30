@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -61,19 +62,46 @@ type CreateAppointmentFormData = z.infer<typeof createAppointmentSchema>;
 export default function SchedulePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ hasAccess: boolean }>({
+    queryKey: ["/api/emr/access"],
+  });
+
+  useEffect(() => {
+    if (!isCheckingAccess && emrAccess && !emrAccess.hasAccess) {
+      toast({
+        title: "Access Denied",
+        description: "You don't have access to the EMR system. Please contact your administrator.",
+        variant: "destructive",
+      });
+      setLocation("/");
+    }
+  }, [emrAccess, isCheckingAccess, setLocation, toast]);
 
   const { data: appointments = [], isLoading } = useQuery<Appointment[]>({
     queryKey: ["/api/emr/appointments"],
+    enabled: emrAccess?.hasAccess === true,
   });
 
   const { data: upcomingAppointments = [] } = useQuery<Appointment[]>({
     queryKey: ["/api/emr/appointments/upcoming"],
+    enabled: emrAccess?.hasAccess === true,
   });
 
   const { data: patients = [] } = useQuery<Patient[]>({
     queryKey: ["/api/emr/patients"],
+    enabled: emrAccess?.hasAccess === true,
   });
+
+  if (isCheckingAccess || !emrAccess?.hasAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Skeleton className="h-8 w-48" />
+      </div>
+    );
+  }
 
   const form = useForm<CreateAppointmentFormData>({
     resolver: zodResolver(createAppointmentSchema),
