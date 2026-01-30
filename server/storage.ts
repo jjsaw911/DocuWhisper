@@ -1,6 +1,6 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, isNull, or, gte, arrayContains, count } from "drizzle-orm";
+import { eq, desc, and, sql, isNull, or, gte, arrayContains, count, inArray } from "drizzle-orm";
 
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
@@ -55,6 +55,27 @@ export interface IStorage {
   }>;
   // Email digest
   getUsersWithEmailNotifications(): Promise<UserSettings[]>;
+  // Practice/Team functions
+  createPractice(practice: InsertPractice): Promise<Practice>;
+  getPractice(id: number): Promise<Practice | undefined>;
+  getPracticesByUser(userId: string): Promise<Practice[]>;
+  updatePractice(id: number, data: Partial<InsertPractice>): Promise<Practice | undefined>;
+  deletePractice(id: number): Promise<void>;
+  // Practice member functions
+  addPracticeMember(member: InsertPracticeMember): Promise<PracticeMember>;
+  getPracticeMembers(practiceId: number): Promise<PracticeMember[]>;
+  removePracticeMember(practiceId: number, userId: string): Promise<void>;
+  updatePracticeMemberRole(practiceId: number, userId: string, role: string): Promise<PracticeMember | undefined>;
+  getUserPractices(userId: string): Promise<{ practice: Practice; role: string }[]>;
+  // Shared notes functions
+  shareNote(sharedNote: InsertSharedNote): Promise<SharedNote>;
+  getSharedNotesForUser(userId: string): Promise<{ note: Note; sharedBy: string; permission: string }[]>;
+  getSharedNotesForPractice(practiceId: number): Promise<{ note: Note; sharedBy: string; permission: string }[]>;
+  getNoteShareInfo(noteId: number): Promise<SharedNote[]>;
+  unshareNote(sharedNoteId: number): Promise<void>;
+  // Advanced analytics
+  getProductivityTrends(userId: string, days: number): Promise<{ date: string; noteCount: number }[]>;
+  getTrendingDiagnoses(userId: string): Promise<{ diagnosis: string; count: number }[]>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -327,6 +348,202 @@ class DatabaseStorage implements IStorage {
   // Email digest
   async getUsersWithEmailNotifications(): Promise<UserSettings[]> {
     return db.select().from(userSettings).where(eq(userSettings.emailNotificationsEnabled, true));
+  }
+
+  // Practice/Team functions
+  async createPractice(practice: InsertPractice): Promise<Practice> {
+    const [created] = await db.insert(practices).values(practice).returning();
+    // Also add the owner as a member with 'owner' role
+    await db.insert(practiceMembers).values({
+      practiceId: created.id,
+      userId: practice.ownerId,
+      role: "owner",
+      invitedBy: practice.ownerId,
+    });
+    return created;
+  }
+
+  async getPractice(id: number): Promise<Practice | undefined> {
+    const [practice] = await db.select().from(practices).where(eq(practices.id, id));
+    return practice;
+  }
+
+  async getPracticesByUser(userId: string): Promise<Practice[]> {
+    return db.select().from(practices).where(eq(practices.ownerId, userId)).orderBy(desc(practices.createdAt));
+  }
+
+  async updatePractice(id: number, data: Partial<InsertPractice>): Promise<Practice | undefined> {
+    const [updated] = await db
+      .update(practices)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(practices.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePractice(id: number): Promise<void> {
+    // Delete all members and shared notes first
+    await db.delete(practiceMembers).where(eq(practiceMembers.practiceId, id));
+    await db.delete(sharedNotes).where(eq(sharedNotes.sharedWithPracticeId, id));
+    await db.delete(practices).where(eq(practices.id, id));
+  }
+
+  // Practice member functions
+  async addPracticeMember(member: InsertPracticeMember): Promise<PracticeMember> {
+    const [created] = await db.insert(practiceMembers).values(member).returning();
+    return created;
+  }
+
+  async getPracticeMembers(practiceId: number): Promise<PracticeMember[]> {
+    return db.select().from(practiceMembers).where(eq(practiceMembers.practiceId, practiceId));
+  }
+
+  async removePracticeMember(practiceId: number, userId: string): Promise<void> {
+    await db.delete(practiceMembers).where(
+      and(eq(practiceMembers.practiceId, practiceId), eq(practiceMembers.userId, userId))
+    );
+  }
+
+  async updatePracticeMemberRole(practiceId: number, userId: string, role: string): Promise<PracticeMember | undefined> {
+    const [updated] = await db
+      .update(practiceMembers)
+      .set({ role })
+      .where(and(eq(practiceMembers.practiceId, practiceId), eq(practiceMembers.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async getUserPractices(userId: string): Promise<{ practice: Practice; role: string }[]> {
+    const memberships = await db.select().from(practiceMembers).where(eq(practiceMembers.userId, userId));
+    if (memberships.length === 0) return [];
+    
+    const practiceIds = memberships.map(m => m.practiceId);
+    const practicesList = await db.select().from(practices).where(inArray(practices.id, practiceIds));
+    
+    return practicesList.map(p => ({
+      practice: p,
+      role: memberships.find(m => m.practiceId === p.id)?.role || "member",
+    }));
+  }
+
+  // Shared notes functions
+  async shareNote(sharedNote: InsertSharedNote): Promise<SharedNote> {
+    const [created] = await db.insert(sharedNotes).values(sharedNote).returning();
+    return created;
+  }
+
+  async getSharedNotesForUser(userId: string): Promise<{ note: Note; sharedBy: string; permission: string }[]> {
+    // Get notes shared directly with user
+    const directShares = await db.select().from(sharedNotes).where(eq(sharedNotes.sharedWithUserId, userId));
+    
+    // Get notes shared with practices user belongs to
+    const userMemberships = await db.select().from(practiceMembers).where(eq(practiceMembers.userId, userId));
+    const practiceIds = userMemberships.map(m => m.practiceId);
+    
+    let practiceShares: SharedNote[] = [];
+    if (practiceIds.length > 0) {
+      practiceShares = await db.select().from(sharedNotes).where(inArray(sharedNotes.sharedWithPracticeId, practiceIds));
+    }
+    
+    const allShares = [...directShares, ...practiceShares];
+    if (allShares.length === 0) return [];
+    
+    const noteIds = [...new Set(allShares.map(s => s.noteId))];
+    const notesList = await db.select().from(notes).where(inArray(notes.id, noteIds));
+    
+    return notesList.map(note => {
+      const share = allShares.find(s => s.noteId === note.id)!;
+      return { note, sharedBy: share.sharedBy, permission: share.permission };
+    });
+  }
+
+  async getSharedNotesForPractice(practiceId: number): Promise<{ note: Note; sharedBy: string; permission: string }[]> {
+    const shares = await db.select().from(sharedNotes).where(eq(sharedNotes.sharedWithPracticeId, practiceId));
+    if (shares.length === 0) return [];
+    
+    const noteIds = shares.map(s => s.noteId);
+    const notesList = await db.select().from(notes).where(inArray(notes.id, noteIds));
+    
+    return notesList.map(note => {
+      const share = shares.find(s => s.noteId === note.id)!;
+      return { note, sharedBy: share.sharedBy, permission: share.permission };
+    });
+  }
+
+  async getNoteShareInfo(noteId: number): Promise<SharedNote[]> {
+    return db.select().from(sharedNotes).where(eq(sharedNotes.noteId, noteId));
+  }
+
+  async unshareNote(sharedNoteId: number): Promise<void> {
+    await db.delete(sharedNotes).where(eq(sharedNotes.id, sharedNoteId));
+  }
+
+  // Advanced analytics
+  async getProductivityTrends(userId: string, days: number): Promise<{ date: string; noteCount: number }[]> {
+    const results: { date: string; noteCount: number }[] = [];
+    const now = new Date();
+    
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      const startOfDay = new Date(date.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(date.setHours(23, 59, 59, 999));
+      
+      const [result] = await db.select({ count: count() }).from(notes).where(
+        and(
+          eq(notes.userId, userId),
+          gte(notes.createdAt, startOfDay),
+          sql`${notes.createdAt} <= ${endOfDay}`
+        )
+      );
+      
+      results.push({
+        date: startOfDay.toISOString().split('T')[0],
+        noteCount: result?.count || 0,
+      });
+    }
+    
+    return results;
+  }
+
+  async getTrendingDiagnoses(userId: string): Promise<{ diagnosis: string; count: number }[]> {
+    // Get all assessments from user's notes
+    const userNotes = await db.select({ assessment: notes.assessment }).from(notes).where(
+      and(eq(notes.userId, userId), sql`${notes.assessment} IS NOT NULL AND ${notes.assessment} != ''`)
+    );
+    
+    // Parse diagnoses from assessments (common patterns: numbered lists, bullet points, or sentences)
+    const diagnosisCounts: Record<string, number> = {};
+    
+    for (const note of userNotes) {
+      if (!note.assessment) continue;
+      
+      // Split by common delimiters (newlines, numbered items, bullet points)
+      const lines = note.assessment.split(/[\n\r]+/).filter(line => line.trim());
+      
+      for (const line of lines) {
+        // Clean up the line (remove numbers, bullets, extra whitespace)
+        let cleaned = line.replace(/^[\d\.\)\-\*\•]+\s*/, '').trim();
+        if (cleaned.length < 3 || cleaned.length > 100) continue;
+        
+        // Extract the main diagnosis (first part before : or -)
+        const mainDiagnosis = cleaned.split(/[:\-–]/)[0].trim();
+        if (mainDiagnosis.length < 3) continue;
+        
+        // Normalize to lowercase for counting
+        const normalized = mainDiagnosis.toLowerCase();
+        diagnosisCounts[normalized] = (diagnosisCounts[normalized] || 0) + 1;
+      }
+    }
+    
+    // Sort by count and return top 10
+    return Object.entries(diagnosisCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([diagnosis, count]) => ({
+        diagnosis: diagnosis.charAt(0).toUpperCase() + diagnosis.slice(1),
+        count,
+      }));
   }
 }
 
