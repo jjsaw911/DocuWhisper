@@ -19,8 +19,6 @@ import {
   Play,
   Upload,
   Copy,
-  Undo,
-  Redo,
   Loader2,
   Calendar,
   Globe,
@@ -34,10 +32,6 @@ import {
   ChevronDown,
   PanelRightClose,
   PanelRightOpen,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Clock,
-  Plus,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -109,18 +103,6 @@ export default function Session() {
 
   // Panel collapse state
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
-  const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
-
-  // Fetch recent notes for left sidebar
-  const { data: recentNotes = [] } = useQuery<Array<{
-    id: number;
-    title: string;
-    patientName: string | null;
-    createdAt: string;
-  }>>({
-    queryKey: ["/api/notes"],
-    select: (data: any[]) => data.slice(0, 10), // Get last 10 notes
-  });
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -1255,84 +1237,6 @@ Plan: ${soapNote.plan}
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left sidebar - Recent Transcriptions */}
-        <aside 
-          className={`bg-muted/30 border-r transition-all duration-300 overflow-hidden flex flex-col ${
-            isLeftPanelCollapsed ? 'w-0' : 'w-64'
-          }`}
-        >
-          <div className="p-3 border-b flex items-center justify-between">
-            <h3 className="font-medium text-sm">Recent Sessions</h3>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => setIsLeftPanelCollapsed(true)}
-              data-testid="button-collapse-left-panel"
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </Button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto">
-            {/* New session button */}
-            <div className="p-2 border-b">
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2 text-sm"
-                onClick={() => navigate("/session/new")}
-                data-testid="button-new-session"
-              >
-                <Plus className="h-4 w-4" />
-                New Session
-              </Button>
-            </div>
-            
-            {/* Recent notes list */}
-            <div className="p-2 space-y-1">
-              {recentNotes.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">
-                  No recent sessions
-                </p>
-              ) : (
-                recentNotes.map((note) => (
-                  <button
-                    key={note.id}
-                    onClick={() => navigate(`/notes/${note.id}`)}
-                    className={`w-full text-left p-2 rounded-md hover-elevate text-sm transition-colors ${
-                      params.id === String(note.id) ? 'bg-primary/10' : ''
-                    }`}
-                    data-testid={`recent-note-${note.id}`}
-                  >
-                    <div className="font-medium truncate">
-                      {note.title || note.patientName || "Untitled"}
-                    </div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-                      <Clock className="h-3 w-3" />
-                      {new Date(note.createdAt).toLocaleDateString()}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </aside>
-
-        {/* Collapsed left panel toggle */}
-        {isLeftPanelCollapsed && (
-          <div className="border-r flex items-start p-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setIsLeftPanelCollapsed(false)}
-              data-testid="button-expand-left-panel"
-            >
-              <PanelLeftOpen className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-
         {/* Main content area - Context input */}
         <main className={`flex-1 overflow-auto p-6 transition-all duration-300 ${isPanelCollapsed ? '' : 'border-r'}`}>
           <div className="max-w-3xl space-y-4">
