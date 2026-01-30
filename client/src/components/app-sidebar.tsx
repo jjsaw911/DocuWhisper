@@ -138,51 +138,22 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Scribe with collapsible recent sessions */}
-              <Collapsible defaultOpen className="group/collapsible">
-                <SidebarMenuItem>
-                  <CollapsibleTrigger asChild>
-                    <SidebarMenuButton
-                      isActive={location === "/" || location.startsWith("/session") || location.startsWith("/notes")}
-                      data-testid="nav-scribe"
-                    >
-                      <FileText className="h-4 w-4" />
-                      <span>Scribe</span>
-                      <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
-                    </SidebarMenuButton>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <SidebarMenuSub>
-                      {Object.entries(groupedNotes).map(([date, dateNotes]) => (
-                        <div key={date}>
-                          <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
-                            {date}
-                          </div>
-                          {dateNotes.map((note) => (
-                            <SidebarMenuSubItem key={note.id}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={location === `/notes/${note.id}`}
-                              >
-                                <Link href={`/notes/${note.id}`} data-testid={`session-${note.id}`}>
-                                  <span className="truncate">
-                                    {note.patientName || note.title || "Untitled"}
-                                  </span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </div>
-                      ))}
-                      {notes.length === 0 && (
-                        <div className="px-2 py-2 text-xs text-muted-foreground">
-                          No sessions yet
-                        </div>
-                      )}
-                    </SidebarMenuSub>
-                  </CollapsibleContent>
-                </SidebarMenuItem>
-              </Collapsible>
+              {/* Scribe - navigates to notes page, no longer expands in sidebar */}
+              <SidebarMenuItem>
+                <SidebarMenuButton 
+                  asChild
+                  isActive={location === "/" || location.startsWith("/session") || location.startsWith("/notes")}
+                  data-testid="nav-scribe"
+                >
+                  <Link href="/notes">
+                    <FileText className="h-4 w-4" />
+                    <span>Scribe</span>
+                    {notes.length > 0 && (
+                      <span className="ml-auto text-xs text-muted-foreground">{notes.length}</span>
+                    )}
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location === "/tasks"}>
                   <Link href="/tasks" data-testid="nav-tasks">
