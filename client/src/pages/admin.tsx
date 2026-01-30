@@ -65,6 +65,12 @@ const MEMBERSHIP_TYPES = [
   { value: "months_6", label: "6 Months Free" },
   { value: "months_12", label: "1 Year Free" },
   { value: "lifetime", label: "Lifetime Access" },
+  // EMR Access types
+  { value: "emr_access", label: "EMR Access (Add-on)" },
+  { value: "emr_trial_30", label: "EMR + 30-Day Trial" },
+  { value: "emr_months_1", label: "EMR + 1 Month" },
+  { value: "emr_months_12", label: "EMR + 1 Year" },
+  { value: "emr_lifetime", label: "EMR + Lifetime" },
 ];
 
 const EXTENSION_TYPES = [

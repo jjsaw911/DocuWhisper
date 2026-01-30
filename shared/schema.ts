@@ -9,6 +9,7 @@ export * from "./models/chat";
 export const notes = pgTable("notes", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  patientId: integer("patient_id"), // Optional link to EMR patient record
   title: text("title").notNull(),
   patientName: text("patient_name"),
   specialty: text("specialty"),
@@ -29,6 +30,7 @@ export const subscriptions = pgTable("subscriptions", {
   stripeSubscriptionId: text("stripe_subscription_id"),
   status: text("status").default("inactive"),
   currentPeriodEnd: timestamp("current_period_end"),
+  hasEmrAccess: boolean("has_emr_access").default(false), // EMR feature access (granted via special invite)
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -203,3 +205,90 @@ export const insertSharedNoteSchema = createInsertSchema(sharedNotes).omit({
 
 export type SharedNote = typeof sharedNotes.$inferSelect;
 export type InsertSharedNote = z.infer<typeof insertSharedNoteSchema>;
+
+// ============ EMR TABLES ============
+
+// Patients - core EMR patient records
+export const patients = pgTable("patients", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(), // Provider who owns this patient record
+  // Demographics
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  dateOfBirth: timestamp("date_of_birth"),
+  gender: text("gender"), // 'male', 'female', 'other', 'prefer_not_to_say'
+  email: text("email"),
+  phone: text("phone"),
+  address: text("address"),
+  // Insurance
+  insuranceProvider: text("insurance_provider"),
+  insurancePolicyNumber: text("insurance_policy_number"),
+  // Medical Info
+  medicalHistory: text("medical_history"), // JSON or text summary
+  allergies: text("allergies"),
+  medications: text("medications"),
+  emergencyContactName: text("emergency_contact_name"),
+  emergencyContactPhone: text("emergency_contact_phone"),
+  // Status
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPatientSchema = createInsertSchema(patients).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Patient = typeof patients.$inferSelect;
+export type InsertPatient = z.infer<typeof insertPatientSchema>;
+
+// Appointments - scheduling system
+export const appointments = pgTable("appointments", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(), // Provider
+  patientId: integer("patient_id").notNull(), // Patient
+  title: text("title").notNull(),
+  description: text("description"),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time").notNull(),
+  status: text("status").notNull().default("scheduled"), // 'scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'
+  appointmentType: text("appointment_type").default("general"), // 'general', 'follow_up', 'initial', 'urgent', 'telehealth'
+  location: text("location"), // Office, telehealth link, etc.
+  notes: text("notes"),
+  reminderSent: boolean("reminder_sent").default(false),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertAppointmentSchema = createInsertSchema(appointments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Appointment = typeof appointments.$inferSelect;
+export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
+
+// Patient Documents - file storage for patient records
+export const patientDocuments = pgTable("patient_documents", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(), // Provider who uploaded
+  patientId: integer("patient_id").notNull(),
+  fileName: text("file_name").notNull(),
+  fileType: text("file_type").notNull(), // MIME type
+  fileSize: integer("file_size"), // In bytes
+  fileUrl: text("file_url").notNull(), // Storage URL
+  documentType: text("document_type").default("other"), // 'lab_result', 'imaging', 'referral', 'consent', 'insurance', 'other'
+  description: text("description"),
+  uploadedAt: timestamp("uploaded_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPatientDocumentSchema = createInsertSchema(patientDocuments).omit({
+  id: true,
+  uploadedAt: true,
+});
+
+export type PatientDocument = typeof patientDocuments.$inferSelect;
+export type InsertPatientDocument = z.infer<typeof insertPatientDocumentSchema>;

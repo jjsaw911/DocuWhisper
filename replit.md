@@ -46,6 +46,11 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
 - **Medical Terminology Autocomplete:** Smart suggestions while typing medical terms (symptoms, diagnoses, medications, procedures)
 - **Drug Interaction Alerts:** Automatic detection and warnings for potential drug-drug interactions with severity levels
 - **Real-time Co-editing:** WebSocket-based live collaboration on shared notes with presence indicators
+- **EMR System (Invite-Only):** Full electronic medical records for invited subscribers
+  - Patient records: Demographics, medical history, allergies, medications, insurance
+  - Scheduling: Appointment management with status tracking
+  - Note linking: Connect SOAP notes to patient records
+  - Document storage: Upload and manage patient documents
 
 ## Tech Stack
 

@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull, or, gte, arrayContains, count, inArray } from "drizzle-orm";
 
@@ -77,6 +77,31 @@ export interface IStorage {
   // Advanced analytics
   getProductivityTrends(userId: string, days: number): Promise<{ date: string; noteCount: number }[]>;
   getTrendingDiagnoses(userId: string): Promise<{ diagnosis: string; count: number }[]>;
+  // EMR - Patient functions
+  getPatientsByUser(userId: string): Promise<Patient[]>;
+  getPatient(id: number): Promise<Patient | undefined>;
+  createPatient(patient: InsertPatient): Promise<Patient>;
+  updatePatient(id: number, data: Partial<InsertPatient>): Promise<Patient | undefined>;
+  deletePatient(id: number): Promise<void>;
+  searchPatients(userId: string, query: string): Promise<Patient[]>;
+  // EMR - Appointment functions
+  getAppointmentsByUser(userId: string): Promise<Appointment[]>;
+  getAppointmentsByPatient(patientId: number): Promise<Appointment[]>;
+  getAppointment(id: number): Promise<Appointment | undefined>;
+  createAppointment(appointment: InsertAppointment): Promise<Appointment>;
+  updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined>;
+  deleteAppointment(id: number): Promise<void>;
+  getUpcomingAppointments(userId: string, days: number): Promise<Appointment[]>;
+  // EMR - Document functions
+  getDocumentsByPatient(patientId: number): Promise<PatientDocument[]>;
+  getDocument(id: number): Promise<PatientDocument | undefined>;
+  createDocument(document: InsertPatientDocument): Promise<PatientDocument>;
+  deleteDocument(id: number): Promise<void>;
+  // EMR - Note linking
+  getNotesByPatient(patientId: number): Promise<Note[]>;
+  linkNoteToPatient(noteId: number, patientId: number): Promise<Note | undefined>;
+  // EMR access
+  grantEmrAccess(userId: string): Promise<Subscription | undefined>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -550,6 +575,140 @@ class DatabaseStorage implements IStorage {
         diagnosis: diagnosis.charAt(0).toUpperCase() + diagnosis.slice(1),
         count,
       }));
+  }
+
+  // ============ EMR METHODS ============
+
+  // Patient methods
+  async getPatientsByUser(userId: string): Promise<Patient[]> {
+    return db.select().from(patients).where(eq(patients.userId, userId)).orderBy(desc(patients.createdAt));
+  }
+
+  async getPatient(id: number): Promise<Patient | undefined> {
+    const [patient] = await db.select().from(patients).where(eq(patients.id, id));
+    return patient;
+  }
+
+  async createPatient(patient: InsertPatient): Promise<Patient> {
+    const [created] = await db.insert(patients).values(patient).returning();
+    return created;
+  }
+
+  async updatePatient(id: number, data: Partial<InsertPatient>): Promise<Patient | undefined> {
+    const [updated] = await db
+      .update(patients)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(patients.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePatient(id: number): Promise<void> {
+    await db.delete(patients).where(eq(patients.id, id));
+  }
+
+  async searchPatients(userId: string, query: string): Promise<Patient[]> {
+    const searchPattern = `%${query.toLowerCase()}%`;
+    return db.select().from(patients).where(
+      and(
+        eq(patients.userId, userId),
+        or(
+          sql`LOWER(${patients.firstName}) LIKE ${searchPattern}`,
+          sql`LOWER(${patients.lastName}) LIKE ${searchPattern}`,
+          sql`LOWER(${patients.email}) LIKE ${searchPattern}`,
+          sql`${patients.phone} LIKE ${searchPattern}`
+        )
+      )
+    ).orderBy(patients.lastName, patients.firstName);
+  }
+
+  // Appointment methods
+  async getAppointmentsByUser(userId: string): Promise<Appointment[]> {
+    return db.select().from(appointments).where(eq(appointments.userId, userId)).orderBy(desc(appointments.startTime));
+  }
+
+  async getAppointmentsByPatient(patientId: number): Promise<Appointment[]> {
+    return db.select().from(appointments).where(eq(appointments.patientId, patientId)).orderBy(desc(appointments.startTime));
+  }
+
+  async getAppointment(id: number): Promise<Appointment | undefined> {
+    const [appointment] = await db.select().from(appointments).where(eq(appointments.id, id));
+    return appointment;
+  }
+
+  async createAppointment(appointment: InsertAppointment): Promise<Appointment> {
+    const [created] = await db.insert(appointments).values(appointment).returning();
+    return created;
+  }
+
+  async updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined> {
+    const [updated] = await db
+      .update(appointments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(appointments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteAppointment(id: number): Promise<void> {
+    await db.delete(appointments).where(eq(appointments.id, id));
+  }
+
+  async getUpcomingAppointments(userId: string, days: number): Promise<Appointment[]> {
+    const now = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + days);
+    
+    return db.select().from(appointments).where(
+      and(
+        eq(appointments.userId, userId),
+        gte(appointments.startTime, now),
+        sql`${appointments.startTime} <= ${endDate}`
+      )
+    ).orderBy(appointments.startTime);
+  }
+
+  // Document methods
+  async getDocumentsByPatient(patientId: number): Promise<PatientDocument[]> {
+    return db.select().from(patientDocuments).where(eq(patientDocuments.patientId, patientId)).orderBy(desc(patientDocuments.uploadedAt));
+  }
+
+  async getDocument(id: number): Promise<PatientDocument | undefined> {
+    const [doc] = await db.select().from(patientDocuments).where(eq(patientDocuments.id, id));
+    return doc;
+  }
+
+  async createDocument(document: InsertPatientDocument): Promise<PatientDocument> {
+    const [created] = await db.insert(patientDocuments).values(document).returning();
+    return created;
+  }
+
+  async deleteDocument(id: number): Promise<void> {
+    await db.delete(patientDocuments).where(eq(patientDocuments.id, id));
+  }
+
+  // Note linking
+  async getNotesByPatient(patientId: number): Promise<Note[]> {
+    return db.select().from(notes).where(eq(notes.patientId, patientId)).orderBy(desc(notes.createdAt));
+  }
+
+  async linkNoteToPatient(noteId: number, patientId: number): Promise<Note | undefined> {
+    const [updated] = await db
+      .update(notes)
+      .set({ patientId, updatedAt: new Date() })
+      .where(eq(notes.id, noteId))
+      .returning();
+    return updated;
+  }
+
+  // EMR access
+  async grantEmrAccess(userId: string): Promise<Subscription | undefined> {
+    const [updated] = await db
+      .update(subscriptions)
+      .set({ hasEmrAccess: true, updatedAt: new Date() })
+      .where(eq(subscriptions.userId, userId))
+      .returning();
+    return updated;
   }
 }
 

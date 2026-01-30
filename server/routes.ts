@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
-import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema } from "@shared/schema";
+import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
@@ -54,6 +54,60 @@ const translateNoteSchema = z.object({
   plan: z.string().optional(),
   targetLanguage: z.enum(["en", "es", "fr", "de", "pt"]),
 });
+
+// EMR schemas
+const createPatientSchema = z.object({
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
+  dateOfBirth: z.string().optional().transform(val => val ? new Date(val) : undefined),
+  gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  insuranceProvider: z.string().optional(),
+  insurancePolicyNumber: z.string().optional(),
+  medicalHistory: z.string().optional(),
+  allergies: z.string().optional(),
+  medications: z.string().optional(),
+  emergencyContactName: z.string().optional(),
+  emergencyContactPhone: z.string().optional(),
+});
+
+const createAppointmentSchema = z.object({
+  patientId: z.number(),
+  title: z.string().min(1, "Title is required"),
+  description: z.string().optional(),
+  startTime: z.string().transform(val => new Date(val)),
+  endTime: z.string().transform(val => new Date(val)),
+  status: z.enum(["scheduled", "confirmed", "completed", "cancelled", "no_show"]).optional(),
+  appointmentType: z.enum(["general", "follow_up", "initial", "urgent", "telehealth"]).optional(),
+  location: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+// EMR access middleware - checks if user has EMR access
+const hasEmrAccess = async (req: any, res: Response, next: Function) => {
+  try {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+    
+    const subscription = await storage.getSubscription(userId);
+    if (!subscription || subscription.status !== "active") {
+      return res.status(403).json({ error: "Active subscription required for EMR access" });
+    }
+    
+    if (!subscription.hasEmrAccess) {
+      return res.status(403).json({ error: "EMR access not enabled. Contact admin for an EMR invite code." });
+    }
+    
+    next();
+  } catch (error) {
+    console.error("EMR access check failed:", error);
+    res.status(500).json({ error: "Failed to verify EMR access" });
+  }
+};
 
 const generateReferralSchema = z.object({
   patientName: z.string().optional(),
@@ -1235,9 +1289,13 @@ PLAN: ${plan || "Not provided"}
         return res.status(400).json({ error: "This invite code has expired" });
       }
 
+      // Check if this is an EMR-only invite (grants EMR access to existing subscribers)
+      const isEmrOnlyInvite = invite.membershipType === "emr_access";
+      
       // Calculate membership end date based on type
       const now = new Date();
-      let newPeriodEnd: Date;
+      let newPeriodEnd: Date | null = null;
+      let grantEmrAccess = false;
 
       switch (invite.membershipType) {
         case "trial_7":
@@ -1269,6 +1327,30 @@ PLAN: ${plan || "Not provided"}
           newPeriodEnd = new Date(now);
           newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 100);
           break;
+        // EMR-only invite - grants EMR access to existing subscribers
+        case "emr_access":
+          grantEmrAccess = true;
+          break;
+        // EMR + subscription combo invites
+        case "emr_trial_30":
+          newPeriodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+          grantEmrAccess = true;
+          break;
+        case "emr_months_1":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 1);
+          grantEmrAccess = true;
+          break;
+        case "emr_months_12":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 1);
+          grantEmrAccess = true;
+          break;
+        case "emr_lifetime":
+          newPeriodEnd = new Date(now);
+          newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 100);
+          grantEmrAccess = true;
+          break;
         default:
           return res.status(400).json({ error: "Invalid membership type" });
       }
@@ -1276,17 +1358,39 @@ PLAN: ${plan || "Not provided"}
       // Mark invite as used
       await storage.useInvite(code, userId);
 
-      // Update or create subscription
-      await storage.upsertSubscription({
-        userId,
-        status: "active",
-        currentPeriodEnd: newPeriodEnd,
-      });
+      // For EMR-only invites, just grant EMR access (requires active subscription)
+      if (isEmrOnlyInvite) {
+        const existingSub = await storage.getSubscription(userId);
+        if (!existingSub || existingSub.status !== "active") {
+          return res.status(400).json({ error: "EMR access requires an active subscription. Please subscribe first." });
+        }
+        await storage.grantEmrAccess(userId);
+        return res.json({ 
+          success: true, 
+          membershipType: invite.membershipType,
+          emrAccessGranted: true
+        });
+      }
+
+      // Update or create subscription with optional EMR access
+      if (newPeriodEnd) {
+        await storage.upsertSubscription({
+          userId,
+          status: "active",
+          currentPeriodEnd: newPeriodEnd,
+        });
+        
+        // Grant EMR access if applicable
+        if (grantEmrAccess) {
+          await storage.grantEmrAccess(userId);
+        }
+      }
 
       res.json({ 
         success: true, 
         membershipType: invite.membershipType,
-        expiresAt: newPeriodEnd 
+        expiresAt: newPeriodEnd,
+        emrAccessGranted: grantEmrAccess
       });
     } catch (error) {
       console.error("Error redeeming invite:", error);
@@ -1869,6 +1973,358 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error fetching trending diagnoses:", error);
       res.status(500).json({ error: "Failed to fetch trending diagnoses" });
+    }
+  });
+
+  // ========== EMR ROUTES ==========
+
+  // Check EMR access status
+  app.get("/api/emr/access", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const subscription = await storage.getSubscription(userId);
+      
+      res.json({
+        hasAccess: subscription?.hasEmrAccess === true && subscription?.status === "active",
+        subscriptionStatus: subscription?.status || "none",
+      });
+    } catch (error) {
+      console.error("Error checking EMR access:", error);
+      res.status(500).json({ error: "Failed to check EMR access" });
+    }
+  });
+
+  // ========== EMR PATIENT ROUTES ==========
+
+  // Get all patients for current user
+  app.get("/api/emr/patients", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patients = await storage.getPatientsByUser(userId);
+      res.json(patients);
+    } catch (error) {
+      console.error("Error fetching patients:", error);
+      res.status(500).json({ error: "Failed to fetch patients" });
+    }
+  });
+
+  // Search patients
+  app.get("/api/emr/patients/search", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const query = req.query.q as string || "";
+      
+      if (query.length < 2) {
+        return res.json([]);
+      }
+      
+      const patients = await storage.searchPatients(userId, query);
+      res.json(patients);
+    } catch (error) {
+      console.error("Error searching patients:", error);
+      res.status(500).json({ error: "Failed to search patients" });
+    }
+  });
+
+  // Get single patient
+  app.get("/api/emr/patients/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      res.json(patient);
+    } catch (error) {
+      console.error("Error fetching patient:", error);
+      res.status(500).json({ error: "Failed to fetch patient" });
+    }
+  });
+
+  // Create patient
+  app.post("/api/emr/patients", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = createPatientSchema.safeParse(req.body);
+      
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0].message });
+      }
+      
+      const patient = await storage.createPatient({
+        ...parsed.data,
+        userId,
+      });
+      
+      res.status(201).json(patient);
+    } catch (error) {
+      console.error("Error creating patient:", error);
+      res.status(500).json({ error: "Failed to create patient" });
+    }
+  });
+
+  // Update patient
+  app.patch("/api/emr/patients/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const parsed = createPatientSchema.partial().safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0].message });
+      }
+      
+      const updated = await storage.updatePatient(patientId, parsed.data);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating patient:", error);
+      res.status(500).json({ error: "Failed to update patient" });
+    }
+  });
+
+  // Delete patient
+  app.delete("/api/emr/patients/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      await storage.deletePatient(patientId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting patient:", error);
+      res.status(500).json({ error: "Failed to delete patient" });
+    }
+  });
+
+  // Get notes linked to a patient
+  app.get("/api/emr/patients/:id/notes", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const notes = await storage.getNotesByPatient(patientId);
+      res.json(notes);
+    } catch (error) {
+      console.error("Error fetching patient notes:", error);
+      res.status(500).json({ error: "Failed to fetch patient notes" });
+    }
+  });
+
+  // Link a note to a patient
+  app.post("/api/emr/patients/:id/notes/:noteId", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      const noteId = parseInt(req.params.noteId);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const note = await storage.getNote(noteId);
+      if (!note || note.userId !== userId) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+      
+      const updated = await storage.linkNoteToPatient(noteId, patientId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error linking note to patient:", error);
+      res.status(500).json({ error: "Failed to link note to patient" });
+    }
+  });
+
+  // ========== EMR APPOINTMENT ROUTES ==========
+
+  // Get all appointments for current user
+  app.get("/api/emr/appointments", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const appointments = await storage.getAppointmentsByUser(userId);
+      res.json(appointments);
+    } catch (error) {
+      console.error("Error fetching appointments:", error);
+      res.status(500).json({ error: "Failed to fetch appointments" });
+    }
+  });
+
+  // Get upcoming appointments
+  app.get("/api/emr/appointments/upcoming", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const days = parseInt(req.query.days as string) || 7;
+      const appointments = await storage.getUpcomingAppointments(userId, Math.min(days, 90));
+      res.json(appointments);
+    } catch (error) {
+      console.error("Error fetching upcoming appointments:", error);
+      res.status(500).json({ error: "Failed to fetch upcoming appointments" });
+    }
+  });
+
+  // Get appointments by patient
+  app.get("/api/emr/patients/:id/appointments", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const appointments = await storage.getAppointmentsByPatient(patientId);
+      res.json(appointments);
+    } catch (error) {
+      console.error("Error fetching patient appointments:", error);
+      res.status(500).json({ error: "Failed to fetch patient appointments" });
+    }
+  });
+
+  // Get single appointment
+  app.get("/api/emr/appointments/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const appointmentId = parseInt(req.params.id);
+      
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment || appointment.userId !== userId) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      
+      res.json(appointment);
+    } catch (error) {
+      console.error("Error fetching appointment:", error);
+      res.status(500).json({ error: "Failed to fetch appointment" });
+    }
+  });
+
+  // Create appointment
+  app.post("/api/emr/appointments", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = createAppointmentSchema.safeParse(req.body);
+      
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0].message });
+      }
+      
+      // Verify patient belongs to user
+      const patient = await storage.getPatient(parsed.data.patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const appointment = await storage.createAppointment({
+        ...parsed.data,
+        userId,
+      });
+      
+      res.status(201).json(appointment);
+    } catch (error) {
+      console.error("Error creating appointment:", error);
+      res.status(500).json({ error: "Failed to create appointment" });
+    }
+  });
+
+  // Update appointment
+  app.patch("/api/emr/appointments/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const appointmentId = parseInt(req.params.id);
+      
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment || appointment.userId !== userId) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      
+      const parsed = createAppointmentSchema.partial().safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0].message });
+      }
+      
+      const updated = await storage.updateAppointment(appointmentId, parsed.data);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating appointment:", error);
+      res.status(500).json({ error: "Failed to update appointment" });
+    }
+  });
+
+  // Delete appointment
+  app.delete("/api/emr/appointments/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const appointmentId = parseInt(req.params.id);
+      
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment || appointment.userId !== userId) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      
+      await storage.deleteAppointment(appointmentId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting appointment:", error);
+      res.status(500).json({ error: "Failed to delete appointment" });
+    }
+  });
+
+  // ========== EMR DOCUMENT ROUTES ==========
+
+  // Get documents for a patient
+  app.get("/api/emr/patients/:id/documents", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      
+      const patient = await storage.getPatient(patientId);
+      if (!patient || patient.userId !== userId) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const documents = await storage.getDocumentsByPatient(patientId);
+      res.json(documents);
+    } catch (error) {
+      console.error("Error fetching patient documents:", error);
+      res.status(500).json({ error: "Failed to fetch patient documents" });
+    }
+  });
+
+  // Delete document
+  app.delete("/api/emr/documents/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const documentId = parseInt(req.params.id);
+      
+      const document = await storage.getDocument(documentId);
+      if (!document || document.userId !== userId) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      await storage.deleteDocument(documentId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      res.status(500).json({ error: "Failed to delete document" });
     }
   });
 

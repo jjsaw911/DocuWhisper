@@ -19,6 +19,9 @@ import Invite from "@/pages/invite";
 import Settings from "@/pages/settings";
 import SharedNotes from "@/pages/shared-notes";
 import Analytics from "@/pages/analytics";
+import EMRPatients from "@/pages/emr/patients";
+import EMRPatientDetail from "@/pages/emr/patient-detail";
+import EMRSchedule from "@/pages/emr/schedule";
 
 function AuthenticatedLayout() {
   const style = {
@@ -46,6 +49,9 @@ function AuthenticatedLayout() {
               <Route path="/settings" component={Settings} />
               <Route path="/shared-notes" component={SharedNotes} />
               <Route path="/analytics" component={Analytics} />
+              <Route path="/emr/patients" component={EMRPatients} />
+              <Route path="/emr/patients/:id" component={EMRPatientDetail} />
+              <Route path="/emr/schedule" component={EMRSchedule} />
               <Route path="/admin" component={Admin} />
               <Route component={NotFound} />
             </Switch>

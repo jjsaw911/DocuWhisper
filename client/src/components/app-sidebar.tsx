@@ -38,6 +38,9 @@ import {
   Share2,
   TrendingUp,
   ChevronRight,
+  Users,
+  CalendarDays,
+  ClipboardList,
 } from "lucide-react";
 import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
@@ -64,7 +67,13 @@ export function AppSidebar() {
     enabled: !!user,
   });
 
+  const { data: emrAccess } = useQuery<{ hasAccess: boolean }>({
+    queryKey: ["/api/emr/access"],
+    enabled: !!user,
+  });
+
   const isOwner = adminCheck?.isAdmin === true;
+  const hasEmrAccess = emrAccess?.hasAccess === true;
   
   // Get display name: preferredName > firstName from settings > firstName from auth > email
   const displayName = settings?.preferredName || settings?.firstName || user?.firstName || user?.email?.split("@")[0] || "User";
@@ -206,6 +215,26 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {hasEmrAccess && (
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location === "/emr/patients" || location.startsWith("/emr/patients/")}>
+                      <Link href="/emr/patients" data-testid="nav-emr-patients">
+                        <Users className="h-4 w-4" />
+                        <span>Patients</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location === "/emr/schedule"}>
+                      <Link href="/emr/schedule" data-testid="nav-emr-schedule">
+                        <CalendarDays className="h-4 w-4" />
+                        <span>Schedule</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
+              )}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location === "/subscription"}>
                   <Link href="/subscription" data-testid="nav-subscription">
