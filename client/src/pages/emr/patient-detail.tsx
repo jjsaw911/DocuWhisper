@@ -235,6 +235,17 @@ export default function PatientDetailPage() {
     enabled: !!patientId && emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
+  // Get user settings to determine role and co-sign ability
+  const { data: userSettings } = useQuery<{
+    emrRole?: string;
+    requiresCosignature?: boolean;
+    supervisingPhysicianId?: string;
+  }>({
+    queryKey: ["/api/settings"],
+  });
+
+  const canCosign = userSettings?.emrRole === 'physician';
+
   if (isCheckingAccess || !emrAccess?.hasAccess) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -523,6 +534,28 @@ export default function PatientDetailPage() {
     onError: (error: Error) => {
       toast({
         title: "Failed to reopen encounter",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const cosignEncounterMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await apiRequest("POST", `/api/emr/encounters/${id}/cosign`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/emr/patients", patientId, "encounters"] });
+      toast({
+        title: "Encounter co-signed",
+        description: "The encounter has been finalized with your co-signature",
+      });
+      setViewingEncounter(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to co-sign encounter",
         description: error.message,
         variant: "destructive",
       });
@@ -1084,8 +1117,8 @@ export default function PatientDetailPage() {
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-2 flex-wrap">
                                 <span className="font-medium">{formatDate(enc.encounterDate)}</span>
-                                <Badge variant={enc.status === "signed" ? "default" : "secondary"}>
-                                  {enc.status === "signed" ? "Signed" : enc.status === "completed" ? "Completed" : "In Progress"}
+                                <Badge variant={enc.status === "signed" ? "default" : enc.status === "pending_cosign" ? "outline" : "secondary"}>
+                                  {enc.status === "signed" ? "Signed" : enc.status === "pending_cosign" ? "Awaiting Co-sign" : enc.status === "completed" ? "Completed" : "In Progress"}
                                 </Badge>
                                 <Badge variant="outline">{enc.encounterType?.replace("_", " ") || "Office Visit"}</Badge>
                               </div>
@@ -2014,8 +2047,8 @@ export default function PatientDetailPage() {
               Clinical Encounter - {viewingEncounter && formatDate(viewingEncounter.encounterDate)}
             </DialogTitle>
             <DialogDescription className="flex items-center gap-2 flex-wrap">
-              <Badge variant={viewingEncounter?.status === "signed" ? "default" : "secondary"}>
-                {viewingEncounter?.status === "signed" ? "Signed" : viewingEncounter?.status === "completed" ? "Completed" : "In Progress"}
+              <Badge variant={viewingEncounter?.status === "signed" ? "default" : viewingEncounter?.status === "pending_cosign" ? "outline" : "secondary"}>
+                {viewingEncounter?.status === "signed" ? "Signed" : viewingEncounter?.status === "pending_cosign" ? "Awaiting Co-sign" : viewingEncounter?.status === "completed" ? "Completed" : "In Progress"}
               </Badge>
               <Badge variant="outline">{viewingEncounter?.encounterType?.replace("_", " ") || "Office Visit"}</Badge>
             </DialogDescription>
@@ -2292,6 +2325,23 @@ export default function PatientDetailPage() {
                 <Unlock className="h-4 w-4 mr-2" />
                 Reopen for Editing
               </Button>
+            )}
+            {viewingEncounter && viewingEncounter.status === "pending_cosign" && canCosign && (
+              <Button 
+                onClick={() => viewingEncounter && cosignEncounterMutation.mutate(viewingEncounter.id)}
+                disabled={cosignEncounterMutation.isPending}
+                data-testid="button-cosign-encounter"
+              >
+                {cosignEncounterMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Check className="h-4 w-4 mr-2" />
+                Co-sign & Finalize
+              </Button>
+            )}
+            {viewingEncounter && viewingEncounter.status === "pending_cosign" && !canCosign && (
+              <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                <Clock className="h-4 w-4" />
+                Awaiting physician co-signature
+              </div>
             )}
             <Button variant="outline" onClick={() => setViewingEncounter(null)}>
               Close

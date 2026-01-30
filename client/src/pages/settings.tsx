@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -29,6 +29,15 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import type { Template, UserSettings, Practice, PracticeMember } from "@shared/schema";
+import { EMR_ROLES, type EmrRoleType } from "@shared/schema";
+
+const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+  "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+  "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+  "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+  "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC"
+];
 
 const SPECIALTIES = [
   "Primary Care",
@@ -92,6 +101,17 @@ export default function Settings() {
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
+
+  // EMR Credentials state
+  const [emrRole, setEmrRole] = useState<string>("");
+  const [licenseNumber, setLicenseNumber] = useState("");
+  const [licenseState, setLicenseState] = useState("");
+  const [licenseExpiry, setLicenseExpiry] = useState("");
+  const [npiNumber, setNpiNumber] = useState("");
+  const [deaNumber, setDeaNumber] = useState("");
+  const [deaExpiry, setDeaExpiry] = useState("");
+  const [supervisingPhysicianId, setSupervisingPhysicianId] = useState("");
+  const [credentials, setCredentials] = useState("");
 
   // Team/Practice management state
   const [newPracticeName, setNewPracticeName] = useState("");
@@ -205,6 +225,16 @@ export default function Settings() {
       setShowTimestamps(settings.showTimestamps ?? true);
       setEmailNotificationsEnabled(settings.emailNotificationsEnabled ?? false);
       setEmailDigestTime(settings.emailDigestTime || "08:00");
+      // EMR Credentials
+      setEmrRole(settings.emrRole || "");
+      setLicenseNumber(settings.licenseNumber || "");
+      setLicenseState(settings.licenseState || "");
+      setLicenseExpiry(settings.licenseExpiry ? new Date(settings.licenseExpiry).toISOString().split('T')[0] : "");
+      setNpiNumber(settings.npiNumber || "");
+      setDeaNumber(settings.deaNumber || "");
+      setDeaExpiry(settings.deaExpiry ? new Date(settings.deaExpiry).toISOString().split('T')[0] : "");
+      setSupervisingPhysicianId(settings.supervisingPhysicianId || "");
+      setCredentials(settings.credentials || "");
     }
   }, [settings]);
 
@@ -223,6 +253,17 @@ export default function Settings() {
         showTimestamps,
         emailNotificationsEnabled,
         emailDigestTime,
+        // EMR Credentials
+        emrRole: emrRole || null,
+        licenseNumber: licenseNumber || null,
+        licenseState: licenseState || null,
+        licenseExpiry: licenseExpiry ? new Date(licenseExpiry) : null,
+        npiNumber: npiNumber || null,
+        deaNumber: deaNumber || null,
+        deaExpiry: deaExpiry ? new Date(deaExpiry) : null,
+        supervisingPhysicianId: supervisingPhysicianId || null,
+        credentials: credentials || null,
+        requiresCosignature: emrRole === 'mid_level',
       });
       return response.json();
     },
@@ -544,6 +585,184 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground">
                     Choose when you'd like to receive your daily task summary
                   </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <IdCard className="h-5 w-5 text-primary" />
+                <CardTitle>EMR Credentials</CardTitle>
+              </div>
+              <CardDescription>Professional credentials for EMR access and documentation</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="emrRole">Role / Position</Label>
+                <Select value={emrRole} onValueChange={setEmrRole}>
+                  <SelectTrigger id="emrRole" data-testid="select-emr-role">
+                    <SelectValue placeholder="Select your role..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(EMR_ROLES).map(([key, role]) => (
+                      <SelectItem key={key} value={key}>
+                        {role.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Your role determines permissions within the EMR system
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="credentials">Credentials Suffix</Label>
+                <Input
+                  id="credentials"
+                  value={credentials}
+                  onChange={(e) => setCredentials(e.target.value)}
+                  placeholder="e.g., MD, FACP or NP, MSN"
+                  data-testid="input-credentials"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Professional credentials displayed after your name
+                </p>
+              </div>
+
+              {(emrRole === 'physician' || emrRole === 'mid_level') && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="licenseNumber">License Number</Label>
+                      <Input
+                        id="licenseNumber"
+                        value={licenseNumber}
+                        onChange={(e) => setLicenseNumber(e.target.value)}
+                        placeholder="State medical license #"
+                        data-testid="input-license-number"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="licenseState">License State</Label>
+                      <Select value={licenseState} onValueChange={setLicenseState}>
+                        <SelectTrigger id="licenseState" data-testid="select-license-state">
+                          <SelectValue placeholder="State" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {US_STATES.map((state) => (
+                            <SelectItem key={state} value={state}>
+                              {state}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="licenseExpiry">License Expiration</Label>
+                    <Input
+                      id="licenseExpiry"
+                      type="date"
+                      value={licenseExpiry}
+                      onChange={(e) => setLicenseExpiry(e.target.value)}
+                      data-testid="input-license-expiry"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="npiNumber">NPI Number</Label>
+                    <Input
+                      id="npiNumber"
+                      value={npiNumber}
+                      onChange={(e) => setNpiNumber(e.target.value)}
+                      placeholder="10-digit National Provider Identifier"
+                      maxLength={10}
+                      data-testid="input-npi-number"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="deaNumber">DEA Number</Label>
+                      <Input
+                        id="deaNumber"
+                        value={deaNumber}
+                        onChange={(e) => setDeaNumber(e.target.value)}
+                        placeholder="For controlled substances"
+                        data-testid="input-dea-number"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="deaExpiry">DEA Expiration</Label>
+                      <Input
+                        id="deaExpiry"
+                        type="date"
+                        value={deaExpiry}
+                        onChange={(e) => setDeaExpiry(e.target.value)}
+                        data-testid="input-dea-expiry"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {emrRole === 'mid_level' && (
+                <div className="space-y-2">
+                  <Label htmlFor="supervisingPhysicianId">Supervising Physician ID</Label>
+                  <Input
+                    id="supervisingPhysicianId"
+                    value={supervisingPhysicianId}
+                    onChange={(e) => setSupervisingPhysicianId(e.target.value)}
+                    placeholder="User ID of supervising MD/DO"
+                    data-testid="input-supervising-physician"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Your encounters will require co-signature from this physician
+                  </p>
+                </div>
+              )}
+
+              {emrRole && EMR_ROLES[emrRole as EmrRoleType] && (
+                <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-2">
+                  <p className="text-sm font-medium">Role Permissions:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {EMR_ROLES[emrRole as EmrRoleType].canViewPatients && (
+                      <Badge variant="secondary">View Patients</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canEditPatients && (
+                      <Badge variant="secondary">Edit Patients</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canCreateEncounters && (
+                      <Badge variant="secondary">Create Encounters</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canSignEncounters && (
+                      <Badge variant="secondary">Sign Encounters</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canCosignEncounters && (
+                      <Badge variant="secondary">Co-sign Encounters</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canPrescribe && (
+                      <Badge variant="secondary">Prescribe</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canViewSchedule && (
+                      <Badge variant="secondary">View Schedule</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canViewBilling && (
+                      <Badge variant="secondary">View Billing</Badge>
+                    )}
+                    {EMR_ROLES[emrRole as EmrRoleType].canManageTeam && (
+                      <Badge variant="secondary">Manage Team</Badge>
+                    )}
+                  </div>
+                  {EMR_ROLES[emrRole as EmrRoleType].requiresCosignature && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                      Your encounters will require physician co-signature
+                    </p>
+                  )}
                 </div>
               )}
             </CardContent>

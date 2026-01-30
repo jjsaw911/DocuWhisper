@@ -134,6 +134,8 @@ export interface IStorage {
   deleteEncounter(id: number): Promise<void>;
   signEncounter(id: number, userId: string): Promise<PatientEncounter | undefined>;
   reopenEncounter(id: number): Promise<PatientEncounter | undefined>;
+  cosignEncounter(id: number, physicianId: string, notes?: string): Promise<PatientEncounter | undefined>;
+  getEncountersPendingCosign(physicianId: string): Promise<PatientEncounter[]>;
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
@@ -1010,6 +1012,40 @@ class DatabaseStorage implements IStorage {
       updatedAt: new Date(),
     }).where(eq(patientEncounters.id, id)).returning();
     return reopened;
+  }
+
+  async cosignEncounter(id: number, physicianId: string, notes?: string): Promise<PatientEncounter | undefined> {
+    const [cosigned] = await db.update(patientEncounters).set({
+      status: "signed",
+      cosignedAt: new Date(),
+      cosignedBy: physicianId,
+      cosignatureNotes: notes || null,
+      updatedAt: new Date(),
+    }).where(eq(patientEncounters.id, id)).returning();
+    return cosigned;
+  }
+
+  async getEncountersPendingCosign(physicianId: string): Promise<PatientEncounter[]> {
+    // Get encounters where the provider's supervising physician matches this physician
+    // We need to join with user settings to find mid-levels supervised by this physician
+    const supervisedSettings = await db.select().from(userSettings).where(eq(userSettings.supervisingPhysicianId, physicianId));
+    const supervisedUserIds = supervisedSettings.map(s => s.userId);
+    
+    if (supervisedUserIds.length === 0) {
+      return [];
+    }
+    
+    // Get pending_cosign encounters from supervised providers
+    const encounters = await db.select().from(patientEncounters)
+      .where(
+        and(
+          eq(patientEncounters.status, "pending_cosign"),
+          eq(patientEncounters.requiresCosignature, true)
+        )
+      );
+    
+    // Filter to only those from supervised providers
+    return encounters.filter(enc => supervisedUserIds.includes(enc.providerId));
   }
 }
 

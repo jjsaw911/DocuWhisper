@@ -3120,12 +3120,37 @@ PLAN: ${plan || "Not provided"}
     try {
       const userId = req.user.claims.sub;
       const encounterId = parseInt(req.params.id);
-      const encounter = await storage.signEncounter(encounterId, userId);
-      if (!encounter) {
+      
+      // Check if user requires co-signature (mid-level providers)
+      const settings = await storage.getUserSettings(userId);
+      const requiresCosign = settings?.requiresCosignature || settings?.emrRole === 'mid_level';
+      
+      // Get encounter first to set requiresCosignature flag if needed
+      const existingEncounter = await storage.getEncounter(encounterId);
+      if (!existingEncounter) {
         return res.status(404).json({ error: "Encounter not found" });
       }
-      await logAudit(req, 'update', 'encounter', encounter.id, encounter.patientId, { action: 'signed' });
-      res.json(encounter);
+      
+      // If mid-level, set to pending_cosign status instead of signed
+      if (requiresCosign) {
+        // Update encounter to pending co-signature
+        const encounter = await storage.updateEncounter(encounterId, {
+          status: "pending_cosign",
+          signedAt: new Date(),
+          signedBy: userId,
+          requiresCosignature: true,
+        });
+        await logAudit(req, 'update', 'encounter', encounter!.id, encounter!.patientId, { action: 'pending_cosign' });
+        res.json(encounter);
+      } else {
+        // Physician or other - full sign
+        const encounter = await storage.signEncounter(encounterId, userId);
+        if (!encounter) {
+          return res.status(404).json({ error: "Encounter not found" });
+        }
+        await logAudit(req, 'update', 'encounter', encounter.id, encounter.patientId, { action: 'signed' });
+        res.json(encounter);
+      }
     } catch (error) {
       console.error("Error signing encounter:", error);
       res.status(500).json({ error: "Failed to sign encounter" });
@@ -3145,6 +3170,50 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error reopening encounter:", error);
       res.status(500).json({ error: "Failed to reopen encounter" });
+    }
+  });
+
+  // Co-sign encounter (for supervising physicians)
+  app.post("/api/emr/encounters/:id/cosign", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const encounterId = parseInt(req.params.id);
+      const { notes } = req.body;
+      
+      // Verify user is a physician who can co-sign
+      const settings = await storage.getUserSettings(userId);
+      if (!settings || settings.emrRole !== 'physician') {
+        return res.status(403).json({ error: "Only physicians can co-sign encounters" });
+      }
+      
+      const encounter = await storage.cosignEncounter(encounterId, userId, notes);
+      if (!encounter) {
+        return res.status(404).json({ error: "Encounter not found" });
+      }
+      await logAudit(req, 'update', 'encounter', encounter.id, encounter.patientId, { action: 'cosigned' });
+      res.json(encounter);
+    } catch (error) {
+      console.error("Error co-signing encounter:", error);
+      res.status(500).json({ error: "Failed to co-sign encounter" });
+    }
+  });
+
+  // Get encounters pending co-signature (for supervising physicians)
+  app.get("/api/emr/encounters/pending-cosign", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Verify user is a physician
+      const settings = await storage.getUserSettings(userId);
+      if (!settings || settings.emrRole !== 'physician') {
+        return res.json([]); // Non-physicians have no pending co-signatures
+      }
+      
+      const encounters = await storage.getEncountersPendingCosign(userId);
+      res.json(encounters);
+    } catch (error) {
+      console.error("Error fetching pending co-signatures:", error);
+      res.status(500).json({ error: "Failed to fetch pending co-signatures" });
     }
   });
 
