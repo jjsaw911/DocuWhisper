@@ -133,6 +133,7 @@ export interface IStorage {
   updateEncounter(id: number, data: Partial<InsertPatientEncounter>): Promise<PatientEncounter | undefined>;
   deleteEncounter(id: number): Promise<void>;
   signEncounter(id: number, userId: string): Promise<PatientEncounter | undefined>;
+  reopenEncounter(id: number): Promise<PatientEncounter | undefined>;
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
@@ -999,6 +1000,16 @@ class DatabaseStorage implements IStorage {
       updatedAt: new Date(),
     }).where(eq(patientEncounters.id, id)).returning();
     return signed;
+  }
+
+  async reopenEncounter(id: number): Promise<PatientEncounter | undefined> {
+    const [reopened] = await db.update(patientEncounters).set({
+      status: "draft",
+      signedAt: null,
+      signedBy: null,
+      updatedAt: new Date(),
+    }).where(eq(patientEncounters.id, id)).returning();
+    return reopened;
   }
 }
 

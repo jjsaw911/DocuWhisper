@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Sidebar,
@@ -50,6 +52,7 @@ import {
   Users,
   CalendarDays,
   ClipboardList,
+  Trash2,
 } from "lucide-react";
 import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
@@ -62,9 +65,31 @@ export function AppSidebar() {
   const { user } = useAuth();
   const [location, navigate] = useLocation();
   const [scribeMenuOpen, setScribeMenuOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
+  });
+
+  const deleteNoteMutation = useMutation({
+    mutationFn: async (noteId: number) => {
+      await apiRequest("DELETE", `/api/notes/${noteId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      toast({
+        title: "Note deleted",
+        description: "The note has been removed",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete note",
+        variant: "destructive",
+      });
+    },
   });
 
   const { data: adminCheck } = useQuery<AdminCheckData>({
@@ -201,7 +226,7 @@ export function AppSidebar() {
                             {dateNotes.map((note) => (
                               <DropdownMenuItem
                                 key={note.id}
-                                className="cursor-pointer"
+                                className="cursor-pointer group"
                                 onClick={() => {
                                   setScribeMenuOpen(false);
                                   navigate(`/notes/${note.id}`);
@@ -218,6 +243,16 @@ export function AppSidebar() {
                                     </span>
                                   )}
                                 </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteNoteMutation.mutate(note.id);
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
+                                  data-testid={`button-delete-note-${note.id}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                </button>
                               </DropdownMenuItem>
                             ))}
                           </div>

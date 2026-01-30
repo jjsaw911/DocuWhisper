@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useLocation } from "wouter";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { 
   ArrowLeft, 
@@ -80,6 +80,7 @@ export default function NoteDetail() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
 
   const { data: note, isLoading } = useQuery<Note>({
     queryKey: ["/api/notes", id],
@@ -228,14 +229,15 @@ export default function NoteDetail() {
       });
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (_, patientId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
       toast({
         title: "Linked to EMR",
-        description: "This note has been linked to the patient's EMR record",
+        description: "Navigating to patient record...",
       });
       setShowCopyToEmrDialog(false);
       setSelectedEmrPatientId("");
+      navigate(`/emr/patients/${patientId}`);
     },
     onError: () => {
       toast({

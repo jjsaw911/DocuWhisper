@@ -3132,6 +3132,22 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // Reopen signed encounter
+  app.post("/api/emr/encounters/:id/reopen", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const encounterId = parseInt(req.params.id);
+      const encounter = await storage.reopenEncounter(encounterId);
+      if (!encounter) {
+        return res.status(404).json({ error: "Encounter not found" });
+      }
+      await logAudit(req, 'update', 'encounter', encounter.id, encounter.patientId, { action: 'reopened' });
+      res.json(encounter);
+    } catch (error) {
+      console.error("Error reopening encounter:", error);
+      res.status(500).json({ error: "Failed to reopen encounter" });
+    }
+  });
+
   // Delete encounter
   app.delete("/api/emr/encounters/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {

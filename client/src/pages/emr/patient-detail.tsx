@@ -84,6 +84,7 @@ import {
   X,
   Check,
   PenLine,
+  Unlock,
 } from "lucide-react";
 import type { Patient, Note, Appointment, PatientVitals, PatientEncounter } from "@shared/schema";
 
@@ -500,6 +501,28 @@ export default function PatientDetailPage() {
     onError: (error: Error) => {
       toast({
         title: "Failed to delete encounter",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const reopenEncounterMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await apiRequest("POST", `/api/emr/encounters/${id}/reopen`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/emr/patients", patientId, "encounters"] });
+      toast({
+        title: "Encounter reopened",
+        description: "Encounter has been unlocked for editing",
+      });
+      setViewingEncounter(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to reopen encounter",
         description: error.message,
         variant: "destructive",
       });
@@ -2258,6 +2281,17 @@ export default function PatientDetailPage() {
                   Sign & Finalize
                 </Button>
               </>
+            )}
+            {viewingEncounter && viewingEncounter.status === "signed" && (
+              <Button 
+                variant="outline" 
+                onClick={() => viewingEncounter && reopenEncounterMutation.mutate(viewingEncounter.id)}
+                disabled={reopenEncounterMutation.isPending}
+              >
+                {reopenEncounterMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Unlock className="h-4 w-4 mr-2" />
+                Reopen for Editing
+              </Button>
             )}
             <Button variant="outline" onClick={() => setViewingEncounter(null)}>
               Close
