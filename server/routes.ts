@@ -1910,6 +1910,15 @@ PLAN: ${plan || "Not provided"}
   app.post("/api/practices", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
+      
+      // Only the owner can create practices
+      const isOwner = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      if (!isOwner) {
+        return res.status(403).json({ error: "Only the system owner can create practices" });
+      }
+      
       const { name, description } = req.body;
       
       if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -2797,16 +2806,38 @@ PLAN: ${plan || "Not provided"}
   app.post("/api/emr/appointments", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
+      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      
       const parsed = createAppointmentSchema.safeParse(req.body);
       
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0].message });
       }
       
-      // Verify patient belongs to user
+      // Verify patient access - either owner, direct owner, or organization member
       const patient = await storage.getPatient(parsed.data.patientId);
-      if (!patient || patient.userId !== userId) {
+      if (!patient) {
         return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      // Check if user has access to this patient
+      let hasAccess = patient.userId === userId;
+      
+      // Check if vendor has access
+      if (!hasAccess && isVendor) {
+        hasAccess = true;
+      }
+      
+      // Check if user is member of patient's organization
+      if (!hasAccess && patient.organizationId) {
+        const members = await storage.getPracticeMembers(patient.organizationId);
+        hasAccess = members.some((m: { userId: string }) => m.userId === userId);
+      }
+      
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Access denied to this patient" });
       }
       
       const appointment = await storage.createAppointment({
