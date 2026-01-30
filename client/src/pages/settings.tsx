@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -290,9 +290,29 @@ export default function Settings() {
                     {firstName?.[0] || user?.email?.[0]?.toUpperCase() || "U"}
                   </AvatarFallback>
                 </Avatar>
-                <div>
+                <div className="space-y-1">
                   <p className="font-medium">{user?.email}</p>
                   <p className="text-sm text-muted-foreground">Account email</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <code className="bg-muted px-2 py-1 rounded text-xs font-mono" data-testid="text-user-id">
+                      {user?.id}
+                    </code>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2"
+                      onClick={() => {
+                        if (user?.id) {
+                          navigator.clipboard.writeText(user.id);
+                          toast({ title: "User ID copied" });
+                        }
+                      }}
+                      data-testid="button-copy-user-id"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Your User ID</p>
                 </div>
               </div>
 
