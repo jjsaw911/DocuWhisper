@@ -1,6 +1,6 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, auditLogs, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type AuditLog, type InsertAuditLog } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, isNull, or, gte, arrayContains, count, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
 
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
@@ -117,6 +117,20 @@ export interface IStorage {
   getPatientsByOrganization(organizationId: number): Promise<Patient[]>;
   getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]>;
   getUpcomingAppointmentsByOrganization(organizationId: number, days?: number): Promise<Appointment[]>;
+  // EMR - Vitals functions
+  getVitalsByPatient(patientId: number): Promise<PatientVitals[]>;
+  getVitals(id: number): Promise<PatientVitals | undefined>;
+  createVitals(vitals: InsertPatientVitals): Promise<PatientVitals>;
+  updateVitals(id: number, data: Partial<InsertPatientVitals>): Promise<PatientVitals | undefined>;
+  deleteVitals(id: number): Promise<void>;
+  getLatestVitals(patientId: number): Promise<PatientVitals | undefined>;
+  // EMR - Encounter functions
+  getEncountersByPatient(patientId: number): Promise<PatientEncounter[]>;
+  getEncounter(id: number): Promise<PatientEncounter | undefined>;
+  createEncounter(encounter: InsertPatientEncounter): Promise<PatientEncounter>;
+  updateEncounter(id: number, data: Partial<InsertPatientEncounter>): Promise<PatientEncounter | undefined>;
+  deleteEncounter(id: number): Promise<void>;
+  signEncounter(id: number, userId: string): Promise<PatientEncounter | undefined>;
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
@@ -916,6 +930,69 @@ class DatabaseStorage implements IStorage {
     }
     
     return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.timestamp)).limit(1000);
+  }
+
+  // Vitals methods
+  async getVitalsByPatient(patientId: number): Promise<PatientVitals[]> {
+    return db.select().from(patientVitals).where(eq(patientVitals.patientId, patientId)).orderBy(desc(patientVitals.recordedAt));
+  }
+
+  async getVitals(id: number): Promise<PatientVitals | undefined> {
+    const [vitals] = await db.select().from(patientVitals).where(eq(patientVitals.id, id));
+    return vitals;
+  }
+
+  async createVitals(vitals: InsertPatientVitals): Promise<PatientVitals> {
+    const [created] = await db.insert(patientVitals).values(vitals).returning();
+    return created;
+  }
+
+  async updateVitals(id: number, data: Partial<InsertPatientVitals>): Promise<PatientVitals | undefined> {
+    const [updated] = await db.update(patientVitals).set(data).where(eq(patientVitals.id, id)).returning();
+    return updated;
+  }
+
+  async deleteVitals(id: number): Promise<void> {
+    await db.delete(patientVitals).where(eq(patientVitals.id, id));
+  }
+
+  async getLatestVitals(patientId: number): Promise<PatientVitals | undefined> {
+    const [vitals] = await db.select().from(patientVitals).where(eq(patientVitals.patientId, patientId)).orderBy(desc(patientVitals.recordedAt)).limit(1);
+    return vitals;
+  }
+
+  // Encounter methods
+  async getEncountersByPatient(patientId: number): Promise<PatientEncounter[]> {
+    return db.select().from(patientEncounters).where(eq(patientEncounters.patientId, patientId)).orderBy(desc(patientEncounters.encounterDate));
+  }
+
+  async getEncounter(id: number): Promise<PatientEncounter | undefined> {
+    const [encounter] = await db.select().from(patientEncounters).where(eq(patientEncounters.id, id));
+    return encounter;
+  }
+
+  async createEncounter(encounter: InsertPatientEncounter): Promise<PatientEncounter> {
+    const [created] = await db.insert(patientEncounters).values(encounter).returning();
+    return created;
+  }
+
+  async updateEncounter(id: number, data: Partial<InsertPatientEncounter>): Promise<PatientEncounter | undefined> {
+    const [updated] = await db.update(patientEncounters).set({ ...data, updatedAt: new Date() }).where(eq(patientEncounters.id, id)).returning();
+    return updated;
+  }
+
+  async deleteEncounter(id: number): Promise<void> {
+    await db.delete(patientEncounters).where(eq(patientEncounters.id, id));
+  }
+
+  async signEncounter(id: number, userId: string): Promise<PatientEncounter | undefined> {
+    const [signed] = await db.update(patientEncounters).set({
+      status: "signed",
+      signedAt: new Date(),
+      signedBy: userId,
+      updatedAt: new Date(),
+    }).where(eq(patientEncounters.id, id)).returning();
+    return signed;
   }
 }
 

@@ -71,6 +71,7 @@ const createPatientSchema = z.object({
   medications: z.string().optional(),
   emergencyContactName: z.string().optional(),
   emergencyContactPhone: z.string().optional(),
+  organizationId: z.number().optional(),
 });
 
 const createAppointmentSchema = z.object({
@@ -2875,6 +2876,189 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error deleting appointment:", error);
       res.status(500).json({ error: "Failed to delete appointment" });
+    }
+  });
+
+  // ========== EMR VITALS ROUTES ==========
+
+  // Get vitals history for a patient
+  app.get("/api/emr/patients/:id/vitals", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const vitals = await storage.getVitalsByPatient(patientId);
+      res.json(vitals);
+    } catch (error) {
+      console.error("Error fetching vitals:", error);
+      res.status(500).json({ error: "Failed to fetch vitals" });
+    }
+  });
+
+  // Get latest vitals for a patient
+  app.get("/api/emr/patients/:id/vitals/latest", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const vitals = await storage.getLatestVitals(patientId);
+      res.json(vitals || null);
+    } catch (error) {
+      console.error("Error fetching latest vitals:", error);
+      res.status(500).json({ error: "Failed to fetch latest vitals" });
+    }
+  });
+
+  // Create vitals record
+  app.post("/api/emr/patients/:id/vitals", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const vitals = await storage.createVitals({
+        ...req.body,
+        patientId,
+        recordedBy: userId,
+        organizationId: patient.organizationId,
+      });
+      
+      await logAudit(req, 'create', 'vitals', vitals.id, patientId, { recordedAt: vitals.recordedAt });
+      res.status(201).json(vitals);
+    } catch (error) {
+      console.error("Error creating vitals:", error);
+      res.status(500).json({ error: "Failed to create vitals" });
+    }
+  });
+
+  // Update vitals record
+  app.patch("/api/emr/vitals/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const vitalsId = parseInt(req.params.id);
+      const vitals = await storage.updateVitals(vitalsId, req.body);
+      if (!vitals) {
+        return res.status(404).json({ error: "Vitals record not found" });
+      }
+      res.json(vitals);
+    } catch (error) {
+      console.error("Error updating vitals:", error);
+      res.status(500).json({ error: "Failed to update vitals" });
+    }
+  });
+
+  // Delete vitals record
+  app.delete("/api/emr/vitals/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const vitalsId = parseInt(req.params.id);
+      await storage.deleteVitals(vitalsId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting vitals:", error);
+      res.status(500).json({ error: "Failed to delete vitals" });
+    }
+  });
+
+  // ========== EMR ENCOUNTER ROUTES ==========
+
+  // Get encounters for a patient
+  app.get("/api/emr/patients/:id/encounters", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const encounters = await storage.getEncountersByPatient(patientId);
+      res.json(encounters);
+    } catch (error) {
+      console.error("Error fetching encounters:", error);
+      res.status(500).json({ error: "Failed to fetch encounters" });
+    }
+  });
+
+  // Get single encounter
+  app.get("/api/emr/encounters/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const encounterId = parseInt(req.params.id);
+      const encounter = await storage.getEncounter(encounterId);
+      if (!encounter) {
+        return res.status(404).json({ error: "Encounter not found" });
+      }
+      res.json(encounter);
+    } catch (error) {
+      console.error("Error fetching encounter:", error);
+      res.status(500).json({ error: "Failed to fetch encounter" });
+    }
+  });
+
+  // Create encounter
+  app.post("/api/emr/patients/:id/encounters", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const patientId = parseInt(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      
+      const encounter = await storage.createEncounter({
+        ...req.body,
+        patientId,
+        providerId: userId,
+        organizationId: patient.organizationId,
+      });
+      
+      await logAudit(req, 'create', 'encounter', encounter.id, patientId, { encounterType: encounter.encounterType });
+      res.status(201).json(encounter);
+    } catch (error) {
+      console.error("Error creating encounter:", error);
+      res.status(500).json({ error: "Failed to create encounter" });
+    }
+  });
+
+  // Update encounter
+  app.patch("/api/emr/encounters/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const encounterId = parseInt(req.params.id);
+      const encounter = await storage.updateEncounter(encounterId, req.body);
+      if (!encounter) {
+        return res.status(404).json({ error: "Encounter not found" });
+      }
+      res.json(encounter);
+    } catch (error) {
+      console.error("Error updating encounter:", error);
+      res.status(500).json({ error: "Failed to update encounter" });
+    }
+  });
+
+  // Sign/finalize encounter
+  app.post("/api/emr/encounters/:id/sign", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const encounterId = parseInt(req.params.id);
+      const encounter = await storage.signEncounter(encounterId, userId);
+      if (!encounter) {
+        return res.status(404).json({ error: "Encounter not found" });
+      }
+      await logAudit(req, 'update', 'encounter', encounter.id, encounter.patientId, { action: 'signed' });
+      res.json(encounter);
+    } catch (error) {
+      console.error("Error signing encounter:", error);
+      res.status(500).json({ error: "Failed to sign encounter" });
+    }
+  });
+
+  // Delete encounter
+  app.delete("/api/emr/encounters/:id", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
+    try {
+      const encounterId = parseInt(req.params.id);
+      const encounter = await storage.getEncounter(encounterId);
+      if (!encounter) {
+        return res.status(404).json({ error: "Encounter not found" });
+      }
+      if (encounter.status === "signed") {
+        return res.status(400).json({ error: "Cannot delete signed encounters" });
+      }
+      await storage.deleteEncounter(encounterId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting encounter:", error);
+      res.status(500).json({ error: "Failed to delete encounter" });
     }
   });
 

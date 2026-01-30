@@ -262,6 +262,117 @@ export const insertPatientSchema = createInsertSchema(patients).omit({
 export type Patient = typeof patients.$inferSelect;
 export type InsertPatient = z.infer<typeof insertPatientSchema>;
 
+// Vitals - track patient vital signs over time
+export const patientVitals = pgTable("patient_vitals", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull(),
+  organizationId: integer("organization_id"),
+  recordedBy: varchar("recorded_by").notNull(), // Provider who recorded
+  recordedAt: timestamp("recorded_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  // Core vitals
+  bloodPressureSystolic: integer("blood_pressure_systolic"), // mmHg
+  bloodPressureDiastolic: integer("blood_pressure_diastolic"), // mmHg
+  heartRate: integer("heart_rate"), // bpm
+  respiratoryRate: integer("respiratory_rate"), // breaths/min
+  temperature: text("temperature"), // Store as text to handle decimal (e.g., "98.6")
+  temperatureUnit: text("temperature_unit").default("F"), // 'F' or 'C'
+  oxygenSaturation: integer("oxygen_saturation"), // SpO2 %
+  // Measurements
+  weight: text("weight"), // Store as text for decimal precision
+  weightUnit: text("weight_unit").default("lbs"), // 'lbs' or 'kg'
+  height: text("height"), // Store as text (e.g., "5'10" or "178 cm")
+  heightUnit: text("height_unit").default("in"), // 'in' or 'cm'
+  bmi: text("bmi"), // Calculated BMI
+  // Pain & Additional
+  painLevel: integer("pain_level"), // 0-10 scale
+  painLocation: text("pain_location"),
+  bloodGlucose: integer("blood_glucose"), // mg/dL
+  notes: text("notes"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPatientVitalsSchema = createInsertSchema(patientVitals).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PatientVitals = typeof patientVitals.$inferSelect;
+export type InsertPatientVitals = z.infer<typeof insertPatientVitalsSchema>;
+
+// Encounters - clinical encounters/visits with HPI, ROS, Physical Exam
+export const patientEncounters = pgTable("patient_encounters", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull(),
+  organizationId: integer("organization_id"),
+  providerId: varchar("provider_id").notNull(),
+  appointmentId: integer("appointment_id"), // Link to appointment if applicable
+  noteId: integer("note_id"), // Link to SOAP note if created
+  encounterDate: timestamp("encounter_date").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  encounterType: text("encounter_type").default("office_visit"), // 'office_visit', 'telehealth', 'phone', 'follow_up', 'urgent'
+  // Chief Complaint & HPI
+  chiefComplaint: text("chief_complaint"),
+  hpiOnset: text("hpi_onset"), // When symptoms started
+  hpiLocation: text("hpi_location"), // Where
+  hpiDuration: text("hpi_duration"), // How long
+  hpiCharacter: text("hpi_character"), // Quality/character of symptoms
+  hpiAggravating: text("hpi_aggravating"), // What makes it worse
+  hpiRelieving: text("hpi_relieving"), // What makes it better
+  hpiTiming: text("hpi_timing"), // When does it occur
+  hpiSeverity: text("hpi_severity"), // How bad (1-10 or description)
+  hpiAssociatedSymptoms: text("hpi_associated_symptoms"),
+  hpiContext: text("hpi_context"), // Social/environmental context
+  hpiNarrative: text("hpi_narrative"), // Free-text HPI
+  // Review of Systems (store as JSON strings)
+  rosConstitutional: text("ros_constitutional"), // Weight loss, fever, fatigue, etc.
+  rosEyes: text("ros_eyes"),
+  rosEnt: text("ros_ent"), // Ears, nose, throat
+  rosCardiovascular: text("ros_cardiovascular"),
+  rosRespiratory: text("ros_respiratory"),
+  rosGastrointestinal: text("ros_gi"),
+  rosGenitourinary: text("ros_gu"),
+  rosMusculoskeletal: text("ros_musculoskeletal"),
+  rosSkin: text("ros_skin"),
+  rosNeurological: text("ros_neurological"),
+  rosPsychiatric: text("ros_psychiatric"),
+  rosEndocrine: text("ros_endocrine"),
+  rosHematologic: text("ros_hematologic"),
+  rosAllergic: text("ros_allergic"),
+  // Physical Exam
+  peGeneral: text("pe_general"), // General appearance
+  peVitals: text("pe_vitals"), // Vital signs summary
+  peHead: text("pe_head"),
+  peEyes: text("pe_eyes"),
+  peEnt: text("pe_ent"),
+  peNeck: text("pe_neck"),
+  peChest: text("pe_chest"),
+  peLungs: text("pe_lungs"),
+  peHeart: text("pe_heart"),
+  peAbdomen: text("pe_abdomen"),
+  peBack: text("pe_back"),
+  peExtremities: text("pe_extremities"),
+  peSkin: text("pe_skin"),
+  peNeurological: text("pe_neurological"),
+  pePsychiatric: text("pe_psychiatric"),
+  // Assessment & Plan link - usually in separate SOAP note
+  assessmentSummary: text("assessment_summary"),
+  planSummary: text("plan_summary"),
+  // Status
+  status: text("status").default("in_progress"), // 'in_progress', 'completed', 'signed'
+  signedAt: timestamp("signed_at"),
+  signedBy: varchar("signed_by"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPatientEncounterSchema = createInsertSchema(patientEncounters).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type PatientEncounter = typeof patientEncounters.$inferSelect;
+export type InsertPatientEncounter = z.infer<typeof insertPatientEncounterSchema>;
+
 // Appointments - scheduling system
 export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
