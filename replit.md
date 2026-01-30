@@ -52,6 +52,13 @@ DocuWhisper helps healthcare providers save 2+ hours daily by automatically tran
   - Note linking: Connect SOAP notes to patient records
   - Document storage: Upload and manage patient documents
 
+**HIPAA Compliance Features:**
+- **Audit Logging:** All PHI access logged with user, action, timestamp, IP address
+- **Session Timeout:** Auto-logout after 30 minutes of inactivity with 5-minute warning
+- **Access Control:** Role-based access with EMR invite requirement
+- **HTTPS/TLS:** All data encrypted in transit
+- **Admin Audit Log Viewer:** Admins can review all PHI access at `/api/admin/audit-logs`
+
 ## Tech Stack
 
 - **Frontend:** React + TypeScript + Vite + TailwindCSS + Shadcn UI
