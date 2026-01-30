@@ -23,6 +23,7 @@ import Analytics from "@/pages/analytics";
 import EMRPatients from "@/pages/emr/patients";
 import EMRPatientDetail from "@/pages/emr/patient-detail";
 import EMRSchedule from "@/pages/emr/schedule";
+import EMRTeam from "@/pages/emr/team";
 
 function AuthenticatedLayout() {
   useSessionTimeout(); // HIPAA compliance - auto-logout after 30 min inactivity
@@ -55,6 +56,7 @@ function AuthenticatedLayout() {
               <Route path="/emr/patients" component={EMRPatients} />
               <Route path="/emr/patients/:id" component={EMRPatientDetail} />
               <Route path="/emr/schedule" component={EMRSchedule} />
+              <Route path="/emr/team" component={EMRTeam} />
               <Route path="/admin" component={Admin} />
               <Route component={NotFound} />
             </Switch>

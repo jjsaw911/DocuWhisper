@@ -41,20 +41,27 @@ import {
   Loader2,
 } from "lucide-react";
 
-interface Organization {
+interface Practice {
   id: number;
   name: string;
+  description?: string | null;
   hasEmrLicense: boolean;
-  emrLicenseType?: string;
-  emrMaxUsers?: number;
-  emrActiveUsers?: number;
+  emrLicenseType?: string | null;
+  emrMaxUsers?: number | null;
+  emrActiveUsers?: number | null;
+  ownerId?: string;
+}
+
+interface OrgAccess {
+  practice: Practice;
+  emrRole: string | null;
 }
 
 interface EmrAccessResponse {
   hasAccess: boolean;
   consentAcknowledged: boolean;
-  accessType?: "vendor" | "organization" | "individual";
-  organizations?: Organization[];
+  accessType?: "vendor" | "organization" | "individual" | "none";
+  organizations?: OrgAccess[];
 }
 
 interface PracticeMember {
@@ -66,22 +73,11 @@ interface PracticeMember {
   joinedAt: string;
 }
 
-interface Practice {
-  id: number;
-  name: string;
-  description: string | null;
-  hasEmrLicense: boolean;
-  emrLicenseType: string | null;
-  emrMaxUsers: number | null;
-  emrActiveUsers: number | null;
-  ownerId: string;
-}
-
 interface UserPractice {
   practice: Practice;
   role: string;
-  hasEmrAccess: boolean;
-  emrRole: string | null;
+  hasEmrAccess?: boolean;
+  emrRole?: string | null;
 }
 
 const EMR_ROLES = [
@@ -110,8 +106,8 @@ export default function EmrTeamPage() {
   });
 
   const isVendor = emrAccess?.accessType === "vendor";
-  const emrOrganizations = emrAccess?.organizations?.filter(org => org.hasEmrLicense) || [];
-  const managedOrganizations = isVendor ? emrOrganizations : userPractices?.filter(p => 
+  const emrOrganizations = emrAccess?.organizations?.filter(org => org.practice?.hasEmrLicense).map(org => org.practice) || [];
+  const managedOrganizations: Practice[] = isVendor ? emrOrganizations : userPractices?.filter(p => 
     p.practice.hasEmrLicense && (p.role === "owner" || p.role === "admin" || p.emrRole === "emr_admin")
   ).map(p => p.practice) || [];
 

@@ -216,24 +216,57 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               {hasEmrAccess && (
-                <>
+                <Collapsible defaultOpen className="group/emr">
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location === "/emr/patients" || location.startsWith("/emr/patients/")}>
-                      <Link href="/emr/patients" data-testid="nav-emr-patients">
-                        <Users className="h-4 w-4" />
-                        <span>Patients</span>
-                      </Link>
-                    </SidebarMenuButton>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton
+                        isActive={location.startsWith("/emr")}
+                        data-testid="nav-emr"
+                      >
+                        <ClipboardList className="h-4 w-4" />
+                        <span>EMR</span>
+                        <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/emr:rotate-90" />
+                      </SidebarMenuButton>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={location === "/emr/patients" || location.startsWith("/emr/patients/")}
+                          >
+                            <Link href="/emr/patients" data-testid="nav-emr-patients">
+                              <Users className="h-4 w-4" />
+                              <span>Patients</span>
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={location === "/emr/schedule"}
+                          >
+                            <Link href="/emr/schedule" data-testid="nav-emr-schedule">
+                              <CalendarDays className="h-4 w-4" />
+                              <span>Schedule</span>
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={location === "/emr/team"}
+                          >
+                            <Link href="/emr/team" data-testid="nav-emr-team">
+                              <Users className="h-4 w-4" />
+                              <span>Team Access</span>
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
                   </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location === "/emr/schedule"}>
-                      <Link href="/emr/schedule" data-testid="nav-emr-schedule">
-                        <CalendarDays className="h-4 w-4" />
-                        <span>Schedule</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
+                </Collapsible>
               )}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location === "/subscription"}>

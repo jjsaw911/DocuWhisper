@@ -2497,11 +2497,7 @@ PLAN: ${plan || "Not provided"}
       
       // Check if user is owner (vendor)
       const ownerEmail = process.env.OWNER_EMAIL;
-      let userEmail: string | null = null;
-      const user = await storage.getUser(userId);
-      if (user) {
-        userEmail = user.email || null;
-      }
+      const userEmail = req.user.claims.email;
       const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
       
       if (isVendor && organizationId) {
@@ -2697,11 +2693,7 @@ PLAN: ${plan || "Not provided"}
       
       // Check if user is owner (vendor)
       const ownerEmail = process.env.OWNER_EMAIL;
-      let userEmail: string | null = null;
-      const user = await storage.getUser(userId);
-      if (user) {
-        userEmail = user.email || null;
-      }
+      const userEmail = req.user.claims.email;
       const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
       
       if (isVendor && organizationId) {
@@ -2738,11 +2730,7 @@ PLAN: ${plan || "Not provided"}
       
       // Check if user is owner (vendor)
       const ownerEmail = process.env.OWNER_EMAIL;
-      let userEmail: string | null = null;
-      const user = await storage.getUser(userId);
-      if (user) {
-        userEmail = user.email || null;
-      }
+      const userEmail = req.user.claims.email;
       const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
       
       if (isVendor && organizationId) {

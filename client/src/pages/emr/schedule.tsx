@@ -49,18 +49,23 @@ import {
 } from "lucide-react";
 import type { Appointment, Patient } from "@shared/schema";
 
-interface Organization {
+interface Practice {
   id: number;
   name: string;
   hasEmrLicense: boolean;
+}
+
+interface OrgAccess {
+  practice: Practice;
+  emrRole: string | null;
 }
 
 interface EmrAccessResponse {
   hasAccess: boolean;
   consentAcknowledged: boolean;
   consentDate?: string;
-  accessType?: "vendor" | "organization" | "individual";
-  organizations?: Organization[];
+  accessType?: "vendor" | "organization" | "individual" | "none";
+  organizations?: OrgAccess[];
 }
 
 const createAppointmentSchema = z.object({
@@ -89,7 +94,7 @@ export default function SchedulePage() {
   });
 
   const isVendor = emrAccess?.accessType === "vendor";
-  const emrOrganizations = emrAccess?.organizations?.filter(org => org.hasEmrLicense) || [];
+  const emrOrganizations = emrAccess?.organizations?.filter(org => org.practice?.hasEmrLicense).map(org => org.practice) || [];
 
   useEffect(() => {
     if (!isCheckingAccess && emrAccess && !emrAccess.hasAccess) {
