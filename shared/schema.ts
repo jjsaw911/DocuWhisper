@@ -144,3 +144,59 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({
 
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
+
+// Practices/Teams for collaboration
+export const practices = pgTable("practices", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  ownerId: varchar("owner_id").notNull(), // User who created the practice
+  description: text("description"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPracticeSchema = createInsertSchema(practices).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Practice = typeof practices.$inferSelect;
+export type InsertPractice = z.infer<typeof insertPracticeSchema>;
+
+// Practice members - links users to practices
+export const practiceMembers = pgTable("practice_members", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  role: text("role").notNull().default("member"), // 'owner', 'admin', 'member'
+  invitedBy: varchar("invited_by"),
+  joinedAt: timestamp("joined_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPracticeMemberSchema = createInsertSchema(practiceMembers).omit({
+  id: true,
+  joinedAt: true,
+});
+
+export type PracticeMember = typeof practiceMembers.$inferSelect;
+export type InsertPracticeMember = z.infer<typeof insertPracticeMemberSchema>;
+
+// Shared notes - tracks which notes are shared with which users/practices
+export const sharedNotes = pgTable("shared_notes", {
+  id: serial("id").primaryKey(),
+  noteId: integer("note_id").notNull(),
+  sharedBy: varchar("shared_by").notNull(), // User who shared
+  sharedWithUserId: varchar("shared_with_user_id"), // Specific user
+  sharedWithPracticeId: integer("shared_with_practice_id"), // Or shared with entire practice
+  permission: text("permission").notNull().default("view"), // 'view', 'edit', 'comment'
+  sharedAt: timestamp("shared_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertSharedNoteSchema = createInsertSchema(sharedNotes).omit({
+  id: true,
+  sharedAt: true,
+});
+
+export type SharedNote = typeof sharedNotes.$inferSelect;
+export type InsertSharedNote = z.infer<typeof insertSharedNoteSchema>;
