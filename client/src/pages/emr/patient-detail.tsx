@@ -518,7 +518,7 @@ export default function PatientDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-auto p-6">
+      <div className="h-full overflow-auto p-6">
         <div className="max-w-4xl mx-auto">
           <Skeleton className="h-8 w-48 mb-6" />
           <Card>
@@ -540,7 +540,7 @@ export default function PatientDetailPage() {
 
   if (!patient) {
     return (
-      <div className="flex-1 overflow-auto p-6">
+      <div className="h-full overflow-auto p-6">
         <div className="max-w-4xl mx-auto text-center">
           <h1 className="text-2xl font-bold mb-4">Patient Not Found</h1>
           <Button onClick={() => navigate("/emr/patients")}>
@@ -553,7 +553,7 @@ export default function PatientDetailPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div className="h-full overflow-auto p-6">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">

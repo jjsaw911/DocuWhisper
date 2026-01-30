@@ -204,7 +204,7 @@ export default function EmrTeamPage() {
 
   if (managedOrganizations.length === 0) {
     return (
-      <div className="flex-1 overflow-auto p-6">
+      <div className="h-full overflow-auto p-6">
         <div className="max-w-4xl mx-auto">
           <Card>
             <CardContent className="py-12 text-center">
@@ -234,7 +234,7 @@ export default function EmrTeamPage() {
   };
 
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div className="h-full overflow-auto p-6">
       <div className="max-w-4xl mx-auto">
         {isVendor && emrOrganizations.length > 0 && (
           <div className="mb-4 p-3 bg-muted/50 rounded-lg border flex items-center gap-3">

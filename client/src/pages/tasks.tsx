@@ -258,7 +258,7 @@ export default function Tasks() {
   const hasActiveFilters = search || statusFilter !== "todo" || categoryFilter !== "all";
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-background">
+    <div className="h-full flex flex-col overflow-hidden bg-background">
       <div className="flex-1 overflow-auto">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 max-w-6xl">
           <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
