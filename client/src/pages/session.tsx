@@ -30,6 +30,8 @@ import {
   Wand2,
   Settings,
   ChevronDown,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -124,6 +126,7 @@ export default function Session() {
   // Backup system - saves transcript to localStorage after each chunk
   const BACKUP_KEY = "docuwhisper_transcript_backup";
   const [hasBackup, setHasBackup] = useState(false);
+  const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(true);
   
   const saveBackup = useCallback((transcript: string, patientName: string, specialty: string) => {
     if (transcript && transcript.trim()) {
@@ -750,6 +753,7 @@ export default function Session() {
     onSuccess: (data) => {
       setSoapNote(data);
       setActiveTab("soap");
+      setTranscriptPanelOpen(false); // Collapse transcript panel when SOAP is generated
     },
     onError: () => {
       toast({
@@ -1122,13 +1126,14 @@ Plan: ${soapNote.plan}
         </div>
       </header>
 
-      <div className="flex-1 overflow-hidden">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          {/* Main content area - changes based on selected tab */}
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-3xl mx-auto">
-              {/* Context Tab */}
-              <TabsContent value="context" className="mt-0 space-y-4">
+      <div className="flex-1 overflow-hidden flex">
+        {/* Main content area */}
+        <div className={`flex-1 overflow-hidden ${soapNote && hasTranscript ? '' : 'w-full'}`}>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+            <main className="flex-1 overflow-auto p-6">
+              <div className="max-w-3xl mx-auto">
+                {/* Context Tab */}
+                <TabsContent value="context" className="mt-0 space-y-4">
                 <div>
                   <Label className="text-sm font-medium mb-2 block">Patient Background & Context</Label>
                   <p className="text-sm text-muted-foreground mb-3">
@@ -1271,9 +1276,44 @@ Plan: ${soapNote.plan}
                   </div>
                 )}
               </TabsContent>
-            </div>
-          </main>
-        </Tabs>
+              </div>
+            </main>
+          </Tabs>
+        </div>
+
+        {/* Collapsible Transcript Panel - shown when SOAP exists and transcript is available */}
+        {soapNote && hasTranscript && (
+          <div className={`border-l bg-muted/30 flex flex-col transition-all duration-300 ${transcriptPanelOpen ? 'w-80' : 'w-10'}`}>
+            {/* Panel toggle button */}
+            <button
+              onClick={() => setTranscriptPanelOpen(!transcriptPanelOpen)}
+              className="p-2 hover:bg-muted border-b flex items-center justify-center"
+              data-testid="button-toggle-transcript-panel"
+            >
+              {transcriptPanelOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+            </button>
+            
+            {/* Panel content */}
+            {transcriptPanelOpen && (
+              <div className="flex-1 overflow-auto p-3">
+                <h3 className="font-medium text-sm mb-2">Transcript</h3>
+                <div className="space-y-2">
+                  {transcriptEntries
+                    .filter((e) => e.type === "content")
+                    .map((entry, index) => (
+                      <div key={index} className="bg-background rounded p-2 text-sm">
+                        <p className="whitespace-pre-wrap">{entry.text}</p>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <footer className="border-t bg-background p-3">
