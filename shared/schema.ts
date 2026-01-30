@@ -95,6 +95,16 @@ export const userSettings = pgTable("user_settings", {
   credentials: text("credentials"), // Professional credentials (e.g., "MD, FACP", "NP", "PA-C")
   specialty: text("specialty"), // Medical specialty (e.g., "Primary Care", "Cardiology")
   practiceName: text("practice_name"),
+  // EMR Professional Credentials
+  emrRole: text("emr_role"), // 'physician', 'mid_level', 'ma', 'front_desk', 'office_manager', 'billing', 'admin'
+  licenseNumber: text("license_number"), // State medical license number
+  licenseState: text("license_state"), // State where licensed
+  licenseExpiry: timestamp("license_expiry"), // License expiration date
+  npiNumber: text("npi_number"), // National Provider Identifier (10 digits)
+  deaNumber: text("dea_number"), // DEA number for prescribing controlled substances
+  deaExpiry: timestamp("dea_expiry"), // DEA expiration date
+  supervisingPhysicianId: varchar("supervising_physician_id"), // For mid-levels: ID of supervising MD/DO
+  requiresCosignature: boolean("requires_cosignature").default(false), // Whether encounters need physician co-sign
   language: text("language").default("en"), // Preferred language
   defaultTemplateId: integer("default_template_id"), // FK to templates
   noteStyle: text("note_style").default("detailed"), // 'detailed', 'concise', 'bullet_points'
@@ -357,9 +367,14 @@ export const patientEncounters = pgTable("patient_encounters", {
   assessmentSummary: text("assessment_summary"),
   planSummary: text("plan_summary"),
   // Status
-  status: text("status").default("in_progress"), // 'in_progress', 'completed', 'signed'
+  status: text("status").default("in_progress"), // 'in_progress', 'completed', 'signed', 'pending_cosign'
   signedAt: timestamp("signed_at"),
   signedBy: varchar("signed_by"),
+  // Co-signature workflow for mid-levels
+  requiresCosignature: boolean("requires_cosignature").default(false), // Whether this encounter needs physician co-sign
+  cosignedAt: timestamp("cosigned_at"),
+  cosignedBy: varchar("cosigned_by"), // Supervising physician who co-signed
+  cosignatureNotes: text("cosignature_notes"), // Optional notes from supervising physician
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
