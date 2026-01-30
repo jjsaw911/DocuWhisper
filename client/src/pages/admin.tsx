@@ -57,6 +57,26 @@ interface AdminCheckData {
   isAdmin: boolean;
 }
 
+interface Organization {
+  id: number;
+  name: string;
+  ownerId: string;
+  description?: string;
+  hasEmrLicense?: boolean;
+  emrLicenseType?: string;
+  emrLicenseExpiry?: string;
+  emrMaxUsers?: number;
+  emrActiveUsers?: number;
+  createdAt: string;
+}
+
+const EMR_LICENSE_TYPES = [
+  { value: "trial", label: "30-Day Trial" },
+  { value: "monthly", label: "Monthly" },
+  { value: "annual", label: "Annual" },
+  { value: "lifetime", label: "Lifetime" },
+];
+
 const MEMBERSHIP_TYPES = [
   { value: "trial_7", label: "7-Day Trial" },
   { value: "trial_14", label: "14-Day Trial" },
@@ -95,6 +115,8 @@ export default function Admin() {
   const [emailInviteEmail, setEmailInviteEmail] = useState("");
   const [emailInviteType, setEmailInviteType] = useState("trial_30");
   const [emailInviteName, setEmailInviteName] = useState("");
+  const [selectedEmrLicense, setSelectedEmrLicense] = useState<{ [key: number]: string }>({});
+  const [selectedMaxUsers, setSelectedMaxUsers] = useState<{ [key: number]: string }>({});
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -108,6 +130,11 @@ export default function Admin() {
 
   const { data: invites, isLoading: invitesLoading } = useQuery<Invite[]>({
     queryKey: ["/api/admin/invites"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  const { data: organizations, isLoading: orgsLoading } = useQuery<Organization[]>({
+    queryKey: ["/api/admin/organizations"],
     enabled: !!user && adminCheck?.isAdmin === true,
   });
 
@@ -214,6 +241,57 @@ export default function Admin() {
     },
   });
 
+  const grantEmrLicenseMutation = useMutation({
+    mutationFn: async ({ organizationId, licenseType, maxUsers }: { organizationId: number; licenseType: string; maxUsers: number }) => {
+      const expiryDate = licenseType === "lifetime" ? null : 
+        licenseType === "trial" ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() :
+        licenseType === "monthly" ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() :
+        new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+      
+      const response = await apiRequest("POST", `/api/admin/organizations/${organizationId}/emr-license`, { 
+        licenseType, 
+        expiryDate,
+        maxUsers 
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/organizations"] });
+      toast({
+        title: "EMR License Granted",
+        description: "The organization now has EMR access",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to grant EMR license",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const revokeEmrLicenseMutation = useMutation({
+    mutationFn: async ({ organizationId }: { organizationId: number }) => {
+      const response = await apiRequest("DELETE", `/api/admin/organizations/${organizationId}/emr-license`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/organizations"] });
+      toast({
+        title: "EMR License Revoked",
+        description: "The organization no longer has EMR access",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to revoke EMR license",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const copyCode = async (code: string) => {
     try {
       await navigator.clipboard.writeText(code);
@@ -288,8 +366,12 @@ export default function Admin() {
       </div>
 
       <div className="p-6 max-w-6xl mx-auto">
-        <Tabs defaultValue="email-invites" className="space-y-6">
-          <TabsList>
+        <Tabs defaultValue="organizations" className="space-y-6">
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="organizations" data-testid="tab-organizations">
+              <Shield className="mr-2 h-4 w-4" />
+              Organizations
+            </TabsTrigger>
             <TabsTrigger value="email-invites" data-testid="tab-email-invites">
               <Mail className="mr-2 h-4 w-4" />
               Email Invites
@@ -303,6 +385,148 @@ export default function Admin() {
               Invite Codes
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="organizations" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  EMR Organization Licenses
+                </CardTitle>
+                <CardDescription>
+                  Manage EMR access for organizations. Grant or revoke EMR licenses to practices.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {orgsLoading ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : organizations && organizations.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Organization</TableHead>
+                          <TableHead>Owner ID</TableHead>
+                          <TableHead>EMR Status</TableHead>
+                          <TableHead>License Type</TableHead>
+                          <TableHead>Users</TableHead>
+                          <TableHead>Expires</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {organizations.map((org) => (
+                          <TableRow key={org.id} data-testid={`row-org-${org.id}`}>
+                            <TableCell className="font-medium">{org.name}</TableCell>
+                            <TableCell className="font-mono text-xs max-w-[150px] truncate">{org.ownerId}</TableCell>
+                            <TableCell>
+                              {org.hasEmrLicense ? (
+                                <Badge variant="default" className="bg-emerald-600" data-testid={`badge-emr-active-${org.id}`}>
+                                  <Shield className="h-3 w-3 mr-1" />
+                                  Active
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary">No License</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {org.hasEmrLicense ? (
+                                <span className="capitalize">{org.emrLicenseType}</span>
+                              ) : "-"}
+                            </TableCell>
+                            <TableCell>
+                              {org.hasEmrLicense ? (
+                                <span>{org.emrActiveUsers || 0} / {org.emrMaxUsers || 5}</span>
+                              ) : "-"}
+                            </TableCell>
+                            <TableCell>
+                              {org.hasEmrLicense && org.emrLicenseExpiry ? (
+                                formatDate(org.emrLicenseExpiry)
+                              ) : org.hasEmrLicense && org.emrLicenseType === "lifetime" ? (
+                                <span className="text-primary flex items-center gap-1">
+                                  <Crown className="h-3 w-3" />
+                                  Never
+                                </span>
+                              ) : "-"}
+                            </TableCell>
+                            <TableCell>
+                              {org.hasEmrLicense ? (
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => revokeEmrLicenseMutation.mutate({ organizationId: org.id })}
+                                  disabled={revokeEmrLicenseMutation.isPending}
+                                  data-testid={`button-revoke-emr-${org.id}`}
+                                >
+                                  {revokeEmrLicenseMutation.isPending ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    "Revoke"
+                                  )}
+                                </Button>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <Select
+                                    value={selectedEmrLicense[org.id] || ""}
+                                    onValueChange={(value) => setSelectedEmrLicense({ ...selectedEmrLicense, [org.id]: value })}
+                                  >
+                                    <SelectTrigger className="w-[120px]" data-testid={`select-license-${org.id}`}>
+                                      <SelectValue placeholder="License..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {EMR_LICENSE_TYPES.map((type) => (
+                                        <SelectItem key={type.value} value={type.value}>
+                                          {type.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Input
+                                    type="number"
+                                    placeholder="Users"
+                                    className="w-[70px]"
+                                    value={selectedMaxUsers[org.id] || "5"}
+                                    onChange={(e) => setSelectedMaxUsers({ ...selectedMaxUsers, [org.id]: e.target.value })}
+                                    data-testid={`input-max-users-${org.id}`}
+                                  />
+                                  <Button
+                                    size="sm"
+                                    onClick={() => {
+                                      if (selectedEmrLicense[org.id]) {
+                                        grantEmrLicenseMutation.mutate({
+                                          organizationId: org.id,
+                                          licenseType: selectedEmrLicense[org.id],
+                                          maxUsers: parseInt(selectedMaxUsers[org.id] || "5"),
+                                        });
+                                      }
+                                    }}
+                                    disabled={!selectedEmrLicense[org.id] || grantEmrLicenseMutation.isPending}
+                                    data-testid={`button-grant-license-${org.id}`}
+                                  >
+                                    {grantEmrLicenseMutation.isPending ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      "Grant"
+                                    )}
+                                  </Button>
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Shield className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No organizations yet</p>
+                    <p className="text-sm">Organizations are created when users set up practices/teams</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="email-invites" className="space-y-4">
             <Card>
