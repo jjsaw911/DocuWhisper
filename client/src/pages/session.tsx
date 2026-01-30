@@ -30,7 +30,17 @@ import {
   FileText,
   Send,
   Wand2,
+  Settings,
+  ChevronDown,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -86,6 +96,10 @@ export default function Session() {
   const [contextText, setContextText] = useState("");
   const [aiCommand, setAiCommand] = useState("");
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+
+  // Microphone selection
+  const [availableMicrophones, setAvailableMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicrophoneId, setSelectedMicrophoneId] = useState<string>("");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -149,6 +163,37 @@ export default function Session() {
       setHasBackup(true);
     }
   }, [loadBackup]);
+
+  // Enumerate available microphones
+  useEffect(() => {
+    const enumerateDevices = async () => {
+      try {
+        // Request permission first to get device labels
+        await navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+          stream.getTracks().forEach(track => track.stop());
+        });
+        
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(device => device.kind === "audioinput");
+        setAvailableMicrophones(mics);
+        
+        // Set default microphone if not already selected
+        if (!selectedMicrophoneId && mics.length > 0) {
+          setSelectedMicrophoneId(mics[0].deviceId);
+        }
+      } catch (error) {
+        console.error("Failed to enumerate audio devices:", error);
+      }
+    };
+
+    enumerateDevices();
+
+    // Listen for device changes (plugging in/out microphones)
+    navigator.mediaDevices.addEventListener("devicechange", enumerateDevices);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", enumerateDevices);
+    };
+  }, [selectedMicrophoneId]);
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -435,7 +480,11 @@ export default function Session() {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Use selected microphone if available
+      const audioConstraints = selectedMicrophoneId 
+        ? { deviceId: { exact: selectedMicrophoneId } } 
+        : {};
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       streamRef.current = stream;
 
       const audioContext = new AudioContext();
@@ -1009,20 +1058,58 @@ Plan: ${soapNote.plan}
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <span>{formatTime(duration)}</span>
             </div>
             
-            <div className="flex items-center gap-0.5">
+            {/* Audio level visualization */}
+            <div className="flex items-center gap-0.5 h-6">
               {audioLevel.map((level, i) => (
                 <div
                   key={i}
-                  className="w-1 bg-primary rounded-full transition-all duration-75"
-                  style={{ height: `${Math.max(4, level * 16)}px` }}
+                  className={`w-1.5 rounded-full transition-all duration-100 ${
+                    recordingState === "recording" 
+                      ? level > 0.6 ? "bg-red-500" : level > 0.3 ? "bg-yellow-500" : "bg-primary"
+                      : "bg-muted-foreground/30"
+                  }`}
+                  style={{ height: `${Math.max(4, level * 24)}px` }}
                 />
               ))}
             </div>
+
+            {/* Microphone selection dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-mic-settings">
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel className="flex items-center gap-2">
+                  <Mic className="h-4 w-4" />
+                  Select Microphone
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {availableMicrophones.length > 0 ? (
+                  availableMicrophones.map((mic) => (
+                    <DropdownMenuItem
+                      key={mic.deviceId}
+                      onClick={() => setSelectedMicrophoneId(mic.deviceId)}
+                      className="flex items-center gap-2"
+                      data-testid={`mic-option-${mic.deviceId.slice(0, 8)}`}
+                    >
+                      <div className={`w-2 h-2 rounded-full ${selectedMicrophoneId === mic.deviceId ? "bg-primary" : "bg-transparent"}`} />
+                      <span className="truncate">{mic.label || `Microphone ${availableMicrophones.indexOf(mic) + 1}`}</span>
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem disabled>
+                    No microphones detected
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <ThemeToggle />
           </div>
