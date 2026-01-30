@@ -90,11 +90,14 @@ export const userSettings = pgTable("user_settings", {
   firstName: text("first_name"),
   lastName: text("last_name"),
   preferredName: text("preferred_name"), // Display name to show instead of email
+  credentials: text("credentials"), // Professional credentials (e.g., "MD, FACP", "NP", "PA-C")
   specialty: text("specialty"), // Medical specialty (e.g., "Primary Care", "Cardiology")
   practiceName: text("practice_name"),
   language: text("language").default("en"), // Preferred language
   defaultTemplateId: integer("default_template_id"), // FK to templates
   noteStyle: text("note_style").default("detailed"), // 'detailed', 'concise', 'bullet_points'
+  noteFontSize: text("note_font_size").default("medium"), // 'small', 'medium', 'large'
+  sidebarCollapsed: boolean("sidebar_collapsed").default(false), // Remember sidebar state
   autoSaveEnabled: boolean("auto_save_enabled").default(true),
   showTimestamps: boolean("show_timestamps").default(true), // Show timestamps in transcript
   emailNotificationsEnabled: boolean("email_notifications_enabled").default(false), // Daily task digest
