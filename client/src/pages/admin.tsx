@@ -37,6 +37,7 @@ interface Subscription {
   stripeSubscriptionId?: string;
   status: string;
   currentPeriodEnd?: string;
+  hasEmrAccess?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -187,6 +188,27 @@ export default function Admin() {
       toast({
         title: "Failed to send invitation",
         description: error.message || "Please check your email service configuration",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const grantEmrAccessMutation = useMutation({
+    mutationFn: async ({ userId }: { userId: string }) => {
+      const response = await apiRequest("POST", "/api/admin/grant-emr-access", { userId });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/subscribers"] });
+      toast({
+        title: "EMR Access Granted",
+        description: "The user now has access to the EMR system",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to grant EMR access",
+        description: error.message || "User must have an active subscription",
         variant: "destructive",
       });
     },
@@ -434,6 +456,7 @@ export default function Admin() {
                         <TableRow>
                           <TableHead>User ID</TableHead>
                           <TableHead>Status</TableHead>
+                          <TableHead>EMR Access</TableHead>
                           <TableHead>Expires</TableHead>
                           <TableHead>Created</TableHead>
                           <TableHead>Extend</TableHead>
@@ -449,6 +472,30 @@ export default function Admin() {
                               <Badge variant={sub.status === "active" ? "default" : "secondary"}>
                                 {isLifetime(sub.currentPeriodEnd) ? "Lifetime" : sub.status}
                               </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {sub.hasEmrAccess ? (
+                                <Badge variant="default" className="bg-emerald-600" data-testid={`badge-emr-${sub.id}`}>
+                                  <Shield className="h-3 w-3 mr-1" />
+                                  Active
+                                </Badge>
+                              ) : sub.status === "active" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => grantEmrAccessMutation.mutate({ userId: sub.userId })}
+                                  disabled={grantEmrAccessMutation.isPending}
+                                  data-testid={`button-grant-emr-${sub.id}`}
+                                >
+                                  {grantEmrAccessMutation.isPending ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    "Grant EMR"
+                                  )}
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">Requires active sub</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               {isLifetime(sub.currentPeriodEnd) ? (

@@ -1157,6 +1157,30 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // Grant EMR access to user (admin only)
+  app.post("/api/admin/grant-emr-access", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      // Check if user has an active subscription
+      const subscription = await storage.getSubscription(userId);
+      if (!subscription || subscription.status !== "active") {
+        return res.status(400).json({ error: "User must have an active subscription to grant EMR access" });
+      }
+
+      await storage.grantEmrAccess(userId);
+      const updated = await storage.getSubscription(userId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error granting EMR access:", error);
+      res.status(500).json({ error: "Failed to grant EMR access" });
+    }
+  });
+
   // Create invite code (admin only)
   app.post("/api/admin/invites", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
@@ -1166,7 +1190,7 @@ PLAN: ${plan || "Not provided"}
         return res.status(400).json({ error: "membershipType is required" });
       }
 
-      const validTypes = ["trial_7", "trial_14", "trial_30", "months_1", "months_3", "months_6", "months_12", "lifetime"];
+      const validTypes = ["trial_7", "trial_14", "trial_30", "months_1", "months_3", "months_6", "months_12", "lifetime", "emr_access", "emr_trial_30", "emr_months_1", "emr_months_12", "emr_lifetime"];
       if (!validTypes.includes(membershipType)) {
         return res.status(400).json({ error: "Invalid membershipType" });
       }
