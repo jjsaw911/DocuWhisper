@@ -1519,6 +1519,29 @@ Plan: ${soapNote.plan}
         <div className="flex items-center justify-center gap-3 mb-3">
           {hasTranscript && recordingState === "idle" && (
             <>
+              {/* Continue recording options */}
+              <Button
+                variant="outline"
+                onClick={startRecording}
+                className="gap-2"
+                data-testid="button-continue-recording"
+              >
+                <Mic className="h-4 w-4" />
+                Continue Recording
+              </Button>
+              
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="gap-2"
+                data-testid="button-add-audio"
+              >
+                <Upload className="h-4 w-4" />
+                Add Audio
+              </Button>
+              
+              <div className="h-6 w-px bg-border" />
+              
               <Button
                 variant="default"
                 onClick={() => generateSoapMutation.mutate()}
@@ -1531,7 +1554,7 @@ Plan: ${soapNote.plan}
                 ) : (
                   <Sparkles className="h-4 w-4" />
                 )}
-                Generate SOAP
+                {soapNote ? "Regenerate SOAP" : "Generate SOAP"}
               </Button>
               
               {soapNote && (
