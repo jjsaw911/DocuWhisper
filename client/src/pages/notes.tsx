@@ -163,7 +163,10 @@ export default function Notes() {
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity -mr-2"
-                            onClick={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
                             data-testid={`button-delete-${note.id}`}
                           >
                             <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />

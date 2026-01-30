@@ -43,7 +43,8 @@ import {
   Info,
   Pill,
   Wifi,
-  WifiOff
+  WifiOff,
+  ClipboardCopy
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
@@ -149,6 +150,23 @@ export default function NoteDetail() {
     enabled: !!user,
   });
   
+  // EMR access query
+  const { data: emrAccess } = useQuery<{ hasAccess: boolean }>({
+    queryKey: ["/api/emr/access"],
+    enabled: !!user,
+  });
+  const hasEmrAccess = emrAccess?.hasAccess === true;
+  
+  // Copy to EMR state
+  const [showCopyToEmrDialog, setShowCopyToEmrDialog] = useState(false);
+  const [selectedEmrPatientId, setSelectedEmrPatientId] = useState<string>("");
+  
+  // EMR patients query for Copy to EMR feature
+  const { data: emrPatients = [] } = useQuery<any[]>({
+    queryKey: ["/api/emr/patients"],
+    enabled: !!user && hasEmrAccess && showCopyToEmrDialog,
+  });
+  
   // Note shares query
   const { data: noteShares = [] } = useQuery<SharedNote[]>({
     queryKey: ["/api/notes", id, "shares"],
@@ -201,6 +219,33 @@ export default function NoteDetail() {
       });
     },
   });
+  
+  // Copy to EMR mutation - links note to EMR patient
+  const copyToEmrMutation = useMutation({
+    mutationFn: async (patientId: number) => {
+      const response = await apiRequest("PATCH", `/api/notes/${id}`, {
+        patientId: patientId,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
+      toast({
+        title: "Linked to EMR",
+        description: "This note has been linked to the patient's EMR record",
+      });
+      setShowCopyToEmrDialog(false);
+      setSelectedEmrPatientId("");
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to link note to EMR",
+        variant: "destructive",
+      });
+    },
+  });
+  
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatHistory, setChatHistory] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   
@@ -763,6 +808,76 @@ export default function NoteDetail() {
             <Button variant="outline" size="icon" onClick={exportToPDF} data-testid="button-export">
               <Download className="h-4 w-4" />
             </Button>
+            
+            {/* Copy to EMR button - only show if user has EMR access */}
+            {hasEmrAccess && (
+              <Dialog open={showCopyToEmrDialog} onOpenChange={setShowCopyToEmrDialog}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" data-testid="button-copy-to-emr">
+                    <ClipboardCopy className="h-4 w-4 mr-2" />
+                    Link to EMR
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Link Note to EMR Patient</DialogTitle>
+                    <DialogDescription>
+                      Select a patient to link this transcription to their EMR chart. The note will be visible in the patient's Visit Notes.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>Select Patient</Label>
+                      <Select value={selectedEmrPatientId} onValueChange={setSelectedEmrPatientId}>
+                        <SelectTrigger data-testid="select-emr-patient">
+                          <SelectValue placeholder="Choose a patient..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {emrPatients.map((patient) => (
+                            <SelectItem key={patient.id} value={patient.id.toString()}>
+                              {patient.firstName} {patient.lastName}
+                              {patient.dateOfBirth && ` (DOB: ${new Date(patient.dateOfBirth).toLocaleDateString()})`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {note?.patientId && (
+                      <p className="text-sm text-muted-foreground">
+                        This note is already linked to a patient record.
+                      </p>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowCopyToEmrDialog(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        if (selectedEmrPatientId) {
+                          copyToEmrMutation.mutate(parseInt(selectedEmrPatientId));
+                        }
+                      }}
+                      disabled={!selectedEmrPatientId || copyToEmrMutation.isPending}
+                      data-testid="button-confirm-link-emr"
+                    >
+                      {copyToEmrMutation.isPending ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Linking...
+                        </>
+                      ) : (
+                        "Link to Patient"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+            
             <Button
               onClick={() => updateMutation.mutate()}
               disabled={updateMutation.isPending}
