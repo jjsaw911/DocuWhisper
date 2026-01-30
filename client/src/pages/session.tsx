@@ -1084,7 +1084,7 @@ Plan: ${soapNote.plan}
               <span>{formatTime(duration)}</span>
             </div>
 
-            {/* Transcribe button - compact version in header */}
+            {/* Transcribe/Resume button - compact version in header */}
             {recordingState === "idle" && (
               <Button
                 size="sm"
@@ -1092,8 +1092,17 @@ Plan: ${soapNote.plan}
                 className="gap-1.5 h-8"
                 data-testid="button-start-recording-header"
               >
-                <Mic className="h-4 w-4" />
-                Transcribe
+                {hasTranscript ? (
+                  <>
+                    <Play className="h-4 w-4" />
+                    Resume
+                  </>
+                ) : (
+                  <>
+                    <Mic className="h-4 w-4" />
+                    Transcribe
+                  </>
+                )}
               </Button>
             )}
             {recordingState === "recording" && (
@@ -1519,17 +1528,6 @@ Plan: ${soapNote.plan}
         <div className="flex items-center justify-center gap-3 mb-3">
           {hasTranscript && recordingState === "idle" && (
             <>
-              {/* Continue recording options */}
-              <Button
-                variant="outline"
-                onClick={startRecording}
-                className="gap-2"
-                data-testid="button-continue-recording"
-              >
-                <Mic className="h-4 w-4" />
-                Continue Recording
-              </Button>
-              
               <Button
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
@@ -1539,8 +1537,6 @@ Plan: ${soapNote.plan}
                 <Upload className="h-4 w-4" />
                 Add Audio
               </Button>
-              
-              <div className="h-6 w-px bg-border" />
               
               <Button
                 variant="default"
