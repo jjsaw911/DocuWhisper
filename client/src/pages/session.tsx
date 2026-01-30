@@ -1062,6 +1062,68 @@ Plan: ${soapNote.plan}
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <span>{formatTime(duration)}</span>
             </div>
+
+            {/* Transcribe button - compact version in header */}
+            {recordingState === "idle" && (
+              <Button
+                size="sm"
+                onClick={startRecording}
+                className="gap-1.5 h-8"
+                data-testid="button-start-recording-header"
+              >
+                <Mic className="h-4 w-4" />
+                Transcribe
+              </Button>
+            )}
+            {recordingState === "recording" && (
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={pauseRecording}
+                  className="h-8 w-8 p-0"
+                  data-testid="button-pause-header"
+                >
+                  <Pause className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={handleStopAndTranscribe}
+                  className="h-8 w-8 p-0"
+                  data-testid="button-stop-header"
+                >
+                  <Square className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            {recordingState === "paused" && (
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  onClick={resumeRecording}
+                  className="h-8 w-8 p-0"
+                  data-testid="button-resume-header"
+                >
+                  <Play className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={handleStopAndTranscribe}
+                  className="h-8 w-8 p-0"
+                  data-testid="button-stop-header"
+                >
+                  <Square className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            {recordingState === "processing" && (
+              <Button size="sm" disabled className="h-8">
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                Processing
+              </Button>
+            )}
             
             {/* Audio level visualization */}
             <div className="flex items-center gap-0.5 h-6">
