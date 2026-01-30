@@ -1066,25 +1066,16 @@ Plan: ${soapNote.plan}
               <span>{formatTime(duration)}</span>
             </div>
 
-            {/* Transcribe/Resume button - compact version in header */}
+            {/* Transcribe button - fixed width for consistent sizing */}
             {recordingState === "idle" && (
               <Button
                 size="sm"
                 onClick={startRecording}
-                className="gap-1.5 h-8"
+                className="gap-1.5 h-8 w-24 justify-center"
                 data-testid="button-start-recording-header"
               >
-                {hasTranscript ? (
-                  <>
-                    <Play className="h-4 w-4" />
-                    Resume
-                  </>
-                ) : (
-                  <>
-                    <Mic className="h-4 w-4" />
-                    Transcribe
-                  </>
-                )}
+                <Mic className="h-4 w-4" />
+                {hasTranscript ? "Resume" : "Transcribe"}
               </Button>
             )}
             {recordingState === "recording" && (
@@ -1102,10 +1093,11 @@ Plan: ${soapNote.plan}
                   size="sm"
                   variant="destructive"
                   onClick={handleStopAndTranscribe}
-                  className="h-8 w-8 p-0"
+                  className="h-8 w-24 justify-center gap-1.5"
                   data-testid="button-stop-header"
                 >
                   <Square className="h-4 w-4" />
+                  Stop
                 </Button>
               </div>
             )}
@@ -1114,10 +1106,11 @@ Plan: ${soapNote.plan}
                 <Button
                   size="sm"
                   onClick={resumeRecording}
-                  className="h-8 w-8 p-0"
+                  className="h-8 w-24 justify-center gap-1.5"
                   data-testid="button-resume-header"
                 >
                   <Play className="h-4 w-4" />
+                  Resume
                 </Button>
                 <Button
                   size="sm"
@@ -1131,9 +1124,9 @@ Plan: ${soapNote.plan}
               </div>
             )}
             {recordingState === "processing" && (
-              <Button size="sm" disabled className="h-8">
-                <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                Processing
+              <Button size="sm" disabled className="h-8 w-24 justify-center gap-1.5">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Wait...
               </Button>
             )}
             
