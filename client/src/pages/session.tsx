@@ -32,6 +32,8 @@ import {
   Wand2,
   Settings,
   ChevronDown,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -100,6 +102,9 @@ export default function Session() {
   // Microphone selection
   const [availableMicrophones, setAvailableMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicrophoneId, setSelectedMicrophoneId] = useState<string>("");
+
+  // Panel collapse state
+  const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -1178,311 +1183,259 @@ Plan: ${soapNote.plan}
         </div>
 
         <div className="flex items-center justify-between px-4 py-2 border-t">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <div className="flex items-center justify-between">
-              <TabsList className="h-8">
-                <TabsTrigger value="context" className="text-xs px-3" data-testid="tab-context">
-                  <FileText className="h-3 w-3 mr-1" />
-                  Context
-                </TabsTrigger>
-                <TabsTrigger value="transcript" className="text-xs px-3" data-testid="tab-transcript">
-                  <AudioLines className="h-3 w-3 mr-1" />
-                  Transcript
-                </TabsTrigger>
-                <TabsTrigger value="soap" className="text-xs px-3" data-testid="tab-soap" disabled={!soapNote}>
-                  <Sparkles className="h-3 w-3 mr-1" />
-                  SOAP Note
-                </TabsTrigger>
-              </TabsList>
+          <div className="flex items-center gap-2">
+            <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+              <SelectTrigger className="h-8 w-48" data-testid="select-template">
+                <SelectValue placeholder="Select template" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default Template</SelectItem>
+                {templates.map((template) => (
+                  <SelectItem key={template.id} value={template.id.toString()}>
+                    {template.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-              <div className="flex items-center gap-2">
-                <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-                  <SelectTrigger className="h-8 w-48" data-testid="select-template">
-                    <SelectValue placeholder="Select template" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Default Template</SelectItem>
-                    {templates.map((template) => (
-                      <SelectItem key={template.id} value={template.id.toString()}>
-                        {template.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Button variant="outline" size="sm" disabled className="h-8">
-                  <Undo className="h-3 w-3 mr-1" />
-                </Button>
-                <Button variant="outline" size="sm" disabled className="h-8">
-                  <Redo className="h-3 w-3 mr-1" />
-                </Button>
-                <Button variant="outline" size="sm" className="h-8" data-testid="button-copy">
-                  <Copy className="h-3 w-3 mr-1" />
-                  Copy
-                </Button>
-              </div>
-            </div>
-          </Tabs>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8" data-testid="button-copy">
+              <Copy className="h-3 w-3 mr-1" />
+              Copy
+            </Button>
+            
+            {/* Panel toggle button */}
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="h-8"
+              onClick={() => setIsPanelCollapsed(!isPanelCollapsed)}
+              data-testid="button-toggle-panel"
+            >
+              {isPanelCollapsed ? (
+                <>
+                  <PanelRightOpen className="h-3 w-3 mr-1" />
+                  Show Panel
+                </>
+              ) : (
+                <>
+                  <PanelRightClose className="h-3 w-3 mr-1" />
+                  Hide Panel
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-auto p-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsContent value="context" className="mt-0">
-            <div className="max-w-3xl space-y-4">
-              <div>
-                <Label className="text-sm font-medium mb-2 block">Patient Background & Context</Label>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Add relevant patient history, medications, allergies, or other background information. 
-                  This context will be used by the AI when generating clinical notes.
-                </p>
-                <Textarea
-                  value={contextText}
-                  onChange={(e) => setContextText(e.target.value)}
-                  placeholder="e.g., Patient has history of Type 2 Diabetes (diagnosed 2019), on Metformin 1000mg BID. Previous allergic reaction to Penicillin. Last HbA1c: 7.2% (Jan 2024)."
-                  className="min-h-[200px] text-base leading-relaxed"
-                  data-testid="textarea-context"
-                />
-              </div>
-              
-              <div className="bg-muted/50 rounded-lg p-4">
-                <h4 className="font-medium text-sm mb-2">Tips for effective context</h4>
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>- Past medical history relevant to today's visit</li>
-                  <li>- Current medications and dosages</li>
-                  <li>- Known allergies or drug reactions</li>
-                  <li>- Recent test results or imaging findings</li>
-                  <li>- Relevant family or social history</li>
-                </ul>
-              </div>
+      <div className="flex-1 flex overflow-hidden">
+        {/* Main content area - Context input */}
+        <main className={`flex-1 overflow-auto p-6 transition-all duration-300 ${isPanelCollapsed ? '' : 'border-r'}`}>
+          <div className="max-w-3xl space-y-4">
+            <div>
+              <Label className="text-sm font-medium mb-2 block">Patient Background & Context</Label>
+              <p className="text-sm text-muted-foreground mb-3">
+                Add relevant patient history, medications, allergies, or other background information. 
+                This context will be used by the AI when generating clinical notes.
+              </p>
+              <Textarea
+                value={contextText}
+                onChange={(e) => setContextText(e.target.value)}
+                placeholder="e.g., Patient has history of Type 2 Diabetes (diagnosed 2019), on Metformin 1000mg BID. Previous allergic reaction to Penicillin. Last HbA1c: 7.2% (Jan 2024)."
+                className="min-h-[200px] text-base leading-relaxed"
+                data-testid="textarea-context"
+              />
             </div>
-          </TabsContent>
-          
-          <TabsContent value="transcript" className="mt-0">
-            {transcriptEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-                <h2 className="text-xl font-medium mb-2">Start this session using the header</h2>
-                <p className="text-muted-foreground mb-6">
-                  Your note will appear here once your session is complete
+            
+            <div className="bg-muted/50 rounded-lg p-4">
+              <h4 className="font-medium text-sm mb-2">Tips for effective context</h4>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                <li>- Past medical history relevant to today's visit</li>
+                <li>- Current medications and dosages</li>
+                <li>- Known allergies or drug reactions</li>
+                <li>- Recent test results or imaging findings</li>
+                <li>- Relevant family or social history</li>
+              </ul>
+            </div>
+
+            {/* Visit mode selector */}
+            {transcriptEntries.length === 0 && recordingState === "idle" && (
+              <div className="flex flex-col items-center gap-4 py-8">
+                <h2 className="text-xl font-medium">Ready to start your session</h2>
+                <p className="text-muted-foreground text-center">
+                  Use the Transcribe button in the header or select a mode below
                 </p>
-                
-                {/* Visit mode selector - shown in empty state */}
-                <div className="flex flex-col items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <Select value={visitMode} onValueChange={(v: VisitMode) => setVisitMode(v)}>
-                      <SelectTrigger className="w-[200px]" data-testid="select-visit-mode">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="transcribing">Transcribing</SelectItem>
-                        <SelectItem value="dictating">Dictating</SelectItem>
-                        <SelectItem value="upload">Upload session audio</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    
-                    <Button 
-                      onClick={() => {
-                        if (visitMode === "upload") {
-                          fileInputRef.current?.click();
-                        } else {
-                          startRecording();
-                        }
-                      }}
-                      className="gap-2"
-                      data-testid="button-start-session"
-                    >
-                      {visitMode === "upload" ? (
-                        <>
-                          <Upload className="h-4 w-4" />
-                          Upload
-                        </>
-                      ) : (
-                        <>
-                          <Mic className="h-4 w-4" />
-                          Start
-                        </>
-                      )}
-                    </Button>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Select value={visitMode} onValueChange={(v: VisitMode) => setVisitMode(v)}>
+                    <SelectTrigger className="w-[200px]" data-testid="select-visit-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="transcribing">Transcribing</SelectItem>
+                      <SelectItem value="dictating">Dictating</SelectItem>
+                      <SelectItem value="upload">Upload session audio</SelectItem>
+                    </SelectContent>
+                  </Select>
                   
-                  <p className="text-sm text-muted-foreground">Select your visit mode in the dropdown</p>
+                  <Button 
+                    onClick={() => {
+                      if (visitMode === "upload") {
+                        fileInputRef.current?.click();
+                      } else {
+                        startRecording();
+                      }
+                    }}
+                    className="gap-2"
+                    data-testid="button-start-session"
+                  >
+                    {visitMode === "upload" ? (
+                      <>
+                        <Upload className="h-4 w-4" />
+                        Upload
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="h-4 w-4" />
+                        Start
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
-            ) : (
-              <div className="space-y-4 max-w-3xl">
-                {transcriptEntries.map((entry, index) => (
-                  <div key={index} className={entry.type === "system" ? "text-muted-foreground text-sm" : ""}>
-                    {entry.type === "system" ? (
-                      <p className="italic">{entry.text} {entry.timestamp}</p>
-                    ) : (
-                      <div className="bg-muted/50 rounded-lg p-4">
-                        <p className="whitespace-pre-wrap text-base leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{entry.text}</p>
+            )}
+          </div>
+        </main>
+
+        {/* Collapsible right panel for Transcript/SOAP */}
+        <aside 
+          className={`bg-muted/30 overflow-hidden transition-all duration-300 ease-in-out flex flex-col ${
+            isPanelCollapsed ? 'w-0' : 'w-[480px]'
+          }`}
+        >
+          <div className="flex-1 overflow-auto p-4 min-w-[480px]">
+            {/* Panel header with tabs */}
+            <div className="flex items-center justify-between mb-4">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
+                <TabsList className="h-8">
+                  <TabsTrigger value="transcript" className="text-xs px-3" data-testid="tab-transcript-panel">
+                    <AudioLines className="h-3 w-3 mr-1" />
+                    Transcript
+                  </TabsTrigger>
+                  <TabsTrigger value="soap" className="text-xs px-3" data-testid="tab-soap-panel" disabled={!soapNote}>
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    SOAP
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsContent value="transcript" className="mt-0">
+                {transcriptEntries.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-[40vh] text-center">
+                    <AudioLines className="h-12 w-12 text-muted-foreground/30 mb-4" />
+                    <p className="text-muted-foreground text-sm">
+                      Your transcript will appear here
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {transcriptEntries.map((entry, index) => (
+                      <div key={index} className={entry.type === "system" ? "text-muted-foreground text-sm" : ""}>
+                        {entry.type === "system" ? (
+                          <p className="italic text-xs">{entry.text} {entry.timestamp}</p>
+                        ) : (
+                          <div className="bg-background rounded-lg p-3 shadow-sm">
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed">{entry.text}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {recordingState === "recording" && (
+                      <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                        <span className="h-2 w-2 bg-red-500 rounded-full animate-pulse" />
+                        Listening...
+                      </div>
+                    )}
+                    {recordingState === "processing" && (
+                      <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Processing...
                       </div>
                     )}
                   </div>
-                ))}
-                {recordingState === "recording" && (
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <span className="h-2 w-2 bg-red-500 rounded-full animate-pulse" />
-                      Listening...
-                    </span>
-                  </div>
                 )}
-                {recordingState === "processing" && (
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Processing transcript...
-                  </div>
-                )}
-              </div>
-            )}
-          </TabsContent>
+              </TabsContent>
 
-          <TabsContent value="soap" className="mt-0">
-            {soapNote ? (
-              <div className="space-y-6 max-w-3xl">
-                {/* Drug interaction alert */}
-                <DrugInteractionAlert 
-                  text={`${soapNote.subjective} ${soapNote.objective} ${soapNote.assessment} ${soapNote.plan}`} 
-                />
-                
-                {[
-                  { key: "subjective", label: "Subjective" },
-                  { key: "objective", label: "Objective" },
-                  { key: "assessment", label: "Assessment" },
-                  { key: "plan", label: "Plan" },
-                ].map(({ key, label }) => (
-                  <div key={key}>
-                    <h3 className="font-medium mb-2">{label}</h3>
-                    <MedicalAutocomplete
-                      value={soapNote[key as keyof typeof soapNote]}
-                      onChange={(value) =>
-                        setSoapNote((prev) =>
-                          prev ? { ...prev, [key]: value } : null
-                        )
-                      }
-                      className="min-h-[100px] text-base leading-relaxed"
-                      rows={4}
-                      data-testid={`textarea-${key}`}
+              <TabsContent value="soap" className="mt-0">
+                {soapNote ? (
+                  <div className="space-y-4">
+                    <DrugInteractionAlert 
+                      text={`${soapNote.subjective} ${soapNote.objective} ${soapNote.assessment} ${soapNote.plan}`} 
                     />
+                    
+                    {[
+                      { key: "subjective", label: "Subjective" },
+                      { key: "objective", label: "Objective" },
+                      { key: "assessment", label: "Assessment" },
+                      { key: "plan", label: "Plan" },
+                    ].map(({ key, label }) => (
+                      <div key={key}>
+                        <h3 className="font-medium text-sm mb-1">{label}</h3>
+                        <MedicalAutocomplete
+                          value={soapNote[key as keyof typeof soapNote]}
+                          onChange={(value) =>
+                            setSoapNote((prev) =>
+                              prev ? { ...prev, [key]: value } : null
+                            )
+                          }
+                          className="min-h-[80px] text-sm"
+                          rows={3}
+                          data-testid={`textarea-panel-${key}`}
+                        />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-                <p className="text-muted-foreground">
-                  Generate a SOAP note from your transcript
-                </p>
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
-      </main>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-[40vh] text-center">
+                    <Sparkles className="h-12 w-12 text-muted-foreground/30 mb-4" />
+                    <p className="text-muted-foreground text-sm">
+                      SOAP note will appear here
+                    </p>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+        </aside>
+      </div>
 
-      <footer className="border-t bg-background p-4">
-        <div className="flex items-center justify-center gap-3">
-          {recordingState === "idle" && (
-            <>
-              <Button
-                size="lg"
-                onClick={startRecording}
-                className="gap-2"
-                data-testid="button-start-recording"
-              >
-                <Mic className="h-5 w-5" />
-                Start transcribing
-              </Button>
-              
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                accept="audio/*"
-                className="hidden"
-              />
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => fileInputRef.current?.click()}
-                className="gap-2"
-                data-testid="button-upload-audio"
-              >
-                <Upload className="h-5 w-5" />
-                Upload audio
-              </Button>
-            </>
-          )}
-
-          {recordingState === "recording" && (
-            <>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={pauseRecording}
-                className="h-10 w-10"
-                data-testid="button-pause"
-              >
-                <Pause className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="destructive"
-                size="lg"
-                onClick={handleStopAndTranscribe}
-                className="gap-2"
-                data-testid="button-stop-recording"
-              >
-                <span className="h-2 w-2 bg-white rounded-full animate-pulse" />
-                Stop transcribing
-              </Button>
-            </>
-          )}
-
-          {recordingState === "paused" && (
-            <>
-              <Button
-                size="lg"
-                onClick={resumeRecording}
-                className="gap-2"
-                data-testid="button-resume"
-              >
-                <Play className="h-5 w-5" />
-                Resume
-              </Button>
-              <Button
-                variant="destructive"
-                size="lg"
-                onClick={handleStopAndTranscribe}
-                className="gap-2"
-                data-testid="button-stop-recording"
-              >
-                <Square className="h-4 w-4" />
-                Stop & Create
-              </Button>
-            </>
-          )}
-
-          {recordingState === "processing" && (
-            <Button size="lg" disabled className="gap-2">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Processing...
-            </Button>
-          )}
-
-          {recordingState === "idle" && hasTranscript && (
+      <footer className="border-t bg-background p-3">
+        {/* Hidden file input for upload */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          accept="audio/*"
+          className="hidden"
+        />
+        
+        {/* Action buttons row */}
+        <div className="flex items-center justify-center gap-3 mb-3">
+          {hasTranscript && recordingState === "idle" && (
             <>
               <Button
                 variant="default"
-                size="lg"
                 onClick={() => generateSoapMutation.mutate()}
                 disabled={generateSoapMutation.isPending}
                 className="gap-2"
                 data-testid="button-generate-soap"
               >
                 {generateSoapMutation.isPending ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Sparkles className="h-5 w-5" />
+                  <Sparkles className="h-4 w-4" />
                 )}
                 Generate SOAP
               </Button>
@@ -1490,14 +1443,13 @@ Plan: ${soapNote.plan}
               {soapNote && (
                 <Button
                   variant="secondary"
-                  size="lg"
                   onClick={() => saveNoteMutation.mutate()}
                   disabled={saveNoteMutation.isPending}
                   className="gap-2"
                   data-testid="button-save-session"
                 >
                   {saveNoteMutation.isPending ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     "Save Session"
                   )}
@@ -1507,34 +1459,29 @@ Plan: ${soapNote.plan}
           )}
         </div>
         
-        <p className="text-xs text-muted-foreground text-center mt-3">
-          Review your note before use to ensure it accurately represents the visit
-        </p>
-        
         {/* Ask AI to do anything - persistent input bar */}
-        <div className="mt-4 pt-4 border-t">
-          <div className="flex items-center gap-2 max-w-2xl mx-auto">
-            <div className="flex-1 relative">
-              <Wand2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={aiCommand}
-                onChange={(e) => setAiCommand(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !isAiProcessing && handleAiCommand()}
-                placeholder="Ask AI to do anything..."
-                className="pl-10 h-10"
-                disabled={isAiProcessing}
-                data-testid="input-ai-command"
-              />
-            </div>
-            <Button 
-              size="icon" 
-              onClick={handleAiCommand} 
-              disabled={isAiProcessing || !aiCommand.trim()}
-              data-testid="button-send-ai-command"
-            >
-              {isAiProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </Button>
+        <div className="flex items-center gap-2 max-w-2xl mx-auto">
+          <div className="flex-1 relative">
+            <Wand2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={aiCommand}
+              onChange={(e) => setAiCommand(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !isAiProcessing && handleAiCommand()}
+              placeholder="Ask AI to do anything..."
+              className="pl-10 h-9"
+              disabled={isAiProcessing}
+              data-testid="input-ai-command"
+            />
           </div>
+          <Button 
+            size="icon" 
+            onClick={handleAiCommand} 
+            disabled={isAiProcessing || !aiCommand.trim()}
+            className="h-9 w-9"
+            data-testid="button-send-ai-command"
+          >
+            {isAiProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
         </div>
       </footer>
     </div>
