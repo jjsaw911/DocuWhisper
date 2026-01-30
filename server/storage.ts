@@ -448,7 +448,7 @@ class DatabaseStorage implements IStorage {
     const allShares = [...directShares, ...practiceShares];
     if (allShares.length === 0) return [];
     
-    const noteIds = [...new Set(allShares.map(s => s.noteId))];
+    const noteIds = Array.from(new Set(allShares.map(s => s.noteId)));
     const notesList = await db.select().from(notes).where(inArray(notes.id, noteIds));
     
     return notesList.map(note => {

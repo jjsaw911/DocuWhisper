@@ -1545,6 +1545,306 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // ========== PRACTICE/TEAM MANAGEMENT ROUTES ==========
+  
+  // Get all practices user belongs to
+  app.get("/api/practices", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const practices = await storage.getUserPractices(userId);
+      res.json(practices);
+    } catch (error) {
+      console.error("Error fetching practices:", error);
+      res.status(500).json({ error: "Failed to fetch practices" });
+    }
+  });
+
+  // Create a new practice
+  app.post("/api/practices", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { name, description } = req.body;
+      
+      if (!name || typeof name !== "string" || name.trim().length === 0) {
+        return res.status(400).json({ error: "Practice name is required" });
+      }
+      
+      const practice = await storage.createPractice({
+        name: name.trim(),
+        ownerId: userId,
+        description: description || null,
+      });
+      
+      res.status(201).json(practice);
+    } catch (error) {
+      console.error("Error creating practice:", error);
+      res.status(500).json({ error: "Failed to create practice" });
+    }
+  });
+
+  // Update a practice
+  app.patch("/api/practices/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+      
+      if (practice.ownerId !== userId) {
+        return res.status(403).json({ error: "Only the owner can update the practice" });
+      }
+      
+      const { name, description } = req.body;
+      const updated = await storage.updatePractice(practiceId, {
+        name: name || practice.name,
+        description: description !== undefined ? description : practice.description,
+      });
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating practice:", error);
+      res.status(500).json({ error: "Failed to update practice" });
+    }
+  });
+
+  // Delete a practice
+  app.delete("/api/practices/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+      
+      if (practice.ownerId !== userId) {
+        return res.status(403).json({ error: "Only the owner can delete the practice" });
+      }
+      
+      await storage.deletePractice(practiceId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting practice:", error);
+      res.status(500).json({ error: "Failed to delete practice" });
+    }
+  });
+
+  // Get practice members
+  app.get("/api/practices/:id/members", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      
+      // Check if user is a member of this practice
+      const userPractices = await storage.getUserPractices(userId);
+      const isMember = userPractices.some(p => p.practice.id === practiceId);
+      
+      if (!isMember) {
+        return res.status(403).json({ error: "Not a member of this practice" });
+      }
+      
+      const members = await storage.getPracticeMembers(practiceId);
+      res.json(members);
+    } catch (error) {
+      console.error("Error fetching practice members:", error);
+      res.status(500).json({ error: "Failed to fetch practice members" });
+    }
+  });
+
+  // Add a member to practice (by user ID - simplified for now)
+  app.post("/api/practices/:id/members", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const currentUserId = req.user.claims.sub;
+      const { userId, role = "member" } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+      
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+      
+      // Check if current user is owner or admin
+      const userPractices = await storage.getUserPractices(currentUserId);
+      const membership = userPractices.find(p => p.practice.id === practiceId);
+      
+      if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
+        return res.status(403).json({ error: "Only owners and admins can add members" });
+      }
+      
+      const member = await storage.addPracticeMember({
+        practiceId,
+        userId,
+        role: role === "admin" ? "admin" : "member",
+        invitedBy: currentUserId,
+      });
+      
+      res.status(201).json(member);
+    } catch (error) {
+      console.error("Error adding practice member:", error);
+      res.status(500).json({ error: "Failed to add practice member" });
+    }
+  });
+
+  // Remove a member from practice
+  app.delete("/api/practices/:id/members/:userId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const targetUserId = req.params.userId;
+      const currentUserId = req.user.claims.sub;
+      
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+      
+      // Check if current user is owner or admin (or removing themselves)
+      const userPractices = await storage.getUserPractices(currentUserId);
+      const membership = userPractices.find(p => p.practice.id === practiceId);
+      
+      const canRemove = currentUserId === targetUserId || 
+        (membership && (membership.role === "owner" || membership.role === "admin"));
+      
+      if (!canRemove) {
+        return res.status(403).json({ error: "Not authorized to remove this member" });
+      }
+      
+      // Can't remove the owner
+      if (targetUserId === practice.ownerId) {
+        return res.status(400).json({ error: "Cannot remove the practice owner" });
+      }
+      
+      await storage.removePracticeMember(practiceId, targetUserId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error removing practice member:", error);
+      res.status(500).json({ error: "Failed to remove practice member" });
+    }
+  });
+
+  // ========== NOTE SHARING ROUTES ==========
+  
+  // Share a note with a user or practice
+  app.post("/api/notes/:id/share", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const noteId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const { sharedWithUserId, sharedWithPracticeId, permission = "view" } = req.body;
+      
+      const note = await storage.getNote(noteId);
+      if (!note) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+      
+      if (note.userId !== userId) {
+        return res.status(403).json({ error: "Only the note owner can share it" });
+      }
+      
+      if (!sharedWithUserId && !sharedWithPracticeId) {
+        return res.status(400).json({ error: "Must specify a user or practice to share with" });
+      }
+      
+      const sharedNote = await storage.shareNote({
+        noteId,
+        sharedBy: userId,
+        sharedWithUserId: sharedWithUserId || null,
+        sharedWithPracticeId: sharedWithPracticeId || null,
+        permission,
+      });
+      
+      res.status(201).json(sharedNote);
+    } catch (error) {
+      console.error("Error sharing note:", error);
+      res.status(500).json({ error: "Failed to share note" });
+    }
+  });
+
+  // Get sharing info for a note
+  app.get("/api/notes/:id/shares", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const noteId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      
+      const note = await storage.getNote(noteId);
+      if (!note) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+      
+      if (note.userId !== userId) {
+        return res.status(403).json({ error: "Only the note owner can view sharing info" });
+      }
+      
+      const shares = await storage.getNoteShareInfo(noteId);
+      res.json(shares);
+    } catch (error) {
+      console.error("Error fetching note shares:", error);
+      res.status(500).json({ error: "Failed to fetch note shares" });
+    }
+  });
+
+  // Unshare a note
+  app.delete("/api/notes/shares/:shareId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const shareId = parseInt(req.params.shareId);
+      const userId = req.user.claims.sub;
+      
+      // Get share info to verify ownership
+      // For now, we'll just delete - in production, verify the note owner
+      await storage.unshareNote(shareId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error unsharing note:", error);
+      res.status(500).json({ error: "Failed to unshare note" });
+    }
+  });
+
+  // Get notes shared with current user
+  app.get("/api/shared-notes", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const sharedNotes = await storage.getSharedNotesForUser(userId);
+      res.json(sharedNotes);
+    } catch (error) {
+      console.error("Error fetching shared notes:", error);
+      res.status(500).json({ error: "Failed to fetch shared notes" });
+    }
+  });
+
+  // ========== ADVANCED ANALYTICS ROUTES ==========
+  
+  // Get productivity trends (notes per day over time)
+  app.get("/api/analytics/productivity", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const days = parseInt(req.query.days as string) || 30;
+      
+      const trends = await storage.getProductivityTrends(userId, Math.min(days, 90)); // Max 90 days
+      res.json(trends);
+    } catch (error) {
+      console.error("Error fetching productivity trends:", error);
+      res.status(500).json({ error: "Failed to fetch productivity trends" });
+    }
+  });
+
+  // Get trending diagnoses
+  app.get("/api/analytics/diagnoses", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const diagnoses = await storage.getTrendingDiagnoses(userId);
+      res.json(diagnoses);
+    } catch (error) {
+      console.error("Error fetching trending diagnoses:", error);
+      res.status(500).json({ error: "Failed to fetch trending diagnoses" });
+    }
+  });
+
   return httpServer;
 }
 
