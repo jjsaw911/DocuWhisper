@@ -100,8 +100,22 @@ export interface IStorage {
   // EMR - Note linking
   getNotesByPatient(patientId: number): Promise<Note[]>;
   linkNoteToPatient(noteId: number, patientId: number): Promise<Note | undefined>;
-  // EMR access
+  // EMR access (individual - legacy)
   grantEmrAccess(userId: string): Promise<Subscription | undefined>;
+  // Organization EMR License Management
+  grantEmrLicenseToOrganization(practiceId: number, licenseType: string, expiryDate: Date | null, maxUsers?: number): Promise<Practice | undefined>;
+  revokeEmrLicenseFromOrganization(practiceId: number): Promise<Practice | undefined>;
+  getAllOrganizationsWithEmr(): Promise<Practice[]>;
+  getAllOrganizations(): Promise<Practice[]>;
+  // Organization EMR User Management
+  grantEmrAccessToMember(practiceId: number, userId: string, emrRole?: string): Promise<PracticeMember | undefined>;
+  revokeEmrAccessFromMember(practiceId: number, userId: string): Promise<PracticeMember | undefined>;
+  updateMemberEmrRole(practiceId: number, userId: string, emrRole: string): Promise<PracticeMember | undefined>;
+  getOrganizationEmrMembers(practiceId: number): Promise<PracticeMember[]>;
+  getUserEmrOrganizations(userId: string): Promise<{ practice: Practice; emrRole: string | null }[]>;
+  // Organization-scoped EMR data
+  getPatientsByOrganization(organizationId: number): Promise<Patient[]>;
+  getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]>;
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
@@ -704,7 +718,7 @@ class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  // EMR access
+  // EMR access (individual user - legacy)
   async grantEmrAccess(userId: string): Promise<Subscription | undefined> {
     const [updated] = await db
       .update(subscriptions)
@@ -712,6 +726,154 @@ class DatabaseStorage implements IStorage {
       .where(eq(subscriptions.userId, userId))
       .returning();
     return updated;
+  }
+
+  // Organization EMR License Management
+  async grantEmrLicenseToOrganization(
+    practiceId: number, 
+    licenseType: string, 
+    expiryDate: Date | null,
+    maxUsers: number = 5
+  ): Promise<Practice | undefined> {
+    const [updated] = await db
+      .update(practices)
+      .set({ 
+        hasEmrLicense: true, 
+        emrLicenseType: licenseType,
+        emrLicenseExpiry: expiryDate,
+        emrMaxUsers: maxUsers,
+        updatedAt: new Date() 
+      })
+      .where(eq(practices.id, practiceId))
+      .returning();
+    return updated;
+  }
+
+  async revokeEmrLicenseFromOrganization(practiceId: number): Promise<Practice | undefined> {
+    const [updated] = await db
+      .update(practices)
+      .set({ 
+        hasEmrLicense: false, 
+        emrLicenseType: null,
+        emrLicenseExpiry: null,
+        emrActiveUsers: 0,
+        updatedAt: new Date() 
+      })
+      .where(eq(practices.id, practiceId))
+      .returning();
+    // Also revoke EMR access from all members
+    await db.update(practiceMembers)
+      .set({ hasEmrAccess: false, emrRole: null })
+      .where(eq(practiceMembers.practiceId, practiceId));
+    return updated;
+  }
+
+  async getAllOrganizationsWithEmr(): Promise<Practice[]> {
+    return db.select().from(practices).where(eq(practices.hasEmrLicense, true)).orderBy(desc(practices.createdAt));
+  }
+
+  async getAllOrganizations(): Promise<Practice[]> {
+    return db.select().from(practices).orderBy(desc(practices.createdAt));
+  }
+
+  // Organization EMR User Management
+  async grantEmrAccessToMember(
+    practiceId: number, 
+    userId: string, 
+    emrRole: string = 'provider'
+  ): Promise<PracticeMember | undefined> {
+    // First check if organization has EMR license and available seats
+    const practice = await this.getPractice(practiceId);
+    if (!practice?.hasEmrLicense) {
+      throw new Error("Organization does not have an EMR license");
+    }
+    
+    const currentUsers = practice.emrActiveUsers || 0;
+    const maxUsers = practice.emrMaxUsers || 5;
+    if (currentUsers >= maxUsers) {
+      throw new Error(`Organization has reached maximum EMR users (${maxUsers})`);
+    }
+
+    // Grant access to the member
+    const [updated] = await db
+      .update(practiceMembers)
+      .set({ hasEmrAccess: true, emrRole })
+      .where(and(eq(practiceMembers.practiceId, practiceId), eq(practiceMembers.userId, userId)))
+      .returning();
+
+    // Increment active users count
+    if (updated) {
+      await db
+        .update(practices)
+        .set({ emrActiveUsers: currentUsers + 1, updatedAt: new Date() })
+        .where(eq(practices.id, practiceId));
+    }
+    
+    return updated;
+  }
+
+  async revokeEmrAccessFromMember(practiceId: number, userId: string): Promise<PracticeMember | undefined> {
+    const [updated] = await db
+      .update(practiceMembers)
+      .set({ hasEmrAccess: false, emrRole: null })
+      .where(and(eq(practiceMembers.practiceId, practiceId), eq(practiceMembers.userId, userId)))
+      .returning();
+
+    // Decrement active users count
+    if (updated) {
+      const practice = await this.getPractice(practiceId);
+      if (practice) {
+        const currentUsers = practice.emrActiveUsers || 0;
+        await db
+          .update(practices)
+          .set({ emrActiveUsers: Math.max(0, currentUsers - 1), updatedAt: new Date() })
+          .where(eq(practices.id, practiceId));
+      }
+    }
+    
+    return updated;
+  }
+
+  async updateMemberEmrRole(practiceId: number, userId: string, emrRole: string): Promise<PracticeMember | undefined> {
+    const [updated] = await db
+      .update(practiceMembers)
+      .set({ emrRole })
+      .where(and(eq(practiceMembers.practiceId, practiceId), eq(practiceMembers.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async getOrganizationEmrMembers(practiceId: number): Promise<PracticeMember[]> {
+    return db.select()
+      .from(practiceMembers)
+      .where(and(eq(practiceMembers.practiceId, practiceId), eq(practiceMembers.hasEmrAccess, true)));
+  }
+
+  async getUserEmrOrganizations(userId: string): Promise<{ practice: Practice; emrRole: string | null }[]> {
+    const memberships = await db.select()
+      .from(practiceMembers)
+      .where(and(eq(practiceMembers.userId, userId), eq(practiceMembers.hasEmrAccess, true)));
+    
+    if (memberships.length === 0) return [];
+    
+    const practiceIds = memberships.map(m => m.practiceId);
+    const practicesList = await db.select()
+      .from(practices)
+      .where(and(inArray(practices.id, practiceIds), eq(practices.hasEmrLicense, true)));
+    
+    return practicesList.map(p => ({
+      practice: p,
+      emrRole: memberships.find(m => m.practiceId === p.id)?.emrRole || null,
+    }));
+  }
+
+  // Organization-scoped patient methods
+  async getPatientsByOrganization(organizationId: number): Promise<Patient[]> {
+    return db.select().from(patients).where(eq(patients.organizationId, organizationId)).orderBy(desc(patients.createdAt));
+  }
+
+  async getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]> {
+    return db.select().from(appointments).where(eq(appointments.organizationId, organizationId)).orderBy(desc(appointments.startTime));
   }
 
   // Audit logging - HIPAA compliance

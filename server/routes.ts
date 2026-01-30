@@ -1181,6 +1181,88 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // ============ Organization EMR Management (Admin/Owner Only) ============
+
+  // Get all organizations (admin only)
+  app.get("/api/admin/organizations", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const organizations = await storage.getAllOrganizations();
+      res.json(organizations);
+    } catch (error) {
+      console.error("Error fetching organizations:", error);
+      res.status(500).json({ error: "Failed to fetch organizations" });
+    }
+  });
+
+  // Get all organizations with EMR licenses (admin only)
+  app.get("/api/admin/emr-organizations", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const organizations = await storage.getAllOrganizationsWithEmr();
+      res.json(organizations);
+    } catch (error) {
+      console.error("Error fetching EMR organizations:", error);
+      res.status(500).json({ error: "Failed to fetch EMR organizations" });
+    }
+  });
+
+  // Grant EMR license to organization (admin only)
+  app.post("/api/admin/organizations/:id/emr-license", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const { licenseType, expiryDate, maxUsers } = req.body;
+
+      if (!licenseType) {
+        return res.status(400).json({ error: "licenseType is required" });
+      }
+
+      const validTypes = ["trial", "monthly", "annual", "lifetime"];
+      if (!validTypes.includes(licenseType)) {
+        return res.status(400).json({ error: "Invalid licenseType. Must be: trial, monthly, annual, or lifetime" });
+      }
+
+      const organization = await storage.getPractice(practiceId);
+      if (!organization) {
+        return res.status(404).json({ error: "Organization not found" });
+      }
+
+      const updated = await storage.grantEmrLicenseToOrganization(
+        practiceId,
+        licenseType,
+        expiryDate ? new Date(expiryDate) : null,
+        maxUsers || 5
+      );
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error granting EMR license:", error);
+      res.status(500).json({ error: "Failed to grant EMR license" });
+    }
+  });
+
+  // Revoke EMR license from organization (admin only)
+  app.delete("/api/admin/organizations/:id/emr-license", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const updated = await storage.revokeEmrLicenseFromOrganization(practiceId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error revoking EMR license:", error);
+      res.status(500).json({ error: "Failed to revoke EMR license" });
+    }
+  });
+
+  // Get organization EMR members (admin only)
+  app.get("/api/admin/organizations/:id/emr-members", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const members = await storage.getOrganizationEmrMembers(practiceId);
+      res.json(members);
+    } catch (error) {
+      console.error("Error fetching EMR members:", error);
+      res.status(500).json({ error: "Failed to fetch EMR members" });
+    }
+  });
+
   // Create invite code (admin only)
   app.post("/api/admin/invites", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
@@ -1973,6 +2055,197 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error removing practice member:", error);
       res.status(500).json({ error: "Failed to remove practice member" });
+    }
+  });
+
+  // ========== ORGANIZATION EMR MEMBER MANAGEMENT ==========
+
+  // Get user's EMR organizations
+  app.get("/api/emr/organizations", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
+
+      // Owner (vendor) gets all organizations with EMR
+      if (ownerEmail && userEmail === ownerEmail) {
+        const allOrgs = await storage.getAllOrganizationsWithEmr();
+        res.json(allOrgs.map(org => ({ practice: org, emrRole: 'vendor' })));
+        return;
+      }
+
+      // Regular users get their EMR organizations
+      const emrOrgs = await storage.getUserEmrOrganizations(userId);
+      res.json(emrOrgs);
+    } catch (error) {
+      console.error("Error fetching EMR organizations:", error);
+      res.status(500).json({ error: "Failed to fetch EMR organizations" });
+    }
+  });
+
+  // Grant EMR access to a member within organization (org admin or owner only)
+  app.post("/api/practices/:id/emr-access", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const currentUserId = req.user.claims.sub;
+      const currentUserEmail = req.user.claims.email;
+      const { userId, emrRole = "provider" } = req.body;
+      const ownerEmail = process.env.OWNER_EMAIL;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+
+      if (!practice.hasEmrLicense) {
+        return res.status(400).json({ error: "Organization does not have an EMR license" });
+      }
+
+      // Check authorization: must be owner, practice owner, or practice admin/emr_admin
+      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const userPractices = await storage.getUserPractices(currentUserId);
+      const membership = userPractices.find(p => p.practice.id === practiceId);
+      const isOrgOwnerOrAdmin = practice.ownerId === currentUserId || 
+        (membership && (membership.role === "owner" || membership.role === "admin"));
+
+      // Also check if user is EMR admin within the organization
+      const practiceMembers = await storage.getPracticeMembers(practiceId);
+      const currentMember = practiceMembers.find(m => m.userId === currentUserId);
+      const isEmrAdmin = currentMember?.emrRole === "emr_admin";
+
+      if (!isVendorOwner && !isOrgOwnerOrAdmin && !isEmrAdmin) {
+        return res.status(403).json({ error: "Not authorized to grant EMR access" });
+      }
+
+      // Check if target user is a member of this practice
+      const targetMember = practiceMembers.find(m => m.userId === userId);
+      if (!targetMember) {
+        return res.status(400).json({ error: "User is not a member of this organization" });
+      }
+
+      const updated = await storage.grantEmrAccessToMember(practiceId, userId, emrRole);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error granting EMR access to member:", error);
+      res.status(500).json({ error: error.message || "Failed to grant EMR access" });
+    }
+  });
+
+  // Revoke EMR access from a member within organization (org admin or owner only)
+  app.delete("/api/practices/:id/emr-access/:userId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const targetUserId = req.params.userId;
+      const currentUserId = req.user.claims.sub;
+      const currentUserEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
+
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+
+      // Check authorization
+      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const userPractices = await storage.getUserPractices(currentUserId);
+      const membership = userPractices.find(p => p.practice.id === practiceId);
+      const isOrgOwnerOrAdmin = practice.ownerId === currentUserId || 
+        (membership && (membership.role === "owner" || membership.role === "admin"));
+
+      const practiceMembers = await storage.getPracticeMembers(practiceId);
+      const currentMember = practiceMembers.find(m => m.userId === currentUserId);
+      const isEmrAdmin = currentMember?.emrRole === "emr_admin";
+
+      if (!isVendorOwner && !isOrgOwnerOrAdmin && !isEmrAdmin) {
+        return res.status(403).json({ error: "Not authorized to revoke EMR access" });
+      }
+
+      const updated = await storage.revokeEmrAccessFromMember(practiceId, targetUserId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error revoking EMR access from member:", error);
+      res.status(500).json({ error: "Failed to revoke EMR access" });
+    }
+  });
+
+  // Update EMR role for a member (org admin or owner only)
+  app.patch("/api/practices/:id/emr-role/:userId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const targetUserId = req.params.userId;
+      const currentUserId = req.user.claims.sub;
+      const currentUserEmail = req.user.claims.email;
+      const { emrRole } = req.body;
+      const ownerEmail = process.env.OWNER_EMAIL;
+
+      if (!emrRole) {
+        return res.status(400).json({ error: "emrRole is required" });
+      }
+
+      const validRoles = ["emr_admin", "provider", "staff", "readonly"];
+      if (!validRoles.includes(emrRole)) {
+        return res.status(400).json({ error: "Invalid emrRole. Must be: emr_admin, provider, staff, or readonly" });
+      }
+
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+
+      // Check authorization
+      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const userPractices = await storage.getUserPractices(currentUserId);
+      const membership = userPractices.find(p => p.practice.id === practiceId);
+      const isOrgOwnerOrAdmin = practice.ownerId === currentUserId || 
+        (membership && (membership.role === "owner" || membership.role === "admin"));
+
+      const practiceMembers = await storage.getPracticeMembers(practiceId);
+      const currentMember = practiceMembers.find(m => m.userId === currentUserId);
+      const isEmrAdmin = currentMember?.emrRole === "emr_admin";
+
+      if (!isVendorOwner && !isOrgOwnerOrAdmin && !isEmrAdmin) {
+        return res.status(403).json({ error: "Not authorized to update EMR role" });
+      }
+
+      const updated = await storage.updateMemberEmrRole(practiceId, targetUserId, emrRole);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating EMR role:", error);
+      res.status(500).json({ error: "Failed to update EMR role" });
+    }
+  });
+
+  // Get EMR members for an organization (any member with EMR access can view)
+  app.get("/api/practices/:id/emr-members", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const currentUserId = req.user.claims.sub;
+      const currentUserEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
+
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ error: "Practice not found" });
+      }
+
+      // Check if user has access (owner, member of org, or vendor owner)
+      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const userPractices = await storage.getUserPractices(currentUserId);
+      const isMember = userPractices.some(p => p.practice.id === practiceId);
+
+      if (!isVendorOwner && !isMember) {
+        return res.status(403).json({ error: "Not authorized to view EMR members" });
+      }
+
+      const members = await storage.getOrganizationEmrMembers(practiceId);
+      res.json(members);
+    } catch (error) {
+      console.error("Error fetching EMR members:", error);
+      res.status(500).json({ error: "Failed to fetch EMR members" });
     }
   });
 
