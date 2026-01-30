@@ -549,19 +549,31 @@ export default function Session() {
 
   const pauseRecording = () => {
     if (mediaRecorderRef.current && recordingState === "recording") {
-      mediaRecorderRef.current.pause();
-      setRecordingState("paused");
-      addTranscriptEntry("Transcript paused");
+      const recorder = mediaRecorderRef.current;
       
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-        animationRef.current = null;
-      }
-      setAudioLevel([0, 0, 0, 0, 0]);
+      // Request any pending audio data before pausing
+      // This triggers ondataavailable with current chunk so it gets transcribed
+      console.log("[Pause] Requesting data before pause...");
+      recorder.requestData();
+      
+      // Give time for ondataavailable to fire, then pause
+      setTimeout(() => {
+        if (recorder.state === "recording") {
+          recorder.pause();
+        }
+        setRecordingState("paused");
+        addTranscriptEntry("Transcript paused - processing audio...");
+        
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+          animationRef.current = null;
+        }
+        setAudioLevel([0, 0, 0, 0, 0]);
+      }, 100);
     }
   };
 
@@ -582,17 +594,32 @@ export default function Session() {
   const stopRecording = () => {
     return new Promise<Blob>((resolve) => {
       if (mediaRecorderRef.current) {
-        if (mediaRecorderRef.current.state === "recording") {
-          mediaRecorderRef.current.requestData();
-        }
+        const recorder = mediaRecorderRef.current;
         
-        mediaRecorderRef.current.onstop = () => {
+        // Set up onstop handler BEFORE calling stop
+        recorder.onstop = () => {
+          // Give time for final ondataavailable to complete
           setTimeout(() => {
             const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+            console.log(`[Stop] Recording stopped. Total chunks: ${chunksRef.current.length}, Blob size: ${blob.size}`);
             resolve(blob);
-          }, 100);
+          }, 200);
         };
-        mediaRecorderRef.current.stop();
+        
+        // If recording, request final data chunk before stopping
+        if (recorder.state === "recording") {
+          console.log("[Stop] Requesting final data chunk...");
+          // The ondataavailable will fire when stop() is called, capturing remaining audio
+          recorder.stop();
+        } else if (recorder.state === "paused") {
+          // If paused, just stop - no new data to capture
+          console.log("[Stop] Stopping from paused state...");
+          recorder.stop();
+        } else {
+          // Already inactive
+          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+          resolve(blob);
+        }
       } else {
         resolve(new Blob([], { type: "audio/webm" }));
       }
@@ -805,17 +832,24 @@ export default function Session() {
   const handleStopAndTranscribe = async () => {
     const audioBlob = await stopRecording();
     
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Wait for ondataavailable to fire and queue the final chunk
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Log the state for debugging
+    const unprocessedCount = pendingChunksRef.current.filter(c => !c.processed).length;
+    console.log(`[HandleStop] Audio blob size: ${audioBlob.size}, Pending chunks: ${pendingChunksRef.current.length}, Unprocessed: ${unprocessedCount}`);
     
     // Check if no chunks were queued (short recording) and no transcript yet
     const hasAnyChunks = pendingChunksRef.current.length > 0;
     const hasTranscript = committedTextRef.current.trim().length > 0;
     
     if (!hasAnyChunks && !hasTranscript && audioBlob.size > 0) {
+      // Very short recording that didn't trigger any chunk - transcribe the full blob
       setRecordingState("processing");
       addTranscriptEntry("Processing short recording...");
       transcribeMutation.mutate(audioBlob);
     } else {
+      // Process any remaining chunks
       await finalizeRecording();
     }
   };
