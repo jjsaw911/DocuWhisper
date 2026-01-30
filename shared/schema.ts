@@ -155,12 +155,21 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 
-// Practices/Teams for collaboration
+// Practices/Teams for collaboration (also serves as EMR Organizations)
 export const practices = pgTable("practices", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   ownerId: varchar("owner_id").notNull(), // User who created the practice
   description: text("description"),
+  // EMR Organization Settings
+  hasEmrLicense: boolean("has_emr_license").default(false), // Organization has paid EMR access
+  emrLicenseType: text("emr_license_type"), // 'trial', 'monthly', 'annual', 'lifetime'
+  emrLicenseExpiry: timestamp("emr_license_expiry"), // When license expires
+  emrMaxUsers: integer("emr_max_users").default(5), // Max users allowed under this license
+  emrActiveUsers: integer("emr_active_users").default(0), // Current number of EMR users
+  // Stripe for organization billing
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -180,6 +189,9 @@ export const practiceMembers = pgTable("practice_members", {
   practiceId: integer("practice_id").notNull(),
   userId: varchar("user_id").notNull(),
   role: text("role").notNull().default("member"), // 'owner', 'admin', 'member'
+  // EMR-specific permissions for this organization
+  hasEmrAccess: boolean("has_emr_access").default(false), // User has EMR access within this org
+  emrRole: text("emr_role"), // 'emr_admin', 'provider', 'staff', 'readonly' - org-level EMR role
   invitedBy: varchar("invited_by"),
   joinedAt: timestamp("joined_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -216,7 +228,8 @@ export type InsertSharedNote = z.infer<typeof insertSharedNoteSchema>;
 // Patients - core EMR patient records
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
-  userId: varchar("user_id").notNull(), // Provider who owns this patient record
+  userId: varchar("user_id").notNull(), // Provider who created this patient record
+  organizationId: integer("organization_id"), // Practice/org this patient belongs to (null = individual provider)
   // Demographics
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
@@ -253,6 +266,7 @@ export type InsertPatient = z.infer<typeof insertPatientSchema>;
 export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(), // Provider
+  organizationId: integer("organization_id"), // Practice/org this appointment belongs to
   patientId: integer("patient_id").notNull(), // Patient
   title: text("title").notNull(),
   description: text("description"),
@@ -280,6 +294,7 @@ export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
 export const patientDocuments = pgTable("patient_documents", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(), // Provider who uploaded
+  organizationId: integer("organization_id"), // Practice/org this document belongs to
   patientId: integer("patient_id").notNull(),
   fileName: text("file_name").notNull(),
   fileType: text("file_type").notNull(), // MIME type
@@ -303,6 +318,7 @@ export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   userEmail: text("user_email"),
+  organizationId: integer("organization_id"), // For tracking org-level access
   action: text("action").notNull(), // 'view', 'create', 'update', 'delete', 'export', 'login', 'logout'
   resourceType: text("resource_type").notNull(), // 'patient', 'note', 'appointment', 'document'
   resourceId: integer("resource_id"),
