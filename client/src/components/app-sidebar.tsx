@@ -152,15 +152,18 @@ export function AppSidebar() {
               <SidebarMenuItem>
                 <DropdownMenu open={scribeMenuOpen} onOpenChange={setScribeMenuOpen}>
                   <DropdownMenuTrigger asChild>
-                    <SidebarMenuButton
-                      isActive={location === "/" || location.startsWith("/session") || location.startsWith("/notes")}
+                    <button
                       data-testid="nav-scribe"
-                      className="w-full"
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium outline-none ring-sidebar-ring transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 ${
+                        location === "/" || location.startsWith("/session") || location.startsWith("/notes")
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                          : "text-sidebar-foreground"
+                      }`}
                     >
                       <FileText className="h-4 w-4" />
                       <span>Scribe</span>
                       <ChevronRight className="ml-auto h-4 w-4" />
-                    </SidebarMenuButton>
+                    </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent 
                     side="right" 

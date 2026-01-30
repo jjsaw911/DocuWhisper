@@ -20,6 +20,7 @@ import Invite from "@/pages/invite";
 import Settings from "@/pages/settings";
 import SharedNotes from "@/pages/shared-notes";
 import Analytics from "@/pages/analytics";
+import Notes from "@/pages/notes";
 import EMRPatients from "@/pages/emr/patients";
 import EMRPatientDetail from "@/pages/emr/patient-detail";
 import EMRSchedule from "@/pages/emr/schedule";
@@ -46,6 +47,7 @@ function AuthenticatedLayout() {
               <Route path="/" component={Session} />
               <Route path="/session/new" component={Session} />
               <Route path="/session/:id" component={Session} />
+              <Route path="/notes" component={Notes} />
               <Route path="/notes/:id" component={NoteDetail} />
               <Route path="/tasks" component={Tasks} />
               <Route path="/subscription" component={Subscription} />
