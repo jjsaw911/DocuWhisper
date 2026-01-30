@@ -140,6 +140,110 @@ export type InsertInvite = z.infer<typeof insertInviteSchema>;
 export type UserSettings = typeof userSettings.$inferSelect;
 export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;
 
+// EMR Role definitions and permissions
+export const EMR_ROLES = {
+  physician: {
+    label: "Physician (MD/DO)",
+    canViewPatients: true,
+    canEditPatients: true,
+    canCreateEncounters: true,
+    canSignEncounters: true,
+    canCosignEncounters: true,
+    canPrescribe: true,
+    canViewSchedule: true,
+    canEditSchedule: true,
+    canViewBilling: true,
+    canManageTeam: false,
+    requiresCosignature: false,
+  },
+  mid_level: {
+    label: "Mid-Level Provider (NP/PA)",
+    canViewPatients: true,
+    canEditPatients: true,
+    canCreateEncounters: true,
+    canSignEncounters: true,
+    canCosignEncounters: false,
+    canPrescribe: true, // With supervision
+    canViewSchedule: true,
+    canEditSchedule: true,
+    canViewBilling: true,
+    canManageTeam: false,
+    requiresCosignature: true, // Encounters need physician co-sign
+  },
+  ma: {
+    label: "Medical Assistant",
+    canViewPatients: true,
+    canEditPatients: true, // Demographics, vitals
+    canCreateEncounters: false,
+    canSignEncounters: false,
+    canCosignEncounters: false,
+    canPrescribe: false,
+    canViewSchedule: true,
+    canEditSchedule: true,
+    canViewBilling: false,
+    canManageTeam: false,
+    requiresCosignature: false,
+  },
+  front_desk: {
+    label: "Front Desk",
+    canViewPatients: true, // Limited to demographics
+    canEditPatients: true, // Demographics only
+    canCreateEncounters: false,
+    canSignEncounters: false,
+    canCosignEncounters: false,
+    canPrescribe: false,
+    canViewSchedule: true,
+    canEditSchedule: true,
+    canViewBilling: false,
+    canManageTeam: false,
+    requiresCosignature: false,
+  },
+  office_manager: {
+    label: "Office Manager",
+    canViewPatients: true,
+    canEditPatients: true,
+    canCreateEncounters: false,
+    canSignEncounters: false,
+    canCosignEncounters: false,
+    canPrescribe: false,
+    canViewSchedule: true,
+    canEditSchedule: true,
+    canViewBilling: true,
+    canManageTeam: true,
+    requiresCosignature: false,
+  },
+  billing: {
+    label: "Billing Staff",
+    canViewPatients: true, // Limited to billing info
+    canEditPatients: false,
+    canCreateEncounters: false,
+    canSignEncounters: false,
+    canCosignEncounters: false,
+    canPrescribe: false,
+    canViewSchedule: true,
+    canEditSchedule: false,
+    canViewBilling: true,
+    canManageTeam: false,
+    requiresCosignature: false,
+  },
+  admin: {
+    label: "Administrator",
+    canViewPatients: true,
+    canEditPatients: true,
+    canCreateEncounters: false,
+    canSignEncounters: false,
+    canCosignEncounters: false,
+    canPrescribe: false,
+    canViewSchedule: true,
+    canEditSchedule: true,
+    canViewBilling: true,
+    canManageTeam: true,
+    requiresCosignature: false,
+  },
+} as const;
+
+export type EmrRoleType = keyof typeof EMR_ROLES;
+
 // Tasks for clinical follow-ups (referrals, refills, scheduling, etc.)
 export const tasks = pgTable("tasks", {
   id: serial("id").primaryKey(),
