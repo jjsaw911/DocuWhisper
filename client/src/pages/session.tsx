@@ -1330,6 +1330,16 @@ Plan: ${soapNote.plan}
         <div className="flex items-center justify-center gap-3 mb-3">
           {hasTranscript && recordingState === "idle" && (
             <>
+              {/* Resume recording button */}
+              <Button
+                onClick={startRecording}
+                className="gap-2"
+                data-testid="button-resume-footer"
+              >
+                <Mic className="h-4 w-4" />
+                Resume
+              </Button>
+              
               <Button
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
@@ -1339,6 +1349,8 @@ Plan: ${soapNote.plan}
                 <Upload className="h-4 w-4" />
                 Add Audio
               </Button>
+              
+              <div className="h-6 w-px bg-border" />
               
               <Button
                 variant="default"
