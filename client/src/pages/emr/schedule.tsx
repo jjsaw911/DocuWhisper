@@ -17,6 +17,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { EmrConsentDialog } from "@/components/emr-consent-dialog";
 import {
   Form,
   FormControl,
@@ -64,8 +65,12 @@ export default function SchedulePage() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [showConsentDialog, setShowConsentDialog] = useState(false);
 
-  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ hasAccess: boolean }>({
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ 
+    hasAccess: boolean;
+    consentAcknowledged: boolean;
+  }>({
     queryKey: ["/api/emr/access"],
   });
 
@@ -78,21 +83,24 @@ export default function SchedulePage() {
       });
       setLocation("/");
     }
+    if (!isCheckingAccess && emrAccess?.hasAccess && !emrAccess.consentAcknowledged) {
+      setShowConsentDialog(true);
+    }
   }, [emrAccess, isCheckingAccess, setLocation, toast]);
 
   const { data: appointments = [], isLoading } = useQuery<Appointment[]>({
     queryKey: ["/api/emr/appointments"],
-    enabled: emrAccess?.hasAccess === true,
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   const { data: upcomingAppointments = [] } = useQuery<Appointment[]>({
     queryKey: ["/api/emr/appointments/upcoming"],
-    enabled: emrAccess?.hasAccess === true,
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   const { data: patients = [] } = useQuery<Patient[]>({
     queryKey: ["/api/emr/patients"],
-    enabled: emrAccess?.hasAccess === true,
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   if (isCheckingAccess || !emrAccess?.hasAccess) {
@@ -100,6 +108,15 @@ export default function SchedulePage() {
       <div className="flex items-center justify-center min-h-[400px]">
         <Skeleton className="h-8 w-48" />
       </div>
+    );
+  }
+
+  if (showConsentDialog && !emrAccess.consentAcknowledged) {
+    return (
+      <EmrConsentDialog 
+        open={true} 
+        onConsentGiven={() => setShowConsentDialog(false)} 
+      />
     );
   }
 

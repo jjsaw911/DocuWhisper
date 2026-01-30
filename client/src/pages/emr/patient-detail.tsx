@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { EmrConsentDialog } from "@/components/emr-consent-dialog";
 import {
   Form,
   FormControl,
@@ -82,8 +83,12 @@ export default function PatientDetailPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const patientId = parseInt(id || "0");
+  const [showConsentDialog, setShowConsentDialog] = useState(false);
 
-  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ hasAccess: boolean }>({
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ 
+    hasAccess: boolean;
+    consentAcknowledged: boolean;
+  }>({
     queryKey: ["/api/emr/access"],
   });
 
@@ -96,21 +101,24 @@ export default function PatientDetailPage() {
       });
       navigate("/");
     }
+    if (!isCheckingAccess && emrAccess?.hasAccess && !emrAccess.consentAcknowledged) {
+      setShowConsentDialog(true);
+    }
   }, [emrAccess, isCheckingAccess, navigate, toast]);
 
   const { data: patient, isLoading } = useQuery<Patient>({
     queryKey: ["/api/emr/patients", patientId],
-    enabled: !!patientId && emrAccess?.hasAccess === true,
+    enabled: !!patientId && emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   const { data: patientNotes = [] } = useQuery<Note[]>({
     queryKey: ["/api/emr/patients", patientId, "notes"],
-    enabled: !!patientId && emrAccess?.hasAccess === true,
+    enabled: !!patientId && emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   const { data: patientAppointments = [] } = useQuery<Appointment[]>({
     queryKey: ["/api/emr/patients", patientId, "appointments"],
-    enabled: !!patientId && emrAccess?.hasAccess === true,
+    enabled: !!patientId && emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   if (isCheckingAccess || !emrAccess?.hasAccess) {
@@ -118,6 +126,15 @@ export default function PatientDetailPage() {
       <div className="flex items-center justify-center min-h-[400px]">
         <Skeleton className="h-8 w-48" />
       </div>
+    );
+  }
+
+  if (showConsentDialog && !emrAccess.consentAcknowledged) {
+    return (
+      <EmrConsentDialog 
+        open={true} 
+        onConsentGiven={() => setShowConsentDialog(false)} 
+      />
     );
   }
 

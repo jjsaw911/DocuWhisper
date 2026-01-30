@@ -3,10 +3,37 @@ import { Strategy, type VerifyFunction } from "openid-client/passport";
 
 import passport from "passport";
 import session from "express-session";
-import type { Express, RequestHandler } from "express";
+import type { Express, RequestHandler, Request } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
+import { storage } from "../../storage";
+
+// Security event logging helper
+const logSecurityEvent = async (
+  req: Request,
+  action: string,
+  userId?: string,
+  userEmail?: string,
+  details?: object
+) => {
+  try {
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    
+    await storage.createAuditLog({
+      userId: userId || 'anonymous',
+      userEmail,
+      action,
+      resourceType: 'session',
+      details: details ? JSON.stringify(details) : undefined,
+      ipAddress: typeof ipAddress === 'string' ? ipAddress : ipAddress?.[0],
+      userAgent,
+    });
+  } catch (error) {
+    console.error("Failed to log security event:", error);
+  }
+};
 
 const getOidcConfig = memoize(
   async () => {
@@ -115,10 +142,29 @@ export async function setupAuth(app: Express) {
     passport.authenticate(`replitauth:${req.hostname}`, {
       successReturnToOrRedirect: "/",
       failureRedirect: "/api/login",
-    })(req, res, next);
+    })(req, res, (err?: any) => {
+      if (err) return next(err);
+      // Log successful login
+      const user = req.user as any;
+      if (user?.claims) {
+        logSecurityEvent(req, 'login', user.claims.sub, user.claims.email, {
+          method: 'oauth'
+        });
+      }
+      next();
+    });
   });
 
   app.get("/api/logout", (req, res) => {
+    const user = req.user as any;
+    const userId = user?.claims?.sub;
+    const userEmail = user?.claims?.email;
+    
+    // Log logout event before session destruction
+    if (userId) {
+      logSecurityEvent(req, 'logout', userId, userEmail);
+    }
+    
     req.logout(() => {
       res.redirect(
         client.buildEndSessionUrl(config, {

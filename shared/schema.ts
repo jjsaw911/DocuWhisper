@@ -104,6 +104,11 @@ export const userSettings = pgTable("user_settings", {
   showTimestamps: boolean("show_timestamps").default(true), // Show timestamps in transcript
   emailNotificationsEnabled: boolean("email_notifications_enabled").default(false), // Daily task digest
   emailDigestTime: text("email_digest_time").default("08:00"), // Time to send digest (HH:mm)
+  // Security and compliance settings
+  emrConsentAcknowledged: boolean("emr_consent_acknowledged").default(false), // HIPAA consent for EMR access
+  emrConsentDate: timestamp("emr_consent_date"), // When consent was given
+  sessionTimeoutMinutes: integer("session_timeout_minutes").default(30), // Session timeout (default 30 min)
+  requireReauthForPhi: boolean("require_reauth_for_phi").default(false), // Require re-auth for sensitive PHI actions
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });

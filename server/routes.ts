@@ -219,6 +219,13 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Forbidden" });
       }
       
+      // Audit log for PHI access
+      if (note.patientId || note.patientName) {
+        await logAudit(req, 'view', 'note', noteId, note.patientId || undefined, {
+          patientName: note.patientName
+        });
+      }
+      
       res.json(note);
     } catch (error) {
       console.error("Error fetching note:", error);
@@ -239,6 +246,14 @@ export async function registerRoutes(
       }
       
       const note = await storage.createNote(validationResult.data);
+      
+      // Audit log for PHI creation
+      if (note.patientId || note.patientName) {
+        await logAudit(req, 'create', 'note', note.id, note.patientId || undefined, {
+          patientName: note.patientName
+        });
+      }
+      
       res.status(201).json(note);
     } catch (error) {
       console.error("Error creating note:", error);
@@ -268,6 +283,14 @@ export async function registerRoutes(
       }
       
       const updated = await storage.updateNote(noteId, validationResult.data);
+      
+      // Audit log for PHI update
+      if (updated && (updated.patientId || updated.patientName)) {
+        await logAudit(req, 'update', 'note', noteId, updated.patientId || undefined, {
+          patientName: updated.patientName
+        });
+      }
+      
       res.json(updated);
     } catch (error) {
       console.error("Error updating note:", error);
@@ -286,6 +309,13 @@ export async function registerRoutes(
       
       if (existingNote.userId !== req.user.claims.sub) {
         return res.status(403).json({ error: "Forbidden" });
+      }
+      
+      // Audit log for PHI deletion
+      if (existingNote.patientId || existingNote.patientName) {
+        await logAudit(req, 'delete', 'note', noteId, existingNote.patientId || undefined, {
+          patientName: existingNote.patientName
+        });
       }
       
       await storage.deleteNote(noteId);
@@ -1200,6 +1230,44 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // Export audit logs as CSV for compliance reporting (admin only)
+  app.get("/api/admin/audit-logs/export", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId, patientId, resourceType, startDate, endDate } = req.query;
+      
+      const filters: any = {};
+      if (userId) filters.userId = userId;
+      if (patientId) filters.patientId = parseInt(patientId as string);
+      if (resourceType) filters.resourceType = resourceType;
+      if (startDate) filters.startDate = new Date(startDate as string);
+      if (endDate) filters.endDate = new Date(endDate as string);
+      
+      const logs = await storage.getAuditLogs(Object.keys(filters).length > 0 ? filters : undefined);
+      
+      // Generate CSV
+      const csvHeaders = 'Timestamp,User ID,User Email,Action,Resource Type,Resource ID,Patient ID,IP Address,Details\n';
+      const csvRows = logs.map(log => {
+        const details = log.details ? log.details.replace(/"/g, '""') : '';
+        return `"${log.timestamp}","${log.userId}","${log.userEmail || ''}","${log.action}","${log.resourceType}","${log.resourceId || ''}","${log.patientId || ''}","${log.ipAddress || ''}","${details}"`;
+      }).join('\n');
+      
+      const csv = csvHeaders + csvRows;
+      
+      // Log the export action
+      await logAudit(req, 'export', 'audit_logs', undefined, undefined, {
+        recordCount: logs.length,
+        filters: Object.keys(filters).length > 0 ? filters : 'none'
+      });
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=audit-logs-${new Date().toISOString().split('T')[0]}.csv`);
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting audit logs:", error);
+      res.status(500).json({ error: "Failed to export audit logs" });
+    }
+  });
+
   // Send invite email (admin only)
   app.post("/api/admin/send-invite", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
@@ -2034,14 +2102,52 @@ PLAN: ${plan || "Not provided"}
     try {
       const userId = req.user.claims.sub;
       const subscription = await storage.getSubscription(userId);
+      const settings = await storage.getUserSettings(userId);
       
       res.json({
         hasAccess: subscription?.hasEmrAccess === true && subscription?.status === "active",
         subscriptionStatus: subscription?.status || "none",
+        consentAcknowledged: settings?.emrConsentAcknowledged || false,
+        consentDate: settings?.emrConsentDate,
       });
     } catch (error) {
       console.error("Error checking EMR access:", error);
       res.status(500).json({ error: "Failed to check EMR access" });
+    }
+  });
+
+  // Acknowledge EMR/PHI consent (HIPAA requirement)
+  app.post("/api/emr/consent", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const subscription = await storage.getSubscription(userId);
+      
+      // Verify user has EMR access before allowing consent
+      if (!subscription?.hasEmrAccess || subscription?.status !== "active") {
+        return res.status(403).json({ error: "EMR access not enabled" });
+      }
+      
+      // Update user settings with consent acknowledgment
+      const updated = await storage.upsertUserSettings({
+        userId,
+        emrConsentAcknowledged: true,
+        emrConsentDate: new Date(),
+      });
+      
+      // Log consent acknowledgment
+      await logAudit(req, 'consent_acknowledged', 'emr_access', undefined, undefined, {
+        consentType: 'hipaa_phi_access',
+        acknowledgmentDate: new Date().toISOString()
+      });
+      
+      res.json({ 
+        success: true, 
+        consentAcknowledged: updated?.emrConsentAcknowledged,
+        consentDate: updated?.emrConsentDate 
+      });
+    } catch (error) {
+      console.error("Error acknowledging consent:", error);
+      res.status(500).json({ error: "Failed to acknowledge consent" });
     }
   });
 
@@ -2302,6 +2408,12 @@ PLAN: ${plan || "Not provided"}
         userId,
       });
       
+      // Audit log for appointment creation
+      await logAudit(req, 'create', 'appointment', appointment.id, appointment.patientId, {
+        appointmentType: appointment.appointmentType,
+        startTime: appointment.startTime
+      });
+      
       res.status(201).json(appointment);
     } catch (error) {
       console.error("Error creating appointment:", error);
@@ -2326,6 +2438,12 @@ PLAN: ${plan || "Not provided"}
       }
       
       const updated = await storage.updateAppointment(appointmentId, parsed.data);
+      
+      // Audit log for appointment update
+      if (updated) {
+        await logAudit(req, 'update', 'appointment', appointmentId, updated.patientId);
+      }
+      
       res.json(updated);
     } catch (error) {
       console.error("Error updating appointment:", error);
@@ -2343,6 +2461,9 @@ PLAN: ${plan || "Not provided"}
       if (!appointment || appointment.userId !== userId) {
         return res.status(404).json({ error: "Appointment not found" });
       }
+      
+      // Audit log for appointment deletion
+      await logAudit(req, 'delete', 'appointment', appointmentId, appointment.patientId);
       
       await storage.deleteAppointment(appointmentId);
       res.status(204).send();
@@ -2366,6 +2487,12 @@ PLAN: ${plan || "Not provided"}
       }
       
       const documents = await storage.getDocumentsByPatient(patientId);
+      
+      // Audit log for document list access
+      await logAudit(req, 'view', 'document_list', undefined, patientId, {
+        documentCount: documents.length
+      });
+      
       res.json(documents);
     } catch (error) {
       console.error("Error fetching patient documents:", error);
@@ -2383,6 +2510,12 @@ PLAN: ${plan || "Not provided"}
       if (!document || document.userId !== userId) {
         return res.status(404).json({ error: "Document not found" });
       }
+      
+      // Audit log for document deletion
+      await logAudit(req, 'delete', 'document', documentId, document.patientId, {
+        fileName: document.fileName,
+        documentType: document.documentType
+      });
       
       await storage.deleteDocument(documentId);
       res.status(204).send();

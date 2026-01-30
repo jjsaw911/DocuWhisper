@@ -16,6 +16,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { EmrConsentDialog } from "@/components/emr-consent-dialog";
 import {
   Form,
   FormControl,
@@ -67,7 +68,13 @@ export default function PatientsPage() {
   const [search, setSearch] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
-  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ hasAccess: boolean }>({
+  const [showConsentDialog, setShowConsentDialog] = useState(false);
+  
+  const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ 
+    hasAccess: boolean;
+    consentAcknowledged: boolean;
+    consentDate?: string;
+  }>({
     queryKey: ["/api/emr/access"],
   });
 
@@ -80,11 +87,15 @@ export default function PatientsPage() {
       });
       setLocation("/");
     }
+    // Show consent dialog if user has access but hasn't acknowledged consent
+    if (!isCheckingAccess && emrAccess?.hasAccess && !emrAccess.consentAcknowledged) {
+      setShowConsentDialog(true);
+    }
   }, [emrAccess, isCheckingAccess, setLocation, toast]);
 
   const { data: patients = [], isLoading } = useQuery<Patient[]>({
     queryKey: ["/api/emr/patients"],
-    enabled: emrAccess?.hasAccess === true,
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true,
   });
 
   if (isCheckingAccess || !emrAccess?.hasAccess) {
@@ -92,6 +103,16 @@ export default function PatientsPage() {
       <div className="flex items-center justify-center min-h-[400px]">
         <Skeleton className="h-8 w-48" />
       </div>
+    );
+  }
+
+  // Show consent dialog if needed
+  if (showConsentDialog && !emrAccess.consentAcknowledged) {
+    return (
+      <EmrConsentDialog 
+        open={true} 
+        onConsentGiven={() => setShowConsentDialog(false)} 
+      />
     );
   }
 
