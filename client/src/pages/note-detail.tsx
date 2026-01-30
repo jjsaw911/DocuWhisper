@@ -58,7 +58,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { Note, Task } from "@shared/schema";
+import type { Note, Task, Template } from "@shared/schema";
 
 const TASK_CATEGORIES = [
   { value: "document", label: "Document", icon: FileText },
@@ -113,6 +113,12 @@ export default function NoteDetail() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskCategory, setNewTaskCategory] = useState("document");
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+
+  const { data: templates = [] } = useQuery<Template[]>({
+    queryKey: ["/api/templates"],
+    enabled: !!user,
+  });
 
   const { data: noteTasks } = useQuery<Task[]>({
     queryKey: ["/api/notes", id, "tasks"],
@@ -230,6 +236,7 @@ export default function NoteDetail() {
         patientName: formData.patientName,
         specialty: note?.specialty || "general",
         aiInstructions: aiInstructions,
+        templateId: selectedTemplateId ? parseInt(selectedTemplateId) : undefined,
       });
       return response.json();
     },
@@ -668,6 +675,26 @@ export default function NoteDetail() {
 
             {showAiInstructions && (
               <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Template</Label>
+                  <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
+                    <SelectTrigger data-testid="select-regenerate-template">
+                      <SelectValue placeholder="Use default template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default (no template)</SelectItem>
+                      {templates.map((template) => (
+                        <SelectItem key={template.id} value={template.id.toString()}>
+                          {template.name}
+                          {template.isDefault && " (Default)"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Choose a template to change how the SOAP note is generated
+                  </p>
+                </div>
                 <Textarea
                   placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on chest pain symptoms' or 'Add that patient has history of diabetes'"
                   value={aiInstructions}
