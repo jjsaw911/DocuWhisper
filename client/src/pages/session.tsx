@@ -700,65 +700,25 @@ export default function Session() {
     },
     onSuccess: async (data) => {
       if (data.transcript) {
+        // Add transcript content - this makes hasTranscript true
         addTranscriptEntry(data.transcript, "content");
+        committedTextRef.current = (committedTextRef.current + " " + data.transcript).trim();
         
-        setRecordingState("processing");
-        addTranscriptEntry("Generating clinical note...");
+        // Just show ready message - don't auto-generate or save
+        addTranscriptEntry("Ready. Click Resume to add more audio, or Generate SOAP when done.");
         
-        try {
-          const soapResponse = await apiRequest("POST", "/api/generate-soap", {
-            transcript: data.transcript,
-            patientName,
-            specialty: "general",
-            templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
-            outputLanguage: transcriptionLanguage,
-            context: contextText || undefined,
-          });
-          
-          if (!soapResponse.ok) {
-            throw new Error("Failed to generate SOAP note");
-          }
-          
-          const generatedSoap = await soapResponse.json();
-          setSoapNote(generatedSoap);
-          
-          let noteTitle = patientName
-            ? `${patientName} - ${new Date().toLocaleDateString()}`
-            : `Session - ${new Date().toLocaleDateString()}`;
-          
-          if (!patientName) {
-            try {
-              const titleResult = await generateTitleMutation.mutateAsync(data.transcript);
-              if (titleResult.title) noteTitle = titleResult.title;
-            } catch {}
-          }
-          
-          const saveResponse = await apiRequest("POST", "/api/notes", {
-            title: noteTitle,
-            patientName: patientName || null,
-            specialty: "general",
-            subjective: generatedSoap.subjective || "",
-            objective: generatedSoap.objective || "",
-            assessment: generatedSoap.assessment || "",
-            plan: generatedSoap.plan || "",
-            transcript: data.transcript,
-            patientContext: contextText || null,
-          });
-          const savedNote = await saveResponse.json();
-          
-          queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-          clearBackup();
-          toast({ title: "Session saved", description: "Your note has been generated and saved" });
-          navigate(`/notes/${savedNote.id}`);
-        } catch (error) {
-          console.error("Upload processing failed:", error);
-          toast({ title: "Processing failed", description: "Could not generate note from uploaded audio.", variant: "destructive" });
-        }
-        
-        setRecordingState("idle");
+        toast({
+          title: "Recording complete",
+          description: "Click Resume to add more, or Generate SOAP when ready.",
+        });
       } else {
-        setRecordingState("idle");
+        toast({
+          title: "No speech detected",
+          description: "The recording didn't capture any speech. Please try again.",
+          variant: "destructive",
+        });
       }
+      setRecordingState("idle");
     },
     onError: (error: Error) => {
       setRecordingState("idle");
@@ -1330,16 +1290,6 @@ Plan: ${soapNote.plan}
         <div className="flex items-center justify-center gap-3 mb-3">
           {hasTranscript && recordingState === "idle" && (
             <>
-              {/* Resume recording button */}
-              <Button
-                onClick={startRecording}
-                className="gap-2"
-                data-testid="button-resume-footer"
-              >
-                <Mic className="h-4 w-4" />
-                Resume
-              </Button>
-              
               <Button
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
@@ -1349,8 +1299,6 @@ Plan: ${soapNote.plan}
                 <Upload className="h-4 w-4" />
                 Add Audio
               </Button>
-              
-              <div className="h-6 w-px bg-border" />
               
               <Button
                 variant="default"
