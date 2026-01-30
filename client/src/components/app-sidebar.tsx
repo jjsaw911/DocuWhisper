@@ -12,8 +12,16 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,6 +37,7 @@ import {
   ListTodo,
   Share2,
   TrendingUp,
+  ChevronRight,
 } from "lucide-react";
 import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
@@ -120,17 +129,51 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  isActive={location === "/" || location.startsWith("/session")}
-                >
-                  <Link href="/" data-testid="nav-scribe">
-                    <FileText className="h-4 w-4" />
-                    <span>Scribe</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {/* Scribe with collapsible recent sessions */}
+              <Collapsible defaultOpen className="group/collapsible">
+                <SidebarMenuItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton
+                      isActive={location === "/" || location.startsWith("/session") || location.startsWith("/notes")}
+                      data-testid="nav-scribe"
+                    >
+                      <FileText className="h-4 w-4" />
+                      <span>Scribe</span>
+                      <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      {Object.entries(groupedNotes).map(([date, dateNotes]) => (
+                        <div key={date}>
+                          <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                            {date}
+                          </div>
+                          {dateNotes.map((note) => (
+                            <SidebarMenuSubItem key={note.id}>
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={location === `/notes/${note.id}`}
+                              >
+                                <Link href={`/notes/${note.id}`} data-testid={`session-${note.id}`}>
+                                  <span className="truncate">
+                                    {note.patientName || note.title || "Untitled"}
+                                  </span>
+                                </Link>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </div>
+                      ))}
+                      {notes.length === 0 && (
+                        <div className="px-2 py-2 text-xs text-muted-foreground">
+                          No sessions yet
+                        </div>
+                      )}
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </SidebarMenuItem>
+              </Collapsible>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location === "/tasks"}>
                   <Link href="/tasks" data-testid="nav-tasks">
@@ -193,51 +236,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarSeparator />
-
-        <SidebarGroup className="flex-1">
-          <SidebarGroupLabel>Recent Sessions</SidebarGroupLabel>
-          <SidebarGroupContent className="flex-1">
-            <ScrollArea className="h-[calc(100vh-400px)]">
-              <SidebarMenu>
-                {Object.entries(groupedNotes).map(([date, dateNotes]) => (
-                  <div key={date}>
-                    <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                      {date}
-                    </div>
-                    {dateNotes.map((note) => (
-                      <SidebarMenuItem key={note.id}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={location === `/notes/${note.id}`}
-                          className="flex flex-col items-start gap-0 h-auto py-2"
-                        >
-                          <Link href={`/notes/${note.id}`} data-testid={`session-${note.id}`}>
-                            <span className="font-medium truncate w-full">
-                              {note.patientName || note.title || "Untitled Session"}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(note.createdAt).toLocaleTimeString("en-US", {
-                                hour: "numeric",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
-                  </div>
-                ))}
-                {notes.length === 0 && (
-                  <div className="px-3 py-4 text-sm text-muted-foreground text-center">
-                    No sessions yet
-                  </div>
-                )}
-              </SidebarMenu>
-            </ScrollArea>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+              </SidebarContent>
 
       <SidebarFooter className="border-t p-2">
         <SidebarMenu>
