@@ -539,7 +539,17 @@ export default function PatientDetailPage() {
 
   const updateEncounterMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<EncounterFormData> }) => {
-      const response = await apiRequest("PATCH", `/api/emr/encounters/${id}`, data);
+      // Preserve existing clinical JSON fields from the editing encounter
+      const enrichedData = {
+        ...data,
+        // Preserve existing clinical data (don't overwrite with undefined)
+        rosChecklist: editingEncounter?.rosChecklist,
+        peChecklist: editingEncounter?.peChecklist,
+        diagnosisCodes: editingEncounter?.diagnosisCodes,
+        procedureCodes: editingEncounter?.procedureCodes,
+        medications: editingEncounter?.medications,
+      };
+      const response = await apiRequest("PATCH", `/api/emr/encounters/${id}`, enrichedData);
       return response.json();
     },
     onSuccess: () => {
@@ -2199,11 +2209,51 @@ export default function PatientDetailPage() {
                   <AccordionItem value="ap">
                     <AccordionTrigger className="text-left">
                       <div className="flex items-center gap-2">
-                        <PenLine className="h-4 w-4 text-primary" />
+                        <PenLine className="h-4 w-4" />
                         <span className="font-semibold">Assessment & Plan</span>
                       </div>
                     </AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-4">
+                      {/* Pull from SOAP Note */}
+                      {patientNotes.length > 0 && (
+                        <div className="p-3 border rounded-md bg-muted/30">
+                          <div className="flex items-center gap-2 mb-2">
+                            <FileText className="h-4 w-4" />
+                            <span className="text-sm font-medium">Pull from SOAP Note (Scribe)</span>
+                          </div>
+                          <Select 
+                            onValueChange={(noteId) => {
+                              const note = patientNotes.find(n => n.id.toString() === noteId);
+                              if (note) {
+                                if (note.assessment) {
+                                  encounterForm.setValue('assessmentSummary', note.assessment);
+                                }
+                                if (note.plan) {
+                                  encounterForm.setValue('planSummary', note.plan);
+                                }
+                                toast({
+                                  title: "Imported from SOAP Note",
+                                  description: `Assessment and Plan pulled from "${note.title || 'Untitled'}"`,
+                                });
+                              }
+                            }}
+                          >
+                            <SelectTrigger data-testid="select-import-soap">
+                              <SelectValue placeholder="Select a SOAP note to import from..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {patientNotes.map((note) => (
+                                <SelectItem key={note.id} value={note.id.toString()} data-testid={`select-import-soap-option-${note.id}`}>
+                                  {note.title || "Untitled"} - {new Date(note.createdAt).toLocaleDateString()}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            This will import the Assessment and Plan sections from the selected scribe note.
+                          </p>
+                        </div>
+                      )}
                       <FormField
                         control={encounterForm.control}
                         name="assessmentSummary"
@@ -2334,122 +2384,234 @@ export default function PatientDetailPage() {
                   </div>
                 </div>
 
-                {/* ROS */}
+                {/* ROS - Display both checklist and text data */}
                 <div className="space-y-2">
                   <h3 className="font-semibold flex items-center gap-2">
-                    <ClipboardList className="h-4 w-4 text-primary" />
+                    <ClipboardList className="h-4 w-4" />
                     Review of Systems
                   </h3>
-                  <div className="bg-muted p-4 rounded-md">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                      {viewingEncounter.rosConstitutional && (
-                        <div><span className="font-medium">Constitutional:</span> {viewingEncounter.rosConstitutional}</div>
-                      )}
-                      {viewingEncounter.rosEyes && (
-                        <div><span className="font-medium">Eyes:</span> {viewingEncounter.rosEyes}</div>
-                      )}
-                      {viewingEncounter.rosEnt && (
-                        <div><span className="font-medium">ENT:</span> {viewingEncounter.rosEnt}</div>
-                      )}
-                      {viewingEncounter.rosCardiovascular && (
-                        <div><span className="font-medium">Cardiovascular:</span> {viewingEncounter.rosCardiovascular}</div>
-                      )}
-                      {viewingEncounter.rosRespiratory && (
-                        <div><span className="font-medium">Respiratory:</span> {viewingEncounter.rosRespiratory}</div>
-                      )}
-                      {viewingEncounter.rosGastrointestinal && (
-                        <div><span className="font-medium">GI:</span> {viewingEncounter.rosGastrointestinal}</div>
-                      )}
-                      {viewingEncounter.rosGenitourinary && (
-                        <div><span className="font-medium">GU:</span> {viewingEncounter.rosGenitourinary}</div>
-                      )}
-                      {viewingEncounter.rosMusculoskeletal && (
-                        <div><span className="font-medium">MSK:</span> {viewingEncounter.rosMusculoskeletal}</div>
-                      )}
-                      {viewingEncounter.rosSkin && (
-                        <div><span className="font-medium">Skin:</span> {viewingEncounter.rosSkin}</div>
-                      )}
-                      {viewingEncounter.rosNeurological && (
-                        <div><span className="font-medium">Neuro:</span> {viewingEncounter.rosNeurological}</div>
-                      )}
-                      {viewingEncounter.rosPsychiatric && (
-                        <div><span className="font-medium">Psych:</span> {viewingEncounter.rosPsychiatric}</div>
-                      )}
-                      {viewingEncounter.rosEndocrine && (
-                        <div><span className="font-medium">Endocrine:</span> {viewingEncounter.rosEndocrine}</div>
-                      )}
-                      {viewingEncounter.rosHematologic && (
-                        <div><span className="font-medium">Hematologic:</span> {viewingEncounter.rosHematologic}</div>
-                      )}
-                      {viewingEncounter.rosAllergic && (
-                        <div><span className="font-medium">Allergic:</span> {viewingEncounter.rosAllergic}</div>
-                      )}
-                    </div>
-                    {!viewingEncounter.rosConstitutional && !viewingEncounter.rosEyes && !viewingEncounter.rosCardiovascular && (
-                      <p className="text-sm text-muted-foreground">No ROS documented</p>
+                  <div className="bg-muted p-4 rounded-md space-y-3">
+                    {/* ROS Checklist Data */}
+                    {viewingEncounter.rosChecklist && (() => {
+                      try {
+                        const checklist: RosChecklist = typeof viewingEncounter.rosChecklist === 'string' 
+                          ? JSON.parse(viewingEncounter.rosChecklist) 
+                          : viewingEncounter.rosChecklist;
+                        const sections = Object.entries(checklist).filter(([_, items]) => items && items.length > 0);
+                        if (sections.length === 0) {
+                          return <p className="text-sm text-muted-foreground">No ROS documented</p>;
+                        }
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {sections.map(([key, items]) => {
+                              const sectionConfig = rosOptions[key as keyof typeof rosOptions];
+                              if (!sectionConfig) return null;
+                              const isNormal = items.includes('_normal');
+                              const findings = items.filter((id: string) => id !== '_normal');
+                              const findingLabels = findings.map((id: string) => {
+                                const option = sectionConfig.options.find(o => o.id === id);
+                                return option?.label || id;
+                              });
+                              return (
+                                <div key={key} className="text-sm">
+                                  <span className="font-medium">{sectionConfig.label}: </span>
+                                  {isNormal ? (
+                                    <span className="text-green-600 dark:text-green-400">{sectionConfig.normal}</span>
+                                  ) : findingLabels.length > 0 ? (
+                                    <span className="text-amber-600 dark:text-amber-400">Positive for {findingLabels.join(', ')}</span>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      } catch { return <p className="text-sm text-muted-foreground">No ROS documented</p>; }
+                    })()}
+                    {/* Fallback to text-based ROS fields */}
+                    {!viewingEncounter.rosChecklist && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                        {viewingEncounter.rosConstitutional && (
+                          <div><span className="font-medium">Constitutional:</span> {viewingEncounter.rosConstitutional}</div>
+                        )}
+                        {viewingEncounter.rosCardiovascular && (
+                          <div><span className="font-medium">Cardiovascular:</span> {viewingEncounter.rosCardiovascular}</div>
+                        )}
+                        {viewingEncounter.rosRespiratory && (
+                          <div><span className="font-medium">Respiratory:</span> {viewingEncounter.rosRespiratory}</div>
+                        )}
+                        {viewingEncounter.rosGastrointestinal && (
+                          <div><span className="font-medium">GI:</span> {viewingEncounter.rosGastrointestinal}</div>
+                        )}
+                        {!viewingEncounter.rosConstitutional && !viewingEncounter.rosCardiovascular && (
+                          <p className="text-muted-foreground">No ROS documented</p>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
 
-                {/* Physical Exam */}
+                {/* Physical Exam - Display both checklist and text data */}
                 <div className="space-y-2">
                   <h3 className="font-semibold flex items-center gap-2">
-                    <Stethoscope className="h-4 w-4 text-primary" />
+                    <Stethoscope className="h-4 w-4" />
                     Physical Examination
                   </h3>
-                  <div className="bg-muted p-4 rounded-md">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                      {viewingEncounter.peGeneral && (
-                        <div><span className="font-medium">General:</span> {viewingEncounter.peGeneral}</div>
-                      )}
-                      {viewingEncounter.peVitals && (
-                        <div><span className="font-medium">Vitals:</span> {viewingEncounter.peVitals}</div>
-                      )}
-                      {viewingEncounter.peHead && (
-                        <div><span className="font-medium">Head:</span> {viewingEncounter.peHead}</div>
-                      )}
-                      {viewingEncounter.peEyes && (
-                        <div><span className="font-medium">Eyes:</span> {viewingEncounter.peEyes}</div>
-                      )}
-                      {viewingEncounter.peEnt && (
-                        <div><span className="font-medium">ENT:</span> {viewingEncounter.peEnt}</div>
-                      )}
-                      {viewingEncounter.peNeck && (
-                        <div><span className="font-medium">Neck:</span> {viewingEncounter.peNeck}</div>
-                      )}
-                      {viewingEncounter.peChest && (
-                        <div><span className="font-medium">Chest:</span> {viewingEncounter.peChest}</div>
-                      )}
-                      {viewingEncounter.peLungs && (
-                        <div><span className="font-medium">Lungs:</span> {viewingEncounter.peLungs}</div>
-                      )}
-                      {viewingEncounter.peHeart && (
-                        <div><span className="font-medium">Heart:</span> {viewingEncounter.peHeart}</div>
-                      )}
-                      {viewingEncounter.peAbdomen && (
-                        <div><span className="font-medium">Abdomen:</span> {viewingEncounter.peAbdomen}</div>
-                      )}
-                      {viewingEncounter.peBack && (
-                        <div><span className="font-medium">Back:</span> {viewingEncounter.peBack}</div>
-                      )}
-                      {viewingEncounter.peExtremities && (
-                        <div><span className="font-medium">Extremities:</span> {viewingEncounter.peExtremities}</div>
-                      )}
-                      {viewingEncounter.peSkin && (
-                        <div><span className="font-medium">Skin:</span> {viewingEncounter.peSkin}</div>
-                      )}
-                      {viewingEncounter.peNeurological && (
-                        <div><span className="font-medium">Neurological:</span> {viewingEncounter.peNeurological}</div>
-                      )}
-                      {viewingEncounter.pePsychiatric && (
-                        <div><span className="font-medium">Psychiatric:</span> {viewingEncounter.pePsychiatric}</div>
-                      )}
-                    </div>
-                    {!viewingEncounter.peGeneral && !viewingEncounter.peHeart && !viewingEncounter.peLungs && (
-                      <p className="text-sm text-muted-foreground">No physical exam documented</p>
+                  <div className="bg-muted p-4 rounded-md space-y-3">
+                    {/* PE Checklist Data */}
+                    {viewingEncounter.peChecklist && (() => {
+                      try {
+                        const checklist: PeChecklist = typeof viewingEncounter.peChecklist === 'string' 
+                          ? JSON.parse(viewingEncounter.peChecklist) 
+                          : viewingEncounter.peChecklist;
+                        const sections = Object.entries(checklist).filter(([_, items]) => items && items.length > 0);
+                        if (sections.length === 0) {
+                          return <p className="text-sm text-muted-foreground">No physical exam documented</p>;
+                        }
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {sections.map(([key, items]) => {
+                              const sectionConfig = peOptions[key as keyof typeof peOptions];
+                              if (!sectionConfig) return null;
+                              const isNormal = items.includes('_normal');
+                              const findings = items.filter((id: string) => id !== '_normal');
+                              const findingLabels = findings.map((id: string) => {
+                                const option = sectionConfig.options.find(o => o.id === id);
+                                return option?.label || id;
+                              });
+                              return (
+                                <div key={key} className="text-sm">
+                                  <span className="font-medium">{sectionConfig.label}: </span>
+                                  {isNormal ? (
+                                    <span className="text-green-600 dark:text-green-400">{sectionConfig.normal}</span>
+                                  ) : findingLabels.length > 0 ? (
+                                    <span>{findingLabels.join(', ')}</span>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      } catch { return <p className="text-sm text-muted-foreground">No physical exam documented</p>; }
+                    })()}
+                    {/* Fallback to text-based PE fields */}
+                    {!viewingEncounter.peChecklist && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                        {viewingEncounter.peGeneral && (
+                          <div><span className="font-medium">General:</span> {viewingEncounter.peGeneral}</div>
+                        )}
+                        {viewingEncounter.peHeart && (
+                          <div><span className="font-medium">Heart:</span> {viewingEncounter.peHeart}</div>
+                        )}
+                        {viewingEncounter.peLungs && (
+                          <div><span className="font-medium">Lungs:</span> {viewingEncounter.peLungs}</div>
+                        )}
+                        {viewingEncounter.peAbdomen && (
+                          <div><span className="font-medium">Abdomen:</span> {viewingEncounter.peAbdomen}</div>
+                        )}
+                        {!viewingEncounter.peGeneral && !viewingEncounter.peHeart && (
+                          <p className="text-muted-foreground">No physical exam documented</p>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
+
+                {/* Diagnosis Codes (ICD-10) */}
+                {viewingEncounter.diagnosisCodes && (() => {
+                  try {
+                    const codes: DiagnosisCode[] = typeof viewingEncounter.diagnosisCodes === 'string' 
+                      ? JSON.parse(viewingEncounter.diagnosisCodes) 
+                      : viewingEncounter.diagnosisCodes;
+                    if (!codes || codes.length === 0) return null;
+                    return (
+                      <div className="space-y-2">
+                        <h3 className="font-semibold flex items-center gap-2">
+                          <FileText className="h-4 w-4" />
+                          Diagnosis Codes (ICD-10)
+                        </h3>
+                        <div className="bg-muted p-4 rounded-md">
+                          <div className="flex flex-wrap gap-2">
+                            {codes.map((dx, index) => (
+                              <Badge 
+                                key={index} 
+                                variant={dx.isPrimary ? "default" : "secondary"}
+                                className="text-sm py-1"
+                              >
+                                <span className="font-mono font-medium">{dx.code}</span>
+                                <span className="ml-1">- {dx.description}</span>
+                                {dx.isPrimary && <span className="ml-1 text-xs">(Primary)</span>}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
+
+                {/* Procedure Codes (CPT) */}
+                {viewingEncounter.procedureCodes && (() => {
+                  try {
+                    const codes: ProcedureCode[] = typeof viewingEncounter.procedureCodes === 'string' 
+                      ? JSON.parse(viewingEncounter.procedureCodes) 
+                      : viewingEncounter.procedureCodes;
+                    if (!codes || codes.length === 0) return null;
+                    return (
+                      <div className="space-y-2">
+                        <h3 className="font-semibold flex items-center gap-2">
+                          <ClipboardList className="h-4 w-4" />
+                          Procedure Codes (CPT)
+                        </h3>
+                        <div className="bg-muted p-4 rounded-md">
+                          <div className="flex flex-wrap gap-2">
+                            {codes.map((proc, index) => (
+                              <Badge key={index} variant="outline" className="text-sm py-1">
+                                <span className="font-mono font-medium">{proc.code}</span>
+                                <span className="ml-1">- {proc.description}</span>
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
+
+                {/* Medications */}
+                {viewingEncounter.medications && (() => {
+                  try {
+                    const meds: MedicationEntry[] = typeof viewingEncounter.medications === 'string' 
+                      ? JSON.parse(viewingEncounter.medications) 
+                      : viewingEncounter.medications;
+                    if (!meds || meds.length === 0) return null;
+                    return (
+                      <div className="space-y-2">
+                        <h3 className="font-semibold flex items-center gap-2">
+                          <Pill className="h-4 w-4" />
+                          Medications Prescribed
+                        </h3>
+                        <div className="bg-muted p-4 rounded-md">
+                          <div className="space-y-3">
+                            {meds.map((med, index) => (
+                              <div key={index} className="border-b last:border-0 pb-2 last:pb-0">
+                                <div className="font-medium">{med.name}</div>
+                                <div className="text-sm text-muted-foreground grid grid-cols-2 md:grid-cols-4 gap-2 mt-1">
+                                  {med.dose && <span>Dose: {med.dose}</span>}
+                                  {med.frequency && <span>Frequency: {med.frequency}</span>}
+                                  {med.duration && <span>Duration: {med.duration}</span>}
+                                  {med.dispenseQuantity && <span>Qty: {med.dispenseQuantity}</span>}
+                                </div>
+                                {med.instructions && (
+                                  <div className="text-sm mt-1">Instructions: {med.instructions}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
 
                 {/* Assessment & Plan */}
                 <div className="space-y-2">
@@ -2730,11 +2892,51 @@ export default function PatientDetailPage() {
                   <AccordionItem value="assessment">
                     <AccordionTrigger className="hover:no-underline">
                       <div className="flex items-center gap-2">
-                        <Brain className="h-4 w-4 text-primary" />
+                        <Brain className="h-4 w-4" />
                         <span className="font-semibold">Assessment & Plan</span>
                       </div>
                     </AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-4">
+                      {/* Pull from SOAP Note */}
+                      {patientNotes.length > 0 && (
+                        <div className="p-3 border rounded-md bg-muted/30">
+                          <div className="flex items-center gap-2 mb-2">
+                            <FileText className="h-4 w-4" />
+                            <span className="text-sm font-medium">Pull from SOAP Note (Scribe)</span>
+                          </div>
+                          <Select 
+                            onValueChange={(noteId) => {
+                              const note = patientNotes.find(n => n.id.toString() === noteId);
+                              if (note) {
+                                if (note.assessment) {
+                                  editEncounterForm.setValue('assessmentSummary', note.assessment);
+                                }
+                                if (note.plan) {
+                                  editEncounterForm.setValue('planSummary', note.plan);
+                                }
+                                toast({
+                                  title: "Imported from SOAP Note",
+                                  description: `Assessment and Plan pulled from "${note.title || 'Untitled'}"`,
+                                });
+                              }
+                            }}
+                          >
+                            <SelectTrigger data-testid="edit-select-import-soap">
+                              <SelectValue placeholder="Select a SOAP note to import from..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {patientNotes.map((note) => (
+                                <SelectItem key={note.id} value={note.id.toString()} data-testid={`edit-select-import-soap-option-${note.id}`}>
+                                  {note.title || "Untitled"} - {new Date(note.createdAt).toLocaleDateString()}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            This will import the Assessment and Plan sections from the selected scribe note.
+                          </p>
+                        </div>
+                      )}
                       <FormField
                         control={editEncounterForm.control}
                         name="assessmentSummary"
