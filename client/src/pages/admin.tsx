@@ -33,7 +33,10 @@ import {
   Edit,
   UserCog,
   Building2,
-  X
+  X,
+  Key,
+  RefreshCw,
+  AlertTriangle
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -89,6 +92,23 @@ interface UserInfo {
   practiceName?: string;
   language?: string;
   createdAt: string;
+}
+
+interface ApiKey {
+  id: number;
+  name: string;
+  keyPrefix: string;
+  scopes: string[];
+  status: string;
+  rateLimitPerMinute: number;
+  lastUsedAt?: string;
+  expiresAt?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+interface ApiKeyScopes {
+  [scope: string]: string;
 }
 
 const EMR_LICENSE_TYPES = [
@@ -154,6 +174,18 @@ export default function Admin() {
   // Organization members state
   const [viewingOrgMembers, setViewingOrgMembers] = useState<number | null>(null);
   const [orgMembers, setOrgMembers] = useState<any[]>([]);
+  
+  // API key management state
+  const [selectedApiKeyOrg, setSelectedApiKeyOrg] = useState<number | null>(null);
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [newApiKeyName, setNewApiKeyName] = useState("");
+  const [newApiKeyScopes, setNewApiKeyScopes] = useState<string[]>([]);
+  const [newApiKeyRateLimit, setNewApiKeyRateLimit] = useState("60");
+  const [newApiKeyExpiry, setNewApiKeyExpiry] = useState("");
+  const [showNewApiKeyDialog, setShowNewApiKeyDialog] = useState(false);
+  const [newlyCreatedApiKey, setNewlyCreatedApiKey] = useState<string | null>(null);
+  const [copiedApiKey, setCopiedApiKey] = useState(false);
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -178,6 +210,86 @@ export default function Admin() {
   const { data: allUsers, isLoading: usersLoading } = useQuery<UserInfo[]>({
     queryKey: ["/api/admin/users"],
     enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  const { data: apiKeyScopes } = useQuery<ApiKeyScopes>({
+    queryKey: ["/api/admin/api-keys/scopes"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  const fetchApiKeys = async (orgId: number) => {
+    setApiKeysLoading(true);
+    try {
+      const response = await apiRequest("GET", `/api/admin/organizations/${orgId}/api-keys`);
+      const keys = await response.json();
+      setApiKeys(keys);
+    } catch {
+      toast({ title: "Failed to fetch API keys", variant: "destructive" });
+    } finally {
+      setApiKeysLoading(false);
+    }
+  };
+
+  const createApiKeyMutation = useMutation({
+    mutationFn: async (data: { orgId: number; name: string; scopes: string[]; rateLimitPerMinute: number; expiresAt?: string }) => {
+      const response = await apiRequest("POST", `/api/admin/organizations/${data.orgId}/api-keys`, {
+        name: data.name,
+        scopes: data.scopes,
+        rateLimitPerMinute: data.rateLimitPerMinute,
+        expiresAt: data.expiresAt || undefined,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setNewlyCreatedApiKey(data.apiKey);
+      setNewApiKeyName("");
+      setNewApiKeyScopes([]);
+      setNewApiKeyRateLimit("60");
+      setNewApiKeyExpiry("");
+      if (selectedApiKeyOrg) {
+        fetchApiKeys(selectedApiKeyOrg);
+      }
+      toast({
+        title: "API key created",
+        description: "Save the key now - it won't be shown again!",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to create API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const revokeApiKeyMutation = useMutation({
+    mutationFn: async (keyId: number) => {
+      await apiRequest("POST", `/api/admin/api-keys/${keyId}/revoke`);
+    },
+    onSuccess: () => {
+      if (selectedApiKeyOrg) {
+        fetchApiKeys(selectedApiKeyOrg);
+      }
+      toast({ title: "API key revoked" });
+    },
+    onError: () => {
+      toast({ title: "Failed to revoke API key", variant: "destructive" });
+    },
+  });
+
+  const deleteApiKeyMutation = useMutation({
+    mutationFn: async (keyId: number) => {
+      await apiRequest("DELETE", `/api/admin/api-keys/${keyId}`);
+    },
+    onSuccess: () => {
+      if (selectedApiKeyOrg) {
+        fetchApiKeys(selectedApiKeyOrg);
+      }
+      toast({ title: "API key deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete API key", variant: "destructive" });
+    },
   });
 
   const createInviteMutation = useMutation({
@@ -545,6 +657,10 @@ export default function Admin() {
             <TabsTrigger value="invites" data-testid="tab-invites">
               <Gift className="mr-2 h-4 w-4" />
               Invite Codes
+            </TabsTrigger>
+            <TabsTrigger value="api-keys" data-testid="tab-api-keys">
+              <Key className="mr-2 h-4 w-4" />
+              API Keys
             </TabsTrigger>
           </TabsList>
 
@@ -1306,8 +1422,325 @@ export default function Admin() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="api-keys" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Key className="h-5 w-5" />
+                  API Key Management
+                </CardTitle>
+                <CardDescription>
+                  Generate and manage API keys for external integrations (e.g., urgent care websites)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+                  <div className="space-y-2 flex-1">
+                    <Label>Select Organization</Label>
+                    <Select
+                      value={selectedApiKeyOrg?.toString() || ""}
+                      onValueChange={(value) => {
+                        const orgId = parseInt(value);
+                        setSelectedApiKeyOrg(orgId);
+                        fetchApiKeys(orgId);
+                      }}
+                    >
+                      <SelectTrigger data-testid="select-api-key-org">
+                        <SelectValue placeholder="Select organization" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {organizations?.map((org) => (
+                          <SelectItem key={org.id} value={org.id.toString()}>
+                            {org.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {selectedApiKeyOrg && (
+                    <Button
+                      onClick={() => setShowNewApiKeyDialog(true)}
+                      data-testid="button-new-api-key"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      New API Key
+                    </Button>
+                  )}
+                </div>
+
+                {selectedApiKeyOrg && (
+                  <>
+                    {apiKeysLoading ? (
+                      <div className="space-y-2">
+                        {[1, 2].map((i) => (
+                          <Skeleton key={i} className="h-16 w-full" />
+                        ))}
+                      </div>
+                    ) : apiKeys.length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Name</TableHead>
+                              <TableHead>Key Prefix</TableHead>
+                              <TableHead>Scopes</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Rate Limit</TableHead>
+                              <TableHead>Last Used</TableHead>
+                              <TableHead>Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {apiKeys.map((key) => (
+                              <TableRow key={key.id} data-testid={`row-api-key-${key.id}`}>
+                                <TableCell className="font-medium">{key.name}</TableCell>
+                                <TableCell className="font-mono text-xs">{key.keyPrefix}...</TableCell>
+                                <TableCell>
+                                  <div className="flex flex-wrap gap-1">
+                                    {key.scopes.slice(0, 2).map((scope) => (
+                                      <Badge key={scope} variant="secondary" className="text-xs">
+                                        {scope.split(":")[0]}
+                                      </Badge>
+                                    ))}
+                                    {key.scopes.length > 2 && (
+                                      <Badge variant="outline" className="text-xs">
+                                        +{key.scopes.length - 2}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  {key.status === "active" ? (
+                                    <Badge variant="default" className="bg-emerald-600">Active</Badge>
+                                  ) : (
+                                    <Badge variant="destructive">Revoked</Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell>{key.rateLimitPerMinute}/min</TableCell>
+                                <TableCell className="text-sm text-muted-foreground">
+                                  {key.lastUsedAt ? formatDate(key.lastUsedAt) : "Never"}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    {key.status === "active" && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => revokeApiKeyMutation.mutate(key.id)}
+                                        disabled={revokeApiKeyMutation.isPending}
+                                        data-testid={`button-revoke-key-${key.id}`}
+                                      >
+                                        <AlertTriangle className="h-3 w-3 mr-1" />
+                                        Revoke
+                                      </Button>
+                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => deleteApiKeyMutation.mutate(key.id)}
+                                      disabled={deleteApiKeyMutation.isPending}
+                                      data-testid={`button-delete-key-${key.id}`}
+                                    >
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <Key className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No API keys created for this organization</p>
+                        <p className="text-sm">Create an API key to enable external integrations</p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {!selectedApiKeyOrg && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>Select an organization to manage API keys</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
+
+      {/* Create API Key Dialog */}
+      <Dialog open={showNewApiKeyDialog} onOpenChange={(open) => {
+        if (!open) {
+          setShowNewApiKeyDialog(false);
+          setNewlyCreatedApiKey(null);
+          setCopiedApiKey(false);
+        }
+      }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5 text-primary" />
+              {newlyCreatedApiKey ? "API Key Created" : "Create New API Key"}
+            </DialogTitle>
+            <DialogDescription>
+              {newlyCreatedApiKey 
+                ? "Save this key now - it won't be shown again!" 
+                : "Configure the API key settings and permissions"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {newlyCreatedApiKey ? (
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg">
+                <div className="flex items-center gap-2 mb-2 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-5 w-5" />
+                  <span className="font-medium">Save this key securely</span>
+                </div>
+                <p className="text-sm text-amber-600 dark:text-amber-400">
+                  This is the only time you'll see this API key. Store it in a secure location.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={newlyCreatedApiKey}
+                  readOnly
+                  className="font-mono text-sm"
+                  data-testid="input-new-api-key"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    navigator.clipboard.writeText(newlyCreatedApiKey);
+                    setCopiedApiKey(true);
+                    setTimeout(() => setCopiedApiKey(false), 2000);
+                    toast({ title: "API key copied to clipboard" });
+                  }}
+                  data-testid="button-copy-api-key"
+                >
+                  {copiedApiKey ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="api-key-name">Key Name *</Label>
+                <Input
+                  id="api-key-name"
+                  placeholder="e.g., Urgent Care Integration"
+                  value={newApiKeyName}
+                  onChange={(e) => setNewApiKeyName(e.target.value)}
+                  data-testid="input-api-key-name"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Scopes *</Label>
+                <p className="text-xs text-muted-foreground">Select the permissions for this API key</p>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {apiKeyScopes && Object.entries(apiKeyScopes).map(([scope, description]) => (
+                    <div key={scope} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id={`scope-${scope}`}
+                        checked={newApiKeyScopes.includes(scope)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setNewApiKeyScopes([...newApiKeyScopes, scope]);
+                          } else {
+                            setNewApiKeyScopes(newApiKeyScopes.filter((s) => s !== scope));
+                          }
+                        }}
+                        className="rounded"
+                        data-testid={`checkbox-scope-${scope}`}
+                      />
+                      <Label htmlFor={`scope-${scope}`} className="text-sm cursor-pointer">
+                        {scope}
+                        <span className="block text-xs text-muted-foreground">{description}</span>
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="rate-limit">Rate Limit (per minute)</Label>
+                  <Input
+                    id="rate-limit"
+                    type="number"
+                    value={newApiKeyRateLimit}
+                    onChange={(e) => setNewApiKeyRateLimit(e.target.value)}
+                    data-testid="input-rate-limit"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="expiry">Expiry Date (optional)</Label>
+                  <Input
+                    id="expiry"
+                    type="date"
+                    value={newApiKeyExpiry}
+                    onChange={(e) => setNewApiKeyExpiry(e.target.value)}
+                    data-testid="input-expiry"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            {newlyCreatedApiKey ? (
+              <Button
+                onClick={() => {
+                  setShowNewApiKeyDialog(false);
+                  setNewlyCreatedApiKey(null);
+                  setCopiedApiKey(false);
+                }}
+                data-testid="button-close-dialog"
+              >
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowNewApiKeyDialog(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (selectedApiKeyOrg && newApiKeyName && newApiKeyScopes.length > 0) {
+                      createApiKeyMutation.mutate({
+                        orgId: selectedApiKeyOrg,
+                        name: newApiKeyName,
+                        scopes: newApiKeyScopes,
+                        rateLimitPerMinute: parseInt(newApiKeyRateLimit) || 60,
+                        expiresAt: newApiKeyExpiry || undefined,
+                      });
+                    }
+                  }}
+                  disabled={!newApiKeyName || newApiKeyScopes.length === 0 || createApiKeyMutation.isPending}
+                  data-testid="button-create-api-key"
+                >
+                  {createApiKeyMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Key className="mr-2 h-4 w-4" />
+                  )}
+                  Create API Key
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit User Settings Dialog */}
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
