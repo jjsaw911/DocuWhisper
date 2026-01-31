@@ -467,6 +467,15 @@ export const patientEncounters = pgTable("patient_encounters", {
   peSkin: text("pe_skin"),
   peNeurological: text("pe_neurological"),
   pePsychiatric: text("pe_psychiatric"),
+  // ROS and PE checkbox data (stored as JSON arrays)
+  rosChecklist: text("ros_checklist"), // JSON: { constitutional: ["fever", "weight_loss"], ... }
+  peChecklist: text("pe_checklist"), // JSON: { general: ["well_appearing"], ... }
+  // Diagnosis Codes (ICD-10)
+  diagnosisCodes: text("diagnosis_codes"), // JSON array: [{ code: "J06.9", description: "Acute upper respiratory infection", isPrimary: true }]
+  // Procedure Codes (CPT)
+  procedureCodes: text("procedure_codes"), // JSON array: [{ code: "99213", description: "Office visit, established patient, low complexity" }]
+  // Medications prescribed/managed in this encounter
+  medications: text("medications"), // JSON array: [{ name: "Amoxicillin", dose: "500mg", frequency: "TID", duration: "10 days", instructions: "Take with food" }]
   // Assessment & Plan link - usually in separate SOAP note
   assessmentSummary: text("assessment_summary"),
   planSummary: text("plan_summary"),
