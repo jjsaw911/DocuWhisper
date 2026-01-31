@@ -1429,8 +1429,8 @@ export default function PatientDetailPage() {
 
       {/* New Encounter Dialog */}
       <Dialog open={showEncounterDialog} onOpenChange={setShowEncounterDialog}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-          <DialogHeader className="flex-shrink-0">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Stethoscope className="h-5 w-5 text-primary" />
               New Clinical Encounter
@@ -1439,7 +1439,7 @@ export default function PatientDetailPage() {
               Document HPI, Review of Systems, and Physical Examination
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 min-h-0 pr-4">
+          <div className="flex-1 overflow-y-auto min-h-0 pr-2">
             <Form {...encounterForm}>
               <form className="space-y-6 pb-4">
                 {/* Encounter Type */}
@@ -2071,8 +2071,8 @@ export default function PatientDetailPage() {
                 </Accordion>
               </form>
             </Form>
-          </ScrollArea>
-          <DialogFooter className="flex-shrink-0 pt-4 border-t">
+          </div>
+          <DialogFooter className="pt-4 border-t">
             <Button variant="outline" onClick={() => setShowEncounterDialog(false)}>
               Cancel
             </Button>
@@ -2090,8 +2090,8 @@ export default function PatientDetailPage() {
 
       {/* View Encounter Dialog */}
       <Dialog open={!!viewingEncounter} onOpenChange={(open) => !open && setViewingEncounter(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-          <DialogHeader className="flex-shrink-0">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Stethoscope className="h-5 w-5 text-primary" />
               Clinical Encounter - {viewingEncounter && formatDate(viewingEncounter.encounterDate)}
@@ -2103,7 +2103,7 @@ export default function PatientDetailPage() {
               <Badge variant="outline">{viewingEncounter?.encounterType?.replace("_", " ") || "Office Visit"}</Badge>
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 min-h-0 pr-4">
+          <div className="flex-1 overflow-y-auto min-h-0 pr-2">
             {viewingEncounter && (
               <div className="space-y-6 pb-4">
                 {/* Chief Complaint */}
@@ -2325,8 +2325,8 @@ export default function PatientDetailPage() {
                 )}
               </div>
             )}
-          </ScrollArea>
-          <DialogFooter className="flex-shrink-0 pt-4 border-t gap-2 flex-wrap">
+          </div>
+          <DialogFooter className="pt-4 border-t gap-2 flex-wrap">
             {viewingEncounter && viewingEncounter.status !== "signed" && (
               <>
                 <AlertDialog>
@@ -2415,8 +2415,8 @@ export default function PatientDetailPage() {
 
       {/* Edit Encounter Dialog */}
       <Dialog open={!!editingEncounter} onOpenChange={(open) => !open && setEditingEncounter(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-          <DialogHeader className="flex-shrink-0">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Edit className="h-5 w-5 text-primary" />
               Edit Clinical Encounter - {editingEncounter && formatDate(editingEncounter.encounterDate)}
@@ -2425,7 +2425,7 @@ export default function PatientDetailPage() {
               Update encounter documentation
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 min-h-0 pr-4">
+          <div className="flex-1 overflow-y-auto min-h-0 pr-2">
             <Form {...editEncounterForm}>
               <form className="space-y-6 pb-4">
                 {/* Encounter Type */}
@@ -2602,8 +2602,8 @@ export default function PatientDetailPage() {
                 </Accordion>
               </form>
             </Form>
-          </ScrollArea>
-          <DialogFooter className="flex-shrink-0 pt-4 border-t">
+          </div>
+          <DialogFooter className="pt-4 border-t">
             <Button variant="outline" onClick={() => setEditingEncounter(null)}>
               Cancel
             </Button>

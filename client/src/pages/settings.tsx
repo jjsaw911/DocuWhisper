@@ -112,6 +112,7 @@ export default function Settings() {
   const [deaExpiry, setDeaExpiry] = useState("");
   const [supervisingPhysicianId, setSupervisingPhysicianId] = useState("");
   const [credentials, setCredentials] = useState("");
+  const [requiresCosignature, setRequiresCosignature] = useState(false);
 
   // Team/Practice management state
   const [newPracticeName, setNewPracticeName] = useState("");
@@ -235,6 +236,7 @@ export default function Settings() {
       setDeaExpiry(settings.deaExpiry ? new Date(settings.deaExpiry).toISOString().split('T')[0] : "");
       setSupervisingPhysicianId(settings.supervisingPhysicianId || "");
       setCredentials(settings.credentials || "");
+      setRequiresCosignature(settings.requiresCosignature || false);
     }
   }, [settings]);
 
@@ -263,7 +265,7 @@ export default function Settings() {
         deaExpiry: deaExpiry ? new Date(deaExpiry) : null,
         supervisingPhysicianId: supervisingPhysicianId || null,
         credentials: credentials || null,
-        requiresCosignature: emrRole === 'mid_level',
+        requiresCosignature,
       });
       return response.json();
     },
@@ -710,7 +712,27 @@ export default function Settings() {
                 </>
               )}
 
-              {emrRole === 'mid_level' && (
+              {/* Co-signature Toggle - Available for all clinical roles */}
+              {emrRole && (
+                <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+                  <div className="space-y-1">
+                    <Label htmlFor="requiresCosignature" className="text-sm font-medium">
+                      Require Physician Co-signature
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Enable if your state requires supervising physician to co-sign your encounters
+                    </p>
+                  </div>
+                  <Switch
+                    id="requiresCosignature"
+                    checked={requiresCosignature}
+                    onCheckedChange={setRequiresCosignature}
+                    data-testid="switch-requires-cosignature"
+                  />
+                </div>
+              )}
+
+              {requiresCosignature && (
                 <div className="space-y-2">
                   <Label htmlFor="supervisingPhysicianId">Supervising Physician ID</Label>
                   <Input
@@ -758,11 +780,6 @@ export default function Settings() {
                       <Badge variant="secondary">Manage Team</Badge>
                     )}
                   </div>
-                  {EMR_ROLES[emrRole as EmrRoleType].requiresCosignature && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                      Your encounters will require physician co-signature
-                    </p>
-                  )}
                 </div>
               )}
             </CardContent>
