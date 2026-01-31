@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useParams, useLocation } from "wouter";
@@ -9,6 +9,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { rosOptions, peOptions, icd10Codes, cptCodes, medicationDatabase } from "@/lib/clinical-data";
+import type { DiagnosisCode, ProcedureCode, MedicationEntry, RosChecklist, PeChecklist } from "@/lib/clinical-data";
+import { ClinicalAutocomplete, MedicationAutocomplete } from "@/components/clinical-autocomplete";
+import { ClinicalChecklist, ChecklistSummary } from "@/components/clinical-checklist";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -173,6 +178,11 @@ const encounterFormSchema = z.object({
   pePsychiatric: z.string().optional(),
   assessmentSummary: z.string().optional(),
   planSummary: z.string().optional(),
+  rosChecklist: z.string().optional(),
+  peChecklist: z.string().optional(),
+  diagnosisCodes: z.string().optional(),
+  procedureCodes: z.string().optional(),
+  medications: z.string().optional(),
 });
 
 type EncounterFormData = z.infer<typeof encounterFormSchema>;
@@ -188,6 +198,13 @@ export default function PatientDetailPage() {
   const [showEncounterDialog, setShowEncounterDialog] = useState(false);
   const [viewingEncounter, setViewingEncounter] = useState<PatientEncounter | null>(null);
   const [editingEncounter, setEditingEncounter] = useState<PatientEncounter | null>(null);
+  
+  // Clinical data state
+  const [rosChecklist, setRosChecklist] = useState<RosChecklist>({});
+  const [peChecklist, setPeChecklist] = useState<PeChecklist>({});
+  const [diagnosisCodes, setDiagnosisCodes] = useState<DiagnosisCode[]>([]);
+  const [procedureCodes, setProcedureCodes] = useState<ProcedureCode[]>([]);
+  const [medications, setMedications] = useState<MedicationEntry[]>([]);
 
   const { data: emrAccess, isLoading: isCheckingAccess } = useQuery<{ 
     hasAccess: boolean;
@@ -482,7 +499,15 @@ export default function PatientDetailPage() {
 
   const createEncounterMutation = useMutation({
     mutationFn: async (data: EncounterFormData) => {
-      const response = await apiRequest("POST", `/api/emr/patients/${patientId}/encounters`, data);
+      const enrichedData = {
+        ...data,
+        rosChecklist: JSON.stringify(rosChecklist),
+        peChecklist: JSON.stringify(peChecklist),
+        diagnosisCodes: JSON.stringify(diagnosisCodes),
+        procedureCodes: JSON.stringify(procedureCodes),
+        medications: JSON.stringify(medications),
+      };
+      const response = await apiRequest("POST", `/api/emr/patients/${patientId}/encounters`, enrichedData);
       return response.json();
     },
     onSuccess: () => {
@@ -492,6 +517,7 @@ export default function PatientDetailPage() {
         description: "Clinical encounter has been saved",
       });
       encounterForm.reset();
+      resetClinicalData();
       setShowEncounterDialog(false);
     },
     onError: (error: Error) => {
@@ -502,6 +528,14 @@ export default function PatientDetailPage() {
       });
     },
   });
+
+  const resetClinicalData = useCallback(() => {
+    setRosChecklist({});
+    setPeChecklist({});
+    setDiagnosisCodes([]);
+    setProcedureCodes([]);
+    setMedications([]);
+  }, []);
 
   const updateEncounterMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<EncounterFormData> }) => {
@@ -2031,6 +2065,134 @@ export default function PatientDetailPage() {
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
+
+                <Separator />
+
+                {/* ROS Checkboxes */}
+                <ClinicalChecklist
+                  title="Review of Systems (Checkboxes)"
+                  icon={<ClipboardList className="h-4 w-4 text-primary" />}
+                  sections={rosOptions}
+                  checklist={rosChecklist}
+                  onChecklistChange={setRosChecklist}
+                  testIdPrefix="ros-checklist"
+                />
+
+                <Separator />
+
+                {/* PE Checkboxes */}
+                <ClinicalChecklist
+                  title="Physical Exam (Checkboxes)"
+                  icon={<Stethoscope className="h-4 w-4 text-primary" />}
+                  sections={peOptions}
+                  checklist={peChecklist}
+                  onChecklistChange={setPeChecklist}
+                  testIdPrefix="pe-checklist"
+                />
+
+                <Separator />
+
+                {/* Diagnosis Codes (ICD-10) */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold">Diagnosis Codes (ICD-10)</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {diagnosisCodes.map((dx, index) => (
+                      <Badge
+                        key={index}
+                        variant={dx.isPrimary ? "default" : "secondary"}
+                        className="flex items-center gap-1 pr-1 cursor-pointer"
+                        onClick={() => {
+                          const updated = diagnosisCodes.map((d, i) => ({
+                            ...d,
+                            isPrimary: i === index
+                          }));
+                          setDiagnosisCodes(updated);
+                        }}
+                        data-testid={`icd10-selected-${index}`}
+                      >
+                        <span className="font-mono font-medium">{dx.code}</span>
+                        <span className="max-w-[180px] truncate">- {dx.description}</span>
+                        {dx.isPrimary && <span className="text-xs ml-1">(Primary)</span>}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-4 w-4 hover:bg-destructive/20 ml-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDiagnosisCodes(diagnosisCodes.filter((_, i) => i !== index));
+                          }}
+                          data-testid={`icd10-remove-${index}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </Badge>
+                    ))}
+                  </div>
+                  <ClinicalAutocomplete
+                    items={icd10Codes}
+                    selectedItems={diagnosisCodes.map(d => ({ code: d.code, description: d.description }))}
+                    onSelect={(item) => setDiagnosisCodes([...diagnosisCodes, { ...item, isPrimary: diagnosisCodes.length === 0 }])}
+                    onRemove={(index) => setDiagnosisCodes(diagnosisCodes.filter((_, i) => i !== index))}
+                    placeholder="Search ICD-10 codes..."
+                    searchFields={["code", "description"]}
+                    displayField="description"
+                    secondaryField="description"
+                    testIdPrefix="icd10"
+                  />
+                  {diagnosisCodes.length > 1 && (
+                    <p className="text-xs text-muted-foreground">
+                      Click on a diagnosis to mark it as primary. First added is primary by default.
+                    </p>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Procedure Codes (CPT) */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold">Procedure Codes (CPT)</h3>
+                  </div>
+                  <ClinicalAutocomplete
+                    items={cptCodes}
+                    selectedItems={procedureCodes}
+                    onSelect={(item) => setProcedureCodes([...procedureCodes, item])}
+                    onRemove={(index) => setProcedureCodes(procedureCodes.filter((_, i) => i !== index))}
+                    placeholder="Search CPT codes..."
+                    searchFields={["code", "description"]}
+                    displayField="description"
+                    secondaryField="description"
+                    testIdPrefix="cpt"
+                  />
+                </div>
+
+                <Separator />
+
+                {/* Medications */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Pill className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold">Medications</h3>
+                  </div>
+                  <MedicationAutocomplete
+                    medications={medicationDatabase}
+                    selectedMedications={medications}
+                    onAdd={(med) => setMedications([...medications, med])}
+                    onRemove={(index) => setMedications(medications.filter((_, i) => i !== index))}
+                    onUpdate={(index, med) => {
+                      const updated = [...medications];
+                      updated[index] = med;
+                      setMedications(updated);
+                    }}
+                  />
+                </div>
+
+                <Separator />
 
                 {/* Assessment & Plan */}
                 <Accordion type="single" collapsible>
