@@ -575,3 +575,46 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
 
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+// External API Keys - for third-party integrations (e.g., urgent care websites)
+export const apiKeys = pgTable("api_keys", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").notNull(), // Which organization owns this key
+  name: text("name").notNull(), // Human-readable name (e.g., "Urgent Care Portal")
+  keyPrefix: varchar("key_prefix", { length: 8 }).notNull(), // First 8 chars for identification (e.g., "dw_live_")
+  keyHash: text("key_hash").notNull(), // SHA-256 hash of the full API key
+  scopes: text("scopes").array().notNull(), // Array of allowed scopes: 'patients:read', 'patients:write', 'encounters:write', etc.
+  status: text("status").notNull().default("active"), // 'active', 'revoked', 'expired'
+  rateLimitPerMinute: integer("rate_limit_per_minute").default(60), // Rate limit
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"), // Optional expiration
+  createdBy: varchar("created_by").notNull(), // User who created the key
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  revokedAt: timestamp("revoked_at"),
+  revokedBy: varchar("revoked_by"),
+});
+
+export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
+  id: true,
+  createdAt: true,
+  lastUsedAt: true,
+  revokedAt: true,
+  revokedBy: true,
+});
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
+
+// API Key Scopes - defines what each scope allows
+export const API_KEY_SCOPES = {
+  'patients:read': 'Search and view patient records',
+  'patients:write': 'Create and update patient records',
+  'encounters:read': 'View encounter records',
+  'encounters:write': 'Create and update encounters',
+  'appointments:read': 'View appointments',
+  'appointments:write': 'Create and manage appointments',
+  'notes:read': 'View clinical notes',
+  'notes:write': 'Create clinical notes',
+} as const;
+
+export type ApiKeyScope = keyof typeof API_KEY_SCOPES;

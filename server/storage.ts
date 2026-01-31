@@ -1,4 +1,5 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey } from "@shared/schema";
+import crypto from "crypto";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
 
@@ -139,6 +140,13 @@ export interface IStorage {
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
+  // External API Keys
+  createApiKey(data: { practiceId: number; name: string; scopes: string[]; createdBy: string; rateLimitPerMinute?: number; expiresAt?: Date }): Promise<{ apiKey: ApiKey; rawKey: string }>;
+  getApiKeyByHash(keyHash: string): Promise<ApiKey | undefined>;
+  getApiKeysByPractice(practiceId: number): Promise<ApiKey[]>;
+  revokeApiKey(id: number, revokedBy: string): Promise<ApiKey | undefined>;
+  updateApiKeyLastUsed(id: number): Promise<void>;
+  deleteApiKey(id: number): Promise<void>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -1047,6 +1055,63 @@ class DatabaseStorage implements IStorage {
     // Filter to only those from supervised providers
     return encounters.filter(enc => supervisedUserIds.includes(enc.providerId));
   }
+
+  // External API Key management
+  async createApiKey(data: { practiceId: number; name: string; scopes: string[]; createdBy: string; rateLimitPerMinute?: number; expiresAt?: Date }): Promise<{ apiKey: ApiKey; rawKey: string }> {
+    // Generate a secure random API key
+    const rawKey = `dw_live_${crypto.randomBytes(32).toString('hex')}`;
+    const keyPrefix = rawKey.substring(0, 8);
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    
+    const [created] = await db.insert(apiKeys).values({
+      practiceId: data.practiceId,
+      name: data.name,
+      keyPrefix,
+      keyHash,
+      scopes: data.scopes,
+      status: "active",
+      rateLimitPerMinute: data.rateLimitPerMinute || 60,
+      expiresAt: data.expiresAt || null,
+      createdBy: data.createdBy,
+    }).returning();
+    
+    return { apiKey: created, rawKey };
+  }
+
+  async getApiKeyByHash(keyHash: string): Promise<ApiKey | undefined> {
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash));
+    return key;
+  }
+
+  async getApiKeysByPractice(practiceId: number): Promise<ApiKey[]> {
+    return db.select().from(apiKeys)
+      .where(eq(apiKeys.practiceId, practiceId))
+      .orderBy(desc(apiKeys.createdAt));
+  }
+
+  async revokeApiKey(id: number, revokedBy: string): Promise<ApiKey | undefined> {
+    const [revoked] = await db.update(apiKeys).set({
+      status: "revoked",
+      revokedAt: new Date(),
+      revokedBy,
+    }).where(eq(apiKeys.id, id)).returning();
+    return revoked;
+  }
+
+  async updateApiKeyLastUsed(id: number): Promise<void> {
+    await db.update(apiKeys).set({
+      lastUsedAt: new Date(),
+    }).where(eq(apiKeys.id, id));
+  }
+
+  async deleteApiKey(id: number): Promise<void> {
+    await db.delete(apiKeys).where(eq(apiKeys.id, id));
+  }
 }
 
 export const storage = new DatabaseStorage();
+
+// Helper function to hash an API key for lookup
+export function hashApiKey(rawKey: string): string {
+  return crypto.createHash('sha256').update(rawKey).digest('hex');
+}
