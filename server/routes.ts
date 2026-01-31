@@ -1566,6 +1566,97 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // Admin: Update user settings (EMR role, access, etc.)
+  app.put("/api/admin/users/:userId/settings", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId } = req.params;
+      const { emrRole, requiresCosignature, supervisingPhysicianId, hasEmrAccess } = req.body;
+      
+      // Build settings object for upsert
+      const settingsData: any = { userId };
+      if (emrRole !== undefined) settingsData.emrRole = emrRole;
+      if (requiresCosignature !== undefined) settingsData.requiresCosignature = requiresCosignature;
+      if (supervisingPhysicianId !== undefined) settingsData.supervisingPhysicianId = supervisingPhysicianId;
+      
+      // Upsert user settings
+      const updatedSettings = await storage.upsertUserSettings(settingsData);
+      
+      // Also update subscription EMR access if provided
+      if (hasEmrAccess !== undefined) {
+        await storage.updateSubscription(userId, { hasEmrAccess });
+      }
+      
+      res.json(updatedSettings);
+    } catch (error) {
+      console.error("Error updating user settings:", error);
+      res.status(500).json({ error: "Failed to update user settings" });
+    }
+  });
+
+  // Admin: Get full user details (settings + subscription)
+  app.get("/api/admin/users/:userId/details", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId } = req.params;
+      
+      const settings = await storage.getUserSettings(userId);
+      const subscription = await storage.getSubscription(userId);
+      
+      res.json({
+        settings,
+        subscription,
+      });
+    } catch (error) {
+      console.error("Error getting user details:", error);
+      res.status(500).json({ error: "Failed to get user details" });
+    }
+  });
+
+  // Admin: Get organization members with details
+  app.get("/api/admin/organizations/:id/members", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const organizationId = parseInt(req.params.id);
+      const members = await storage.getPracticeMembers(organizationId);
+      res.json(members);
+    } catch (error) {
+      console.error("Error getting organization members:", error);
+      res.status(500).json({ error: "Failed to get members" });
+    }
+  });
+
+  // Admin: Update organization member role
+  app.put("/api/admin/organizations/:id/members/:userId", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const organizationId = parseInt(req.params.id);
+      const { userId } = req.params;
+      const { role } = req.body;
+      
+      const updated = await storage.updatePracticeMemberRole(organizationId, userId, role);
+      
+      if (!updated) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating member:", error);
+      res.status(500).json({ error: "Failed to update member" });
+    }
+  });
+
+  // Admin: Remove organization member
+  app.delete("/api/admin/organizations/:id/members/:userId", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const organizationId = parseInt(req.params.id);
+      const { userId } = req.params;
+      
+      await storage.removePracticeMember(organizationId, userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error removing member:", error);
+      res.status(500).json({ error: "Failed to remove member" });
+    }
+  });
+
   // Redeem invite code (any authenticated user)
   app.post("/api/invites/redeem", isAuthenticated, async (req: any, res: Response) => {
     try {

@@ -28,8 +28,16 @@ import {
   Shield,
   Mail,
   Send,
-  CreditCard
+  CreditCard,
+  Settings,
+  Edit,
+  UserCog,
+  Building2,
+  X
 } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { EMR_ROLES, type EmrRoleType } from "@shared/schema";
 
 interface Subscription {
   id: number;
@@ -136,6 +144,16 @@ export default function Admin() {
   const [selectedOrgForMember, setSelectedOrgForMember] = useState<number | null>(null);
   const [newMemberUserId, setNewMemberUserId] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("member");
+  
+  // User settings management state
+  const [editingUser, setEditingUser] = useState<UserInfo | null>(null);
+  const [editUserEmrRole, setEditUserEmrRole] = useState("");
+  const [editUserRequiresCosign, setEditUserRequiresCosign] = useState(false);
+  const [editUserHasEmrAccess, setEditUserHasEmrAccess] = useState(false);
+  
+  // Organization members state
+  const [viewingOrgMembers, setViewingOrgMembers] = useState<number | null>(null);
+  const [orgMembers, setOrgMembers] = useState<any[]>([]);
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -363,6 +381,75 @@ export default function Admin() {
     },
   });
 
+  const updateUserSettingsMutation = useMutation({
+    mutationFn: async ({ userId, emrRole, requiresCosignature, hasEmrAccess }: { userId: string; emrRole?: string; requiresCosignature?: boolean; hasEmrAccess?: boolean }) => {
+      const response = await apiRequest("PUT", `/api/admin/users/${userId}/settings`, { emrRole, requiresCosignature, hasEmrAccess });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setEditingUser(null);
+      toast({
+        title: "User Settings Updated",
+        description: "The user's settings have been saved",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to update settings",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: async ({ organizationId, userId }: { organizationId: number; userId: string }) => {
+      await apiRequest("DELETE", `/api/admin/organizations/${organizationId}/members/${userId}`);
+    },
+    onSuccess: () => {
+      if (viewingOrgMembers) {
+        fetchOrgMembers(viewingOrgMembers);
+      }
+      toast({
+        title: "Member Removed",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to remove member",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const fetchOrgMembers = async (orgId: number) => {
+    try {
+      const response = await apiRequest("GET", `/api/admin/organizations/${orgId}/members`);
+      const members = await response.json();
+      setOrgMembers(members);
+    } catch (error) {
+      toast({ title: "Failed to load members", variant: "destructive" });
+    }
+  };
+
+  const openEditUser = async (userInfo: UserInfo) => {
+    setEditingUser(userInfo);
+    // Fetch user details to get current settings
+    try {
+      const response = await apiRequest("GET", `/api/admin/users/${userInfo.userId}/details`);
+      const data = await response.json();
+      setEditUserEmrRole(data.settings?.emrRole || "");
+      setEditUserRequiresCosign(data.settings?.requiresCosignature || false);
+      setEditUserHasEmrAccess(data.subscription?.hasEmrAccess || false);
+    } catch {
+      setEditUserEmrRole("");
+      setEditUserRequiresCosign(false);
+      setEditUserHasEmrAccess(false);
+    }
+  };
+
   const copyCode = async (code: string) => {
     try {
       await navigator.clipboard.writeText(code);
@@ -501,17 +588,28 @@ export default function Admin() {
                             <TableCell>{userInfo.practiceName || "-"}</TableCell>
                             <TableCell>{formatDate(userInfo.createdAt)}</TableCell>
                             <TableCell>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(userInfo.userId);
-                                  toast({ title: "User ID copied" });
-                                }}
-                                data-testid={`button-copy-userid-${userInfo.id}`}
-                              >
-                                <Copy className="h-3 w-3" />
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openEditUser(userInfo)}
+                                  data-testid={`button-edit-user-${userInfo.id}`}
+                                >
+                                  <UserCog className="h-3 w-3 mr-1" />
+                                  Settings
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(userInfo.userId);
+                                    toast({ title: "User ID copied" });
+                                  }}
+                                  data-testid={`button-copy-userid-${userInfo.id}`}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -736,21 +834,34 @@ export default function Admin() {
                               ) : "-"}
                             </TableCell>
                             <TableCell>
-                              {org.hasEmrLicense ? (
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <Button
                                   size="sm"
-                                  variant="destructive"
-                                  onClick={() => revokeEmrLicenseMutation.mutate({ organizationId: org.id })}
-                                  disabled={revokeEmrLicenseMutation.isPending}
-                                  data-testid={`button-revoke-emr-${org.id}`}
+                                  variant="outline"
+                                  onClick={() => {
+                                    setViewingOrgMembers(org.id);
+                                    fetchOrgMembers(org.id);
+                                  }}
+                                  data-testid={`button-view-members-${org.id}`}
                                 >
-                                  {revokeEmrLicenseMutation.isPending ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    "Revoke"
-                                  )}
+                                  <Users className="h-3 w-3 mr-1" />
+                                  Members
                                 </Button>
-                              ) : (
+                                {org.hasEmrLicense ? (
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    onClick={() => revokeEmrLicenseMutation.mutate({ organizationId: org.id })}
+                                    disabled={revokeEmrLicenseMutation.isPending}
+                                    data-testid={`button-revoke-emr-${org.id}`}
+                                  >
+                                    {revokeEmrLicenseMutation.isPending ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      "Revoke"
+                                    )}
+                                  </Button>
+                                ) : (
                                 <div className="flex items-center gap-2">
                                   <Select
                                     value={selectedEmrLicense[org.id] || ""}
@@ -796,7 +907,8 @@ export default function Admin() {
                                     )}
                                   </Button>
                                 </div>
-                              )}
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1196,6 +1308,171 @@ export default function Admin() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Edit User Settings Dialog */}
+      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCog className="h-5 w-5 text-primary" />
+              Edit User Settings
+            </DialogTitle>
+            <DialogDescription>
+              Configure EMR role and access for {editingUser?.preferredName || `${editingUser?.firstName || ""} ${editingUser?.lastName || ""}`.trim() || editingUser?.userId}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="emr-role">EMR Role</Label>
+              <Select value={editUserEmrRole} onValueChange={setEditUserEmrRole}>
+                <SelectTrigger id="emr-role" data-testid="select-edit-emr-role">
+                  <SelectValue placeholder="Select EMR role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">No Role</SelectItem>
+                  {Object.entries(EMR_ROLES).map(([key, role]) => (
+                    <SelectItem key={key} value={key}>
+                      {role.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Physician, NP/PA, Scribe, Front Desk, etc.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+              <div className="space-y-1">
+                <Label htmlFor="emr-access" className="text-sm font-medium">
+                  EMR Access
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Allow this user to access EMR features
+                </p>
+              </div>
+              <Switch
+                id="emr-access"
+                checked={editUserHasEmrAccess}
+                onCheckedChange={setEditUserHasEmrAccess}
+                data-testid="switch-edit-emr-access"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+              <div className="space-y-1">
+                <Label htmlFor="requires-cosign" className="text-sm font-medium">
+                  Requires Co-signature
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Encounters require supervising physician co-signature
+                </p>
+              </div>
+              <Switch
+                id="requires-cosign"
+                checked={editUserRequiresCosign}
+                onCheckedChange={setEditUserRequiresCosign}
+                data-testid="switch-edit-cosign"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingUser(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (editingUser) {
+                  updateUserSettingsMutation.mutate({
+                    userId: editingUser.userId,
+                    emrRole: editUserEmrRole || undefined,
+                    requiresCosignature: editUserRequiresCosign,
+                    hasEmrAccess: editUserHasEmrAccess,
+                  });
+                }
+              }}
+              disabled={updateUserSettingsMutation.isPending}
+              data-testid="button-save-user-settings"
+            >
+              {updateUserSettingsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Settings
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Organization Members Dialog */}
+      <Dialog open={viewingOrgMembers !== null} onOpenChange={(open) => !open && setViewingOrgMembers(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Organization Members
+            </DialogTitle>
+            <DialogDescription>
+              Manage members for {organizations?.find(o => o.id === viewingOrgMembers)?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {orgMembers.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User ID</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>EMR Role</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orgMembers.map((member, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell className="font-mono text-xs max-w-[150px] truncate">
+                        {member.userId}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={member.role === "owner" ? "default" : "secondary"}>
+                          {member.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{member.emrRole || "-"}</TableCell>
+                      <TableCell>
+                        {member.role !== "owner" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              if (viewingOrgMembers) {
+                                removeMemberMutation.mutate({
+                                  organizationId: viewingOrgMembers,
+                                  userId: member.userId,
+                                });
+                              }
+                            }}
+                            disabled={removeMemberMutation.isPending}
+                          >
+                            <X className="h-3 w-3 text-destructive" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No members yet</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewingOrgMembers(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
