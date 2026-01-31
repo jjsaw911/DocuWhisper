@@ -3121,9 +3121,9 @@ PLAN: ${plan || "Not provided"}
       const userId = req.user.claims.sub;
       const encounterId = parseInt(req.params.id);
       
-      // Check if user requires co-signature (mid-level providers)
+      // Check if user requires co-signature (explicitly set in settings)
       const settings = await storage.getUserSettings(userId);
-      const requiresCosign = settings?.requiresCosignature || settings?.emrRole === 'mid_level';
+      const requiresCosign = settings?.requiresCosignature === true;
       
       // Get encounter first to set requiresCosignature flag if needed
       const existingEncounter = await storage.getEncounter(encounterId);
