@@ -430,6 +430,56 @@ export default function PatientDetailPage() {
     },
   });
 
+  const editEncounterForm = useForm<EncounterFormData>({
+    resolver: zodResolver(encounterFormSchema),
+    values: editingEncounter ? {
+      encounterType: (editingEncounter.encounterType as any) || "office_visit",
+      chiefComplaint: editingEncounter.chiefComplaint || "",
+      hpiOnset: editingEncounter.hpiOnset || "",
+      hpiLocation: editingEncounter.hpiLocation || "",
+      hpiDuration: editingEncounter.hpiDuration || "",
+      hpiCharacter: editingEncounter.hpiCharacter || "",
+      hpiAggravating: editingEncounter.hpiAggravating || "",
+      hpiRelieving: editingEncounter.hpiRelieving || "",
+      hpiTiming: editingEncounter.hpiTiming || "",
+      hpiSeverity: editingEncounter.hpiSeverity || "",
+      hpiAssociatedSymptoms: editingEncounter.hpiAssociatedSymptoms || "",
+      hpiContext: editingEncounter.hpiContext || "",
+      hpiNarrative: editingEncounter.hpiNarrative || "",
+      rosConstitutional: editingEncounter.rosConstitutional || "",
+      rosEyes: editingEncounter.rosEyes || "",
+      rosEnt: editingEncounter.rosEnt || "",
+      rosCardiovascular: editingEncounter.rosCardiovascular || "",
+      rosRespiratory: editingEncounter.rosRespiratory || "",
+      rosGastrointestinal: editingEncounter.rosGastrointestinal || "",
+      rosGenitourinary: editingEncounter.rosGenitourinary || "",
+      rosMusculoskeletal: editingEncounter.rosMusculoskeletal || "",
+      rosSkin: editingEncounter.rosSkin || "",
+      rosNeurological: editingEncounter.rosNeurological || "",
+      rosPsychiatric: editingEncounter.rosPsychiatric || "",
+      rosEndocrine: editingEncounter.rosEndocrine || "",
+      rosHematologic: editingEncounter.rosHematologic || "",
+      rosAllergic: editingEncounter.rosAllergic || "",
+      peGeneral: editingEncounter.peGeneral || "",
+      peVitals: editingEncounter.peVitals || "",
+      peHead: editingEncounter.peHead || "",
+      peEyes: editingEncounter.peEyes || "",
+      peEnt: editingEncounter.peEnt || "",
+      peNeck: editingEncounter.peNeck || "",
+      peChest: editingEncounter.peChest || "",
+      peLungs: editingEncounter.peLungs || "",
+      peHeart: editingEncounter.peHeart || "",
+      peAbdomen: editingEncounter.peAbdomen || "",
+      peBack: editingEncounter.peBack || "",
+      peExtremities: editingEncounter.peExtremities || "",
+      peSkin: editingEncounter.peSkin || "",
+      peNeurological: editingEncounter.peNeurological || "",
+      pePsychiatric: editingEncounter.pePsychiatric || "",
+      assessmentSummary: editingEncounter.assessmentSummary || "",
+      planSummary: editingEncounter.planSummary || "",
+    } : undefined,
+  });
+
   const createEncounterMutation = useMutation({
     mutationFn: async (data: EncounterFormData) => {
       const response = await apiRequest("POST", `/api/emr/patients/${patientId}/encounters`, data);
@@ -1379,7 +1429,7 @@ export default function PatientDetailPage() {
 
       {/* New Encounter Dialog */}
       <Dialog open={showEncounterDialog} onOpenChange={setShowEncounterDialog}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <Stethoscope className="h-5 w-5 text-primary" />
@@ -1389,7 +1439,7 @@ export default function PatientDetailPage() {
               Document HPI, Review of Systems, and Physical Examination
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 pr-4">
+          <ScrollArea className="flex-1 min-h-0 pr-4">
             <Form {...encounterForm}>
               <form className="space-y-6 pb-4">
                 {/* Encounter Type */}
@@ -2040,7 +2090,7 @@ export default function PatientDetailPage() {
 
       {/* View Encounter Dialog */}
       <Dialog open={!!viewingEncounter} onOpenChange={(open) => !open && setViewingEncounter(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <Stethoscope className="h-5 w-5 text-primary" />
@@ -2053,7 +2103,7 @@ export default function PatientDetailPage() {
               <Badge variant="outline">{viewingEncounter?.encounterType?.replace("_", " ") || "Office Visit"}</Badge>
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 pr-4">
+          <ScrollArea className="flex-1 min-h-0 pr-4">
             {viewingEncounter && (
               <div className="space-y-6 pb-4">
                 {/* Chief Complaint */}
@@ -2305,12 +2355,25 @@ export default function PatientDetailPage() {
                   </AlertDialogContent>
                 </AlertDialog>
                 <Button 
-                  variant="outline" 
+                  variant="outline"
+                  onClick={() => {
+                    if (viewingEncounter) {
+                      setEditingEncounter(viewingEncounter);
+                      setViewingEncounter(null);
+                    }
+                  }}
+                  data-testid="button-open-edit-encounter"
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Open to Edit
+                </Button>
+                <Button 
                   onClick={() => viewingEncounter && signEncounterMutation.mutate(viewingEncounter.id)}
                   disabled={signEncounterMutation.isPending}
+                  data-testid="button-sign-encounter"
                 >
                   {signEncounterMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  <Check className="h-4 w-4 mr-2" />
+                  <PenLine className="h-4 w-4 mr-2" />
                   Sign & Finalize
                 </Button>
               </>
@@ -2333,7 +2396,7 @@ export default function PatientDetailPage() {
                 data-testid="button-cosign-encounter"
               >
                 {cosignEncounterMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                <Check className="h-4 w-4 mr-2" />
+                <PenLine className="h-4 w-4 mr-2" />
                 Co-sign & Finalize
               </Button>
             )}
@@ -2345,6 +2408,216 @@ export default function PatientDetailPage() {
             )}
             <Button variant="outline" onClick={() => setViewingEncounter(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Encounter Dialog */}
+      <Dialog open={!!editingEncounter} onOpenChange={(open) => !open && setEditingEncounter(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <Edit className="h-5 w-5 text-primary" />
+              Edit Clinical Encounter - {editingEncounter && formatDate(editingEncounter.encounterDate)}
+            </DialogTitle>
+            <DialogDescription>
+              Update encounter documentation
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1 min-h-0 pr-4">
+            <Form {...editEncounterForm}>
+              <form className="space-y-6 pb-4">
+                {/* Encounter Type */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold">Encounter Type</h3>
+                  </div>
+                  <FormField
+                    control={editEncounterForm.control}
+                    name="encounterType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger data-testid="edit-select-encounter-type">
+                              <SelectValue placeholder="Select encounter type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="office_visit">Office Visit</SelectItem>
+                            <SelectItem value="telehealth">Telehealth</SelectItem>
+                            <SelectItem value="phone">Phone Consultation</SelectItem>
+                            <SelectItem value="follow_up">Follow Up</SelectItem>
+                            <SelectItem value="urgent">Urgent Care</SelectItem>
+                            <SelectItem value="annual_physical">Annual Physical</SelectItem>
+                            <SelectItem value="procedure">Procedure</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <Separator />
+
+                {/* Chief Complaint */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold">Chief Complaint</h3>
+                  </div>
+                  <FormField
+                    control={editEncounterForm.control}
+                    name="chiefComplaint"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <Textarea {...field} placeholder="Patient's primary complaint..." data-testid="edit-input-chief-complaint" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <Separator />
+
+                {/* HPI */}
+                <Accordion type="single" collapsible defaultValue="hpi" className="w-full">
+                  <AccordionItem value="hpi">
+                    <AccordionTrigger className="hover:no-underline">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-primary" />
+                        <span className="font-semibold">History of Present Illness (HPI)</span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-4">
+                      <FormField
+                        control={editEncounterForm.control}
+                        name="hpiNarrative"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Narrative</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} placeholder="Free text description of the patient's history..." data-testid="edit-input-hpi-narrative" className="min-h-[100px]" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={editEncounterForm.control}
+                          name="hpiOnset"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Onset</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="When did it start?" data-testid="edit-input-hpi-onset" />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={editEncounterForm.control}
+                          name="hpiLocation"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Location</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Where is the symptom?" data-testid="edit-input-hpi-location" />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={editEncounterForm.control}
+                          name="hpiDuration"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Duration</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="How long does it last?" data-testid="edit-input-hpi-duration" />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={editEncounterForm.control}
+                          name="hpiSeverity"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Severity</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="How severe? (1-10)" data-testid="edit-input-hpi-severity" />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+
+                <Separator />
+
+                {/* Assessment & Plan */}
+                <Accordion type="single" collapsible defaultValue="assessment" className="w-full">
+                  <AccordionItem value="assessment">
+                    <AccordionTrigger className="hover:no-underline">
+                      <div className="flex items-center gap-2">
+                        <Brain className="h-4 w-4 text-primary" />
+                        <span className="font-semibold">Assessment & Plan</span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-4">
+                      <FormField
+                        control={editEncounterForm.control}
+                        name="assessmentSummary"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Assessment Summary</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} placeholder="Clinical impression, diagnosis..." data-testid="edit-input-assessment" className="min-h-[100px]" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={editEncounterForm.control}
+                        name="planSummary"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Plan Summary</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} placeholder="Treatment plan, follow-up..." data-testid="edit-input-plan" className="min-h-[100px]" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              </form>
+            </Form>
+          </ScrollArea>
+          <DialogFooter className="flex-shrink-0 pt-4 border-t">
+            <Button variant="outline" onClick={() => setEditingEncounter(null)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={editEncounterForm.handleSubmit((data) => {
+                if (editingEncounter) {
+                  updateEncounterMutation.mutate({ id: editingEncounter.id, data });
+                }
+              })}
+              disabled={updateEncounterMutation.isPending}
+              data-testid="button-save-edit-encounter"
+            >
+              {updateEncounterMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>
