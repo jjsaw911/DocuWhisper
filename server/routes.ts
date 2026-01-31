@@ -4,11 +4,12 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
-import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema } from "@shared/schema";
+import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
 import { Resend } from "resend";
+import externalApiRoutes from "./externalApiRoutes";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
 
@@ -213,6 +214,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  
+  // Register external API routes (for third-party integrations like urgent care)
+  app.use("/api/external/v1", externalApiRoutes);
   
   app.get("/api/notes", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -1389,6 +1393,111 @@ PLAN: ${plan || "Not provided"}
     } catch (error) {
       console.error("Error deleting invite:", error);
       res.status(500).json({ error: "Failed to delete invite" });
+    }
+  });
+
+  // ============= API Key Management (for external integrations) =============
+  
+  // Get available API key scopes
+  app.get("/api/admin/api-keys/scopes", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    res.json(API_KEY_SCOPES);
+  });
+  
+  // Get API keys for an organization
+  app.get("/api/admin/organizations/:id/api-keys", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const apiKeys = await storage.getApiKeysByPractice(practiceId);
+      // Don't return the key hash for security
+      res.json(apiKeys.map(key => ({
+        id: key.id,
+        name: key.name,
+        keyPrefix: key.keyPrefix,
+        scopes: key.scopes,
+        status: key.status,
+        rateLimitPerMinute: key.rateLimitPerMinute,
+        lastUsedAt: key.lastUsedAt,
+        expiresAt: key.expiresAt,
+        createdAt: key.createdAt,
+        createdBy: key.createdBy,
+      })));
+    } catch (error) {
+      console.error("Error fetching API keys:", error);
+      res.status(500).json({ error: "Failed to fetch API keys" });
+    }
+  });
+  
+  // Create API key for an organization
+  app.post("/api/admin/organizations/:id/api-keys", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const { name, scopes, rateLimitPerMinute, expiresAt } = req.body;
+      
+      if (!name || !scopes || !Array.isArray(scopes) || scopes.length === 0) {
+        return res.status(400).json({ error: "name and scopes are required" });
+      }
+      
+      const validScopes = Object.keys(API_KEY_SCOPES);
+      for (const scope of scopes) {
+        if (!validScopes.includes(scope)) {
+          return res.status(400).json({ error: `Invalid scope: ${scope}` });
+        }
+      }
+      
+      const { apiKey, rawKey } = await storage.createApiKey({
+        practiceId,
+        name,
+        scopes,
+        rateLimitPerMinute: rateLimitPerMinute || 60,
+        expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+        createdBy: req.user.claims.sub,
+      });
+      
+      // Return the raw key ONLY once - it can never be retrieved again
+      res.status(201).json({
+        id: apiKey.id,
+        name: apiKey.name,
+        keyPrefix: apiKey.keyPrefix,
+        scopes: apiKey.scopes,
+        status: apiKey.status,
+        rateLimitPerMinute: apiKey.rateLimitPerMinute,
+        expiresAt: apiKey.expiresAt,
+        createdAt: apiKey.createdAt,
+        // Only returned on creation - save it securely!
+        apiKey: rawKey,
+      });
+    } catch (error) {
+      console.error("Error creating API key:", error);
+      res.status(500).json({ error: "Failed to create API key" });
+    }
+  });
+  
+  // Revoke API key
+  app.post("/api/admin/api-keys/:id/revoke", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const keyId = parseInt(req.params.id);
+      const revoked = await storage.revokeApiKey(keyId, req.user.claims.sub);
+      
+      if (!revoked) {
+        return res.status(404).json({ error: "API key not found" });
+      }
+      
+      res.json({ message: "API key revoked successfully" });
+    } catch (error) {
+      console.error("Error revoking API key:", error);
+      res.status(500).json({ error: "Failed to revoke API key" });
+    }
+  });
+  
+  // Delete API key
+  app.delete("/api/admin/api-keys/:id", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const keyId = parseInt(req.params.id);
+      await storage.deleteApiKey(keyId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting API key:", error);
+      res.status(500).json({ error: "Failed to delete API key" });
     }
   });
 
