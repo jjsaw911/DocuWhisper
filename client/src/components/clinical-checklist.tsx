@@ -181,9 +181,6 @@ export function ClinicalChecklist({
                       variant={isNormal ? "default" : "outline"}
                       size="sm"
                       onClick={() => markSectionNormal(sectionKey)}
-                      className={cn(
-                        isNormal && "bg-green-600 hover:bg-green-700"
-                      )}
                       data-testid={`${testIdPrefix}-${sectionKey}-normal`}
                     >
                       <Check className="h-3 w-3 mr-1" />
@@ -214,10 +211,10 @@ export function ClinicalChecklist({
                           <label
                             key={option.id}
                             className={cn(
-                              "flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors",
+                              "flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors hover-elevate overflow-visible",
                               isChecked
                                 ? "bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800"
-                                : "hover:bg-muted/50 border border-transparent"
+                                : "border border-transparent"
                             )}
                             data-testid={`${testIdPrefix}-${sectionKey}-${option.id}`}
                           >

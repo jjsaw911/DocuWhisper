@@ -167,7 +167,7 @@ export function ClinicalAutocomplete<T extends AutocompleteItem>({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-4 w-4 hover:bg-destructive/20"
+                className="h-4 w-4"
                 onClick={() => onRemove(index)}
                 data-testid={`${testIdPrefix}-remove-${index}`}
               >
@@ -218,8 +218,8 @@ export function ClinicalAutocomplete<T extends AutocompleteItem>({
                   <div
                     key={`${category}-${idx}`}
                     className={cn(
-                      "px-3 py-2 cursor-pointer flex items-center justify-between gap-2",
-                      isHighlighted && "bg-accent",
+                      "px-3 py-2 cursor-pointer flex items-center justify-between gap-2 hover-elevate overflow-visible",
+                      isHighlighted && "bg-muted",
                       isSelected && "opacity-50"
                     )}
                     onClick={() => !isSelected && handleSelect(item)}
@@ -231,7 +231,7 @@ export function ClinicalAutocomplete<T extends AutocompleteItem>({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           {item.code && (
-                            <span className="font-mono text-sm font-medium text-primary">
+                            <span className="font-mono text-sm font-medium">
                               {item.code}
                             </span>
                           )}

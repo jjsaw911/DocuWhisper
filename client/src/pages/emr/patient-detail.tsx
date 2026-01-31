@@ -2120,7 +2120,7 @@ export default function PatientDetailPage() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-4 w-4 hover:bg-destructive/20 ml-1"
+                          className="h-4 w-4 ml-1"
                           onClick={(e) => {
                             e.stopPropagation();
                             setDiagnosisCodes(diagnosisCodes.filter((_, i) => i !== index));
