@@ -767,14 +767,28 @@ export default function Session() {
       if (mediaRecorderRef.current) {
         const recorder = mediaRecorderRef.current;
         
-        // Set up onstop handler BEFORE calling stop
-        recorder.onstop = () => {
-          // Give time for final ondataavailable to complete
+        // IMPORTANT: Don't overwrite onstop - the original handler processes the final segment
+        // Instead, wrap it to also resolve our promise after the original handler runs
+        const originalOnStop = recorder.onstop;
+        recorder.onstop = (event) => {
+          // Let original handler process the segment first
+          if (originalOnStop) {
+            originalOnStop.call(recorder, event);
+          }
+          
+          // Give time for final segment processing to complete
           setTimeout(() => {
             const blob = new Blob(chunksRef.current, { type: "audio/webm" });
             console.log(`[Stop] Recording stopped. Total chunks: ${chunksRef.current.length}, Blob size: ${blob.size}`);
+            
+            // Clean up stream AFTER processing is done
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach((track) => track.stop());
+              streamRef.current = null;
+            }
+            
             resolve(blob);
-          }, 200);
+          }, 300);
         };
         
         // If recording, stop the current segment recorder
@@ -785,17 +799,16 @@ export default function Session() {
           console.log("[Stop] Stopping from paused state...");
           recorder.stop();
         } else {
-          // Already inactive
+          // Already inactive - clean up and resolve
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+            streamRef.current = null;
+          }
           const blob = new Blob(chunksRef.current, { type: "audio/webm" });
           resolve(blob);
         }
       } else {
         resolve(new Blob([], { type: "audio/webm" }));
-      }
-
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
       }
 
       if (timerRef.current) {
