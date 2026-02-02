@@ -588,7 +588,16 @@ export default function Admin() {
   const openEditUser = async (userInfo: UserInfo) => {
     setEditingUser(userInfo);
     setSelectedTrialGrant("");
-    // Fetch user details to get current settings
+    
+    // Set initial values from userInfo we already have
+    setEditUserFirstName(userInfo.firstName || "");
+    setEditUserLastName(userInfo.lastName || "");
+    setEditUserPreferredName(userInfo.preferredName || "");
+    setEditUserSpecialty(userInfo.specialty || "");
+    setEditUserPracticeName(userInfo.practiceName || "");
+    setEditUserSubscription(userInfo.subscription || null);
+    
+    // Fetch additional details (EMR settings, credentials, etc.)
     try {
       const response = await apiRequest("GET", `/api/admin/users/${userInfo.userId}/details`);
       const data = await response.json();
@@ -596,25 +605,19 @@ export default function Admin() {
       setEditUserEmrRole(data.settings?.emrRole || "");
       setEditUserRequiresCosign(data.settings?.requiresCosignature || false);
       setEditUserHasEmrAccess(data.subscription?.hasEmrAccess || false);
-      setEditUserSubscription(data.subscription || null);
-      // Profile fields
-      setEditUserFirstName(data.settings?.firstName || "");
-      setEditUserLastName(data.settings?.lastName || "");
-      setEditUserPreferredName(data.settings?.preferredName || "");
-      setEditUserSpecialty(data.settings?.specialty || "");
-      setEditUserPracticeName(data.settings?.practiceName || "");
       setEditUserCredentials(data.settings?.credentials || "");
+      // Update with fetched data if available (supplements initial data)
+      if (data.settings?.firstName) setEditUserFirstName(data.settings.firstName);
+      if (data.settings?.lastName) setEditUserLastName(data.settings.lastName);
+      if (data.settings?.preferredName) setEditUserPreferredName(data.settings.preferredName);
+      if (data.settings?.specialty) setEditUserSpecialty(data.settings.specialty);
+      if (data.settings?.practiceName) setEditUserPracticeName(data.settings.practiceName);
+      if (data.subscription) setEditUserSubscription(data.subscription);
     } catch {
       setEditUserSettings(null);
       setEditUserEmrRole("");
       setEditUserRequiresCosign(false);
       setEditUserHasEmrAccess(false);
-      setEditUserSubscription(null);
-      setEditUserFirstName("");
-      setEditUserLastName("");
-      setEditUserPreferredName("");
-      setEditUserSpecialty("");
-      setEditUserPracticeName("");
       setEditUserCredentials("");
     }
   };
