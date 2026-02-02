@@ -1487,7 +1487,7 @@ Treatment plan..."
               data-testid="button-toggle-transcript"
             >
               <AudioLines className="mr-2 h-4 w-4" />
-              Original Transcript
+              Transcript
               {showTranscript ? (
                 <ChevronUp className="ml-2 h-4 w-4" />
               ) : (
