@@ -545,9 +545,26 @@ export default function Session() {
       mediaRecorder.onerror = (event) => {
         console.error("[MediaRecorder] Error:", event);
       };
-
-      mediaRecorder.start(20000); // 20-second chunks for faster feedback
-      console.log("[MediaRecorder] Started with 20-second chunks");
+      
+      // Use continuous recording mode and manually request data every 20 seconds
+      // This is more reliable than timeslice mode in some browsers
+      mediaRecorder.start();
+      console.log("[MediaRecorder] Started in continuous mode");
+      
+      // Request data every 20 seconds to create chunks
+      const chunkRequestInterval = setInterval(() => {
+        if (mediaRecorder.state === "recording") {
+          console.log("[MediaRecorder] Requesting data chunk...");
+          mediaRecorder.requestData();
+        } else if (mediaRecorder.state === "inactive") {
+          console.log("[MediaRecorder] Recorder inactive, clearing interval");
+          clearInterval(chunkRequestInterval);
+        }
+      }, 20000);
+      
+      // Store interval for cleanup
+      (mediaRecorderRef.current as any)._chunkInterval = chunkRequestInterval;
+      
       setRecordingState("recording");
       setDuration(0);
       addTranscriptEntry("Listening... transcript will appear as you speak");
@@ -615,6 +632,12 @@ export default function Session() {
     return new Promise<Blob>((resolve) => {
       if (mediaRecorderRef.current) {
         const recorder = mediaRecorderRef.current;
+        
+        // Clean up the chunk request interval
+        if ((recorder as any)._chunkInterval) {
+          clearInterval((recorder as any)._chunkInterval);
+          (recorder as any)._chunkInterval = null;
+        }
         
         // Set up onstop handler BEFORE calling stop
         recorder.onstop = () => {
