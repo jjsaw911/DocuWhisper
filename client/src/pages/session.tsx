@@ -88,6 +88,10 @@ export default function Session() {
     patientName: string | null;
     patientContext: string | null;
   } | null>(null);
+  
+  // Refs to avoid stale closures in async callbacks
+  const isResumeModeRef = useRef(!!resumeNoteId);
+  const resumeNoteDataRef = useRef<typeof resumeNoteData>(null);
 
   const [patientName, setPatientName] = useState("");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -185,13 +189,18 @@ export default function Session() {
         try {
           const response = await apiRequest("GET", `/api/notes/${resumeNoteId}`);
           const note = await response.json();
-          setResumeNoteData({
+          const noteData = {
             id: note.id,
             title: note.title,
             transcript: note.transcript || "",
             patientName: note.patientName,
             patientContext: note.patientContext,
-          });
+          };
+          setResumeNoteData(noteData);
+          // Update refs for async callbacks
+          resumeNoteDataRef.current = noteData;
+          isResumeModeRef.current = true;
+          
           // Pre-populate fields
           if (note.patientName) setPatientName(note.patientName);
           if (note.patientContext) setContextText(note.patientContext);
@@ -214,6 +223,7 @@ export default function Session() {
             variant: "destructive",
           });
           setIsResumeMode(false);
+          isResumeModeRef.current = false;
         }
       };
       fetchNote();
@@ -867,9 +877,14 @@ export default function Session() {
 
       let savedNoteId: number;
 
-      if (isResumeMode && resumeNoteData) {
+      // Use refs to avoid stale closure issues
+      const currentIsResumeMode = isResumeModeRef.current;
+      const currentResumeNoteData = resumeNoteDataRef.current;
+      console.log("[Save] isResumeMode (ref):", currentIsResumeMode, "resumeNoteData (ref):", currentResumeNoteData);
+      
+      if (currentIsResumeMode && currentResumeNoteData) {
         // Update existing note (resume mode)
-        const updateResponse = await apiRequest("PATCH", `/api/notes/${resumeNoteData.id}`, {
+        const updateResponse = await apiRequest("PATCH", `/api/notes/${currentResumeNoteData.id}`, {
           subjective: soapData.subjective || "",
           objective: soapData.objective || "",
           assessment: soapData.assessment || "",
@@ -878,7 +893,7 @@ export default function Session() {
           patientContext: contextText || null,
         });
         await updateResponse.json();
-        savedNoteId = resumeNoteData.id;
+        savedNoteId = currentResumeNoteData.id;
         
         toast({
           title: "Session updated",
