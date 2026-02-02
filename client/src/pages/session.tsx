@@ -507,8 +507,6 @@ export default function Session() {
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
       pendingChunksRef.current = [];
       nextChunkIdRef.current = 0;
@@ -519,37 +517,90 @@ export default function Session() {
       partialTextRef.current = "";
       recentLinesRef.current = [];
       lastCumulativeTranscriptRef.current = "";
-
-      mediaRecorder.ondataavailable = (e) => {
-        console.log(`[MediaRecorder] ondataavailable fired, size: ${e.data.size}, recorder state: ${mediaRecorder.state}`);
-        if (e.data.size > 0) {
-          // Store the raw fragment for final blob assembly
-          chunksRef.current.push(e.data);
+      
+      // SEGMENTED RECORDING APPROACH:
+      // Instead of relying on timeslice mode (which has browser quirks),
+      // we use a segmented approach where we create independent recorder sessions
+      // every 20 seconds. Each segment is a complete, valid audio file.
+      
+      let segmentChunks: Blob[] = [];
+      let segmentInterval: NodeJS.Timeout | null = null;
+      let currentRecorder: MediaRecorder | null = null;
+      
+      const createSegmentRecorder = () => {
+        const recorder = new MediaRecorder(stream);
+        
+        recorder.ondataavailable = (e) => {
+          console.log(`[Segment] ondataavailable, size: ${e.data.size}`);
+          if (e.data.size > 0) {
+            segmentChunks.push(e.data);
+          }
+        };
+        
+        recorder.onstop = () => {
+          console.log(`[Segment] Recorder stopped, chunks collected: ${segmentChunks.length}`);
           
-          // Create INDEPENDENT chunk blob (just this segment, not cumulative)
-          // This prevents memory issues and AI confusion on long recordings
-          const independentBlob = new Blob([e.data], { type: mediaRecorder.mimeType });
+          if (segmentChunks.length > 0) {
+            // Create complete audio blob from this segment
+            const segmentBlob = new Blob(segmentChunks, { type: recorder.mimeType || 'audio/webm' });
+            
+            // Store for final assembly
+            chunksRef.current.push(segmentBlob);
+            
+            // Queue for transcription
+            const chunkId = nextChunkIdRef.current++;
+            const timestampSec = chunkId * chunkIntervalSec;
+            const chunkItem: ChunkItem = { 
+              id: chunkId, 
+              blob: segmentBlob, 
+              processed: false, 
+              timestampSec 
+            };
+            pendingChunksRef.current.push(chunkItem);
+            console.log(`[Chunk ${chunkId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes)`);
+            
+            // Process transcription
+            processNextChunk();
+          }
           
-          // Create unique chunk item with just this audio segment
-          const chunkId = nextChunkIdRef.current++;
-          const timestampSec = chunkId * chunkIntervalSec;
-          const chunkItem: ChunkItem = { id: chunkId, blob: independentBlob, processed: false, timestampSec };
-          pendingChunksRef.current.push(chunkItem);
-          console.log(`[Chunk ${chunkId}] Queued at ${formatTime(timestampSec)} (${independentBlob.size} bytes, independent segment)`);
-          
-          processNextChunk();
+          // Reset for next segment
+          segmentChunks = [];
+        };
+        
+        recorder.onerror = (event) => {
+          console.error("[Segment] Recorder error:", event);
+        };
+        
+        return recorder;
+      };
+      
+      // Function to cycle to next segment (stop current, start new)
+      const cycleSegment = () => {
+        console.log("[Segment] Cycling to next segment...");
+        
+        if (currentRecorder && currentRecorder.state === "recording") {
+          // Stop current recorder - this triggers onstop handler
+          currentRecorder.stop();
         }
+        
+        // Create and start new recorder
+        currentRecorder = createSegmentRecorder();
+        currentRecorder.start();
+        mediaRecorderRef.current = currentRecorder;
+        console.log("[Segment] New segment started, state:", currentRecorder.state);
       };
       
-      // Debug: log when recorder unexpectedly stops
-      mediaRecorder.onerror = (event) => {
-        console.error("[MediaRecorder] Error:", event);
-      };
+      // Start first segment
+      currentRecorder = createSegmentRecorder();
+      currentRecorder.start();
+      mediaRecorderRef.current = currentRecorder;
+      console.log("[Segment] First segment started");
       
-      // Use timeslice mode - each chunk is a complete, valid audio file
-      // The 20000ms timeslice creates self-contained chunks with proper headers
-      mediaRecorder.start(20000);
-      console.log("[MediaRecorder] Started with 20-second timeslice");
+      // Cycle to new segment every 20 seconds
+      segmentInterval = setInterval(cycleSegment, chunkIntervalSec * 1000);
+      
+      // Store interval ref for cleanup
+      (streamRef.current as any)._segmentInterval = segmentInterval;
       
       setRecordingState("recording");
       setDuration(0);
@@ -574,35 +625,97 @@ export default function Session() {
     if (mediaRecorderRef.current && recordingState === "recording") {
       const recorder = mediaRecorderRef.current;
       
-      // Request any pending audio data before pausing
-      // This triggers ondataavailable with current chunk so it gets transcribed
-      console.log("[Pause] Requesting data before pause...");
-      recorder.requestData();
+      // Stop the segment interval when pausing
+      if (streamRef.current && (streamRef.current as any)._segmentInterval) {
+        clearInterval((streamRef.current as any)._segmentInterval);
+        (streamRef.current as any)._segmentInterval = null;
+        console.log("[Pause] Segment interval paused");
+      }
       
-      // Give time for ondataavailable to fire, then pause
-      setTimeout(() => {
-        if (recorder.state === "recording") {
-          recorder.pause();
-        }
-        setRecordingState("paused");
-        addTranscriptEntry("Transcript paused - processing audio...");
-        
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        if (animationRef.current) {
-          cancelAnimationFrame(animationRef.current);
-          animationRef.current = null;
-        }
-        setAudioLevel([0, 0, 0, 0, 0]);
-      }, 100);
+      // Stop current recorder to capture any pending audio
+      console.log("[Pause] Stopping current segment before pause...");
+      if (recorder.state === "recording") {
+        recorder.stop();
+      }
+      
+      setRecordingState("paused");
+      addTranscriptEntry("Transcript paused - processing audio...");
+      
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      setAudioLevel([0, 0, 0, 0, 0]);
     }
   };
 
   const resumeRecording = () => {
-    if (mediaRecorderRef.current && recordingState === "paused") {
-      mediaRecorderRef.current.resume();
+    if (streamRef.current && recordingState === "paused") {
+      // Create a new segment recorder to resume
+      const stream = streamRef.current;
+      
+      let segmentChunks: Blob[] = [];
+      
+      const createSegmentRecorder = () => {
+        const recorder = new MediaRecorder(stream);
+        
+        recorder.ondataavailable = (e) => {
+          console.log(`[Segment Resume] ondataavailable, size: ${e.data.size}`);
+          if (e.data.size > 0) {
+            segmentChunks.push(e.data);
+          }
+        };
+        
+        recorder.onstop = () => {
+          console.log(`[Segment Resume] Recorder stopped, chunks: ${segmentChunks.length}`);
+          
+          if (segmentChunks.length > 0) {
+            const segmentBlob = new Blob(segmentChunks, { type: recorder.mimeType || 'audio/webm' });
+            chunksRef.current.push(segmentBlob);
+            
+            const chunkId = nextChunkIdRef.current++;
+            const timestampSec = chunkId * chunkIntervalSec;
+            const chunkItem: ChunkItem = { 
+              id: chunkId, 
+              blob: segmentBlob, 
+              processed: false, 
+              timestampSec 
+            };
+            pendingChunksRef.current.push(chunkItem);
+            console.log(`[Chunk ${chunkId}] Queued resumed segment (${segmentBlob.size} bytes)`);
+            processNextChunk();
+          }
+          segmentChunks = [];
+        };
+        
+        return recorder;
+      };
+      
+      let currentRecorder = createSegmentRecorder();
+      
+      const cycleSegment = () => {
+        console.log("[Segment Resume] Cycling segment...");
+        if (currentRecorder && currentRecorder.state === "recording") {
+          currentRecorder.stop();
+        }
+        currentRecorder = createSegmentRecorder();
+        currentRecorder.start();
+        mediaRecorderRef.current = currentRecorder;
+      };
+      
+      // Start new segment
+      currentRecorder.start();
+      mediaRecorderRef.current = currentRecorder;
+      console.log("[Resume] New segment started");
+      
+      // Restart segment cycling
+      const segmentInterval = setInterval(cycleSegment, chunkIntervalSec * 1000);
+      (streamRef.current as any)._segmentInterval = segmentInterval;
+      
       setRecordingState("recording");
       addTranscriptEntry("Transcript resumed");
       
@@ -616,6 +729,13 @@ export default function Session() {
 
   const stopRecording = () => {
     return new Promise<Blob>((resolve) => {
+      // Clean up segment interval
+      if (streamRef.current && (streamRef.current as any)._segmentInterval) {
+        clearInterval((streamRef.current as any)._segmentInterval);
+        (streamRef.current as any)._segmentInterval = null;
+        console.log("[Stop] Segment interval cleared");
+      }
+      
       if (mediaRecorderRef.current) {
         const recorder = mediaRecorderRef.current;
         
@@ -629,13 +749,11 @@ export default function Session() {
           }, 200);
         };
         
-        // If recording, request final data chunk before stopping
+        // If recording, stop the current segment recorder
         if (recorder.state === "recording") {
-          console.log("[Stop] Requesting final data chunk...");
-          // The ondataavailable will fire when stop() is called, capturing remaining audio
+          console.log("[Stop] Stopping final segment...");
           recorder.stop();
         } else if (recorder.state === "paused") {
-          // If paused, just stop - no new data to capture
           console.log("[Stop] Stopping from paused state...");
           recorder.stop();
         } else {
