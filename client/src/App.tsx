@@ -45,6 +45,7 @@ function AuthenticatedLayout() {
           <main className="flex-1 overflow-hidden">
             <Switch>
               <Route path="/" component={Session} />
+              <Route path="/session" component={Session} />
               <Route path="/session/new" component={Session} />
               <Route path="/session/:id" component={Session} />
               <Route path="/notes" component={Notes} />
