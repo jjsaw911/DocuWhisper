@@ -1356,18 +1356,20 @@ Plan: ${soapNote.plan}
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className={`h-8 w-8 transition-colors ${
-                    recordingState === "recording" 
-                      ? audioLevel.some(l => l > 0.5) 
-                        ? "text-green-500" 
-                        : audioLevel.some(l => l > 0.2) 
-                          ? "text-primary" 
-                          : "text-muted-foreground"
-                      : "text-muted-foreground"
-                  }`} 
+                  className="text-muted-foreground overflow-visible" 
                   data-testid="button-mic-settings"
                 >
-                  <Mic className="h-4 w-4" />
+                  <Mic 
+                    className="h-4 w-4 transition-transform duration-75"
+                    style={{
+                      transform: recordingState === "recording" 
+                        ? `scale(${1 + Math.max(...audioLevel) * 0.6})` 
+                        : "scale(1)",
+                      color: recordingState === "recording" && Math.max(...audioLevel) > 0.1 
+                        ? "hsl(var(--primary))" 
+                        : undefined
+                    }}
+                  />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
