@@ -591,18 +591,20 @@ export default function Admin() {
     }
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return "N/A";
-    return new Date(dateString).toLocaleDateString();
+  const formatDate = (dateValue?: string | Date | null) => {
+    if (!dateValue) return "N/A";
+    const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
+    return date.toLocaleDateString();
   };
 
   const getMembershipLabel = (type: string) => {
     return MEMBERSHIP_TYPES.find(t => t.value === type)?.label || type;
   };
 
-  const isLifetime = (periodEnd?: string) => {
+  const isLifetime = (periodEnd?: string | Date | null) => {
     if (!periodEnd) return false;
-    return new Date(periodEnd).getFullYear() > new Date().getFullYear() + 50;
+    const date = typeof periodEnd === 'string' ? new Date(periodEnd) : periodEnd;
+    return date.getFullYear() > new Date().getFullYear() + 50;
   };
 
   if (adminLoading) {
