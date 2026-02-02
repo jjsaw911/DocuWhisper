@@ -92,6 +92,7 @@ interface UserInfo {
   practiceName?: string;
   language?: string;
   createdAt: string;
+  subscription?: Subscription | null;
 }
 
 interface ApiKey {
@@ -139,10 +140,19 @@ const EXTENSION_TYPES = [
   { value: "days_7", label: "+7 Days" },
   { value: "days_14", label: "+14 Days" },
   { value: "days_30", label: "+30 Days" },
+  { value: "days_60", label: "+60 Days" },
+  { value: "days_90", label: "+90 Days" },
   { value: "months_3", label: "+3 Months" },
   { value: "months_6", label: "+6 Months" },
   { value: "months_12", label: "+1 Year" },
   { value: "lifetime", label: "Lifetime" },
+];
+
+const TRIAL_GRANT_TYPES = [
+  { value: "days_30", label: "30-Day Trial" },
+  { value: "days_60", label: "60-Day Trial" },
+  { value: "days_90", label: "90-Day Trial" },
+  { value: "lifetime", label: "Lifetime Access" },
 ];
 
 export default function Admin() {
@@ -170,6 +180,8 @@ export default function Admin() {
   const [editUserEmrRole, setEditUserEmrRole] = useState("");
   const [editUserRequiresCosign, setEditUserRequiresCosign] = useState(false);
   const [editUserHasEmrAccess, setEditUserHasEmrAccess] = useState(false);
+  const [editUserSubscription, setEditUserSubscription] = useState<Subscription | null>(null);
+  const [selectedTrialGrant, setSelectedTrialGrant] = useState("");
   
   // Organization members state
   const [viewingOrgMembers, setViewingOrgMembers] = useState<number | null>(null);
@@ -548,6 +560,7 @@ export default function Admin() {
 
   const openEditUser = async (userInfo: UserInfo) => {
     setEditingUser(userInfo);
+    setSelectedTrialGrant("");
     // Fetch user details to get current settings
     try {
       const response = await apiRequest("GET", `/api/admin/users/${userInfo.userId}/details`);
@@ -555,10 +568,12 @@ export default function Admin() {
       setEditUserEmrRole(data.settings?.emrRole || "");
       setEditUserRequiresCosign(data.settings?.requiresCosignature || false);
       setEditUserHasEmrAccess(data.subscription?.hasEmrAccess || false);
+      setEditUserSubscription(data.subscription || null);
     } catch {
       setEditUserEmrRole("");
       setEditUserRequiresCosign(false);
       setEditUserHasEmrAccess(false);
+      setEditUserSubscription(null);
     }
   };
 
@@ -685,8 +700,8 @@ export default function Admin() {
                         <TableRow>
                           <TableHead>User ID</TableHead>
                           <TableHead>Name</TableHead>
+                          <TableHead>Status</TableHead>
                           <TableHead>Specialty</TableHead>
-                          <TableHead>Practice</TableHead>
                           <TableHead>Joined</TableHead>
                           <TableHead>Actions</TableHead>
                         </TableRow>
@@ -700,8 +715,25 @@ export default function Admin() {
                             <TableCell>
                               {userInfo.preferredName || `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || "-"}
                             </TableCell>
+                            <TableCell>
+                              {userInfo.subscription ? (
+                                <Badge 
+                                  variant={userInfo.subscription.status === "active" ? "default" : "secondary"}
+                                  data-testid={`badge-status-${userInfo.id}`}
+                                >
+                                  {isLifetime(userInfo.subscription.currentPeriodEnd) ? (
+                                    <><Crown className="h-3 w-3 mr-1" />Lifetime</>
+                                  ) : userInfo.subscription.status === "active" ? (
+                                    "Active"
+                                  ) : (
+                                    userInfo.subscription.status
+                                  )}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" data-testid={`badge-status-${userInfo.id}`}>No Sub</Badge>
+                              )}
+                            </TableCell>
                             <TableCell>{userInfo.specialty || "-"}</TableCell>
-                            <TableCell>{userInfo.practiceName || "-"}</TableCell>
                             <TableCell>{formatDate(userInfo.createdAt)}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -712,7 +744,7 @@ export default function Admin() {
                                   data-testid={`button-edit-user-${userInfo.id}`}
                                 >
                                   <UserCog className="h-3 w-3 mr-1" />
-                                  Settings
+                                  Manage
                                 </Button>
                                 <Button
                                   size="sm"
@@ -1744,17 +1776,90 @@ export default function Admin() {
 
       {/* Edit User Settings Dialog */}
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserCog className="h-5 w-5 text-primary" />
               Edit User Settings
             </DialogTitle>
             <DialogDescription>
-              Configure EMR role and access for {editingUser?.preferredName || `${editingUser?.firstName || ""} ${editingUser?.lastName || ""}`.trim() || editingUser?.userId}
+              Manage subscription and EMR settings for {editingUser?.preferredName || `${editingUser?.firstName || ""} ${editingUser?.lastName || ""}`.trim() || editingUser?.userId}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
+            {/* Subscription Status Section */}
+            <div className="p-4 bg-muted/50 rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium flex items-center gap-2">
+                  <CreditCard className="h-4 w-4" />
+                  Subscription Status
+                </Label>
+                {editUserSubscription ? (
+                  <Badge variant={editUserSubscription.status === "active" ? "default" : "secondary"}>
+                    {isLifetime(editUserSubscription.currentPeriodEnd) ? "Lifetime" : editUserSubscription.status}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">No Subscription</Badge>
+                )}
+              </div>
+              {editUserSubscription?.currentPeriodEnd && !isLifetime(editUserSubscription.currentPeriodEnd) && (
+                <p className="text-xs text-muted-foreground">
+                  Expires: {formatDate(editUserSubscription.currentPeriodEnd)}
+                </p>
+              )}
+              
+              {/* Grant Trial Section */}
+              <div className="pt-2 border-t">
+                <Label className="text-xs text-muted-foreground mb-2 block">
+                  Grant or Extend Access
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Select value={selectedTrialGrant} onValueChange={setSelectedTrialGrant}>
+                    <SelectTrigger className="flex-1" data-testid="select-grant-trial">
+                      <SelectValue placeholder="Select duration..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRIAL_GRANT_TYPES.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (editingUser && selectedTrialGrant) {
+                        extendSubscriptionMutation.mutate({
+                          userId: editingUser.userId,
+                          extensionType: selectedTrialGrant,
+                        }, {
+                          onSuccess: async () => {
+                            // Refresh subscription data
+                            const response = await apiRequest("GET", `/api/admin/users/${editingUser.userId}/details`);
+                            const data = await response.json();
+                            setEditUserSubscription(data.subscription || null);
+                            setSelectedTrialGrant("");
+                            // Also invalidate users list to update status badges
+                            queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+                            queryClient.invalidateQueries({ queryKey: ["/api/admin/subscribers"] });
+                          }
+                        });
+                      }
+                    }}
+                    disabled={!selectedTrialGrant || extendSubscriptionMutation.isPending}
+                    data-testid="button-grant-trial"
+                  >
+                    {extendSubscriptionMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Grant"
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="emr-role">EMR Role</Label>
               <Select value={editUserEmrRole} onValueChange={setEditUserEmrRole}>

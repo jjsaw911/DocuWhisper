@@ -1231,11 +1231,22 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
-  // Get all users (admin only)
+  // Get all users with subscription status (admin only)
   app.get("/api/admin/users", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
       const users = await storage.getAllUserSettings();
-      res.json(users);
+      const allSubscriptions = await storage.getAllSubscriptions();
+      
+      // Create a map of userId -> subscription for quick lookup
+      const subscriptionMap = new Map(allSubscriptions.map(s => [s.userId, s]));
+      
+      // Enrich users with subscription data
+      const enrichedUsers = users.map(user => ({
+        ...user,
+        subscription: subscriptionMap.get(user.userId) || null,
+      }));
+      
+      res.json(enrichedUsers);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
@@ -1315,6 +1326,12 @@ PLAN: ${plan || "Not provided"}
           break;
         case "days_30":
           newPeriodEnd = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+          break;
+        case "days_60":
+          newPeriodEnd = new Date(baseDate.getTime() + 60 * 24 * 60 * 60 * 1000);
+          break;
+        case "days_90":
+          newPeriodEnd = new Date(baseDate.getTime() + 90 * 24 * 60 * 60 * 1000);
           break;
         case "months_3":
           newPeriodEnd = new Date(baseDate);
