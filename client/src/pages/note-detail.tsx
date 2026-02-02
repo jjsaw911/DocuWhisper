@@ -625,12 +625,6 @@ export default function NoteDetail() {
             <p>Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>
           </div>
           <div class="content">${formData.soapNote}</div>
-          ${note?.transcript ? `
-            <div class="transcript">
-              <h2>Original Transcript</h2>
-              <div class="content">${note.transcript}</div>
-            </div>
-          ` : ""}
         </body>
       </html>
     `;
