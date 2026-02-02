@@ -10,6 +10,8 @@ interface MedicalAutocompleteProps {
   className?: string;
   rows?: number;
   disabled?: boolean;
+  autoResize?: boolean;
+  minHeight?: number;
   "data-testid"?: string;
 }
 
@@ -20,6 +22,8 @@ export function MedicalAutocomplete({
   className,
   rows = 4,
   disabled = false,
+  autoResize = false,
+  minHeight = 200,
   "data-testid": dataTestId,
 }: MedicalAutocompleteProps) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -28,6 +32,15 @@ export function MedicalAutocomplete({
   const [cursorPosition, setCursorPosition] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Auto-resize textarea to fit content
+  useEffect(() => {
+    if (autoResize && textareaRef.current) {
+      const textarea = textareaRef.current;
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.max(textarea.scrollHeight, minHeight)}px`;
+    }
+  }, [value, autoResize, minHeight]);
 
   // Extract the current word being typed
   const getCurrentWord = useCallback((text: string, position: number): { word: string; start: number; end: number } => {
@@ -151,10 +164,11 @@ export function MedicalAutocomplete({
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        className={className}
-        rows={rows}
+        className={cn(className, autoResize && "overflow-hidden resize-none")}
+        rows={autoResize ? undefined : rows}
         disabled={disabled}
         data-testid={dataTestId}
+        style={autoResize ? { minHeight: `${minHeight}px` } : undefined}
       />
       
       {showSuggestions && suggestions.length > 0 && (

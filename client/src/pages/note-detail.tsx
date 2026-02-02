@@ -1248,8 +1248,9 @@ export default function NoteDetail() {
                     // Send update to collaborators
                     sendUpdate("soapNote", value);
                   }}
-                  className="min-h-[400px] text-base leading-relaxed"
-                  rows={16}
+                  className="text-base leading-relaxed"
+                  autoResize={true}
+                  minHeight={300}
                   placeholder="SUBJECTIVE:
 Patient's symptoms...
 
