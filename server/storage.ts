@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey } from "@shared/schema";
 import crypto from "crypto";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
@@ -58,6 +58,7 @@ export interface IStorage {
   getUsersWithEmailNotifications(): Promise<UserSettings[]>;
   // Admin - get all users
   getAllUserSettings(): Promise<UserSettings[]>;
+  getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
   // Practice/Team functions
   createPractice(practice: InsertPractice): Promise<Practice>;
   getPractice(id: number): Promise<Practice | undefined>;
@@ -423,6 +424,16 @@ class DatabaseStorage implements IStorage {
 
   async getAllUserSettings(): Promise<UserSettings[]> {
     return db.select().from(userSettings).orderBy(desc(userSettings.createdAt));
+  }
+
+  async getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]> {
+    return db.select({
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      createdAt: users.createdAt,
+    }).from(users).orderBy(desc(users.createdAt));
   }
 
   // Practice/Team functions

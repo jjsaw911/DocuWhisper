@@ -85,6 +85,7 @@ interface Organization {
 interface UserInfo {
   id: number;
   userId: string;
+  email?: string | null;
   firstName?: string;
   lastName?: string;
   preferredName?: string;
@@ -698,19 +699,18 @@ export default function Admin() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>User ID</TableHead>
+                          <TableHead>Email</TableHead>
                           <TableHead>Name</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead>Specialty</TableHead>
                           <TableHead>Joined</TableHead>
                           <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {allUsers.map((userInfo) => (
-                          <TableRow key={userInfo.id} data-testid={`row-user-${userInfo.id}`}>
-                            <TableCell className="font-mono text-xs max-w-[150px] truncate">
-                              {userInfo.userId}
+                          <TableRow key={userInfo.userId} data-testid={`row-user-${userInfo.userId}`}>
+                            <TableCell className="text-xs max-w-[200px] truncate">
+                              {userInfo.email || userInfo.userId}
                             </TableCell>
                             <TableCell>
                               {userInfo.preferredName || `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || "-"}
@@ -719,7 +719,7 @@ export default function Admin() {
                               {userInfo.subscription ? (
                                 <Badge 
                                   variant={userInfo.subscription.status === "active" ? "default" : "secondary"}
-                                  data-testid={`badge-status-${userInfo.id}`}
+                                  data-testid={`badge-status-${userInfo.userId}`}
                                 >
                                   {isLifetime(userInfo.subscription.currentPeriodEnd) ? (
                                     <><Crown className="h-3 w-3 mr-1" />Lifetime</>
@@ -730,10 +730,9 @@ export default function Admin() {
                                   )}
                                 </Badge>
                               ) : (
-                                <Badge variant="outline" data-testid={`badge-status-${userInfo.id}`}>No Sub</Badge>
+                                <Badge variant="outline" data-testid={`badge-status-${userInfo.userId}`}>No Sub</Badge>
                               )}
                             </TableCell>
-                            <TableCell>{userInfo.specialty || "-"}</TableCell>
                             <TableCell>{formatDate(userInfo.createdAt)}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -741,7 +740,7 @@ export default function Admin() {
                                   size="sm"
                                   variant="outline"
                                   onClick={() => openEditUser(userInfo)}
-                                  data-testid={`button-edit-user-${userInfo.id}`}
+                                  data-testid={`button-edit-user-${userInfo.userId}`}
                                 >
                                   <UserCog className="h-3 w-3 mr-1" />
                                   Manage
@@ -753,7 +752,7 @@ export default function Admin() {
                                     navigator.clipboard.writeText(userInfo.userId);
                                     toast({ title: "User ID copied" });
                                   }}
-                                  data-testid={`button-copy-userid-${userInfo.id}`}
+                                  data-testid={`button-copy-userid-${userInfo.userId}`}
                                 >
                                   <Copy className="h-3 w-3" />
                                 </Button>

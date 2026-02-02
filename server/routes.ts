@@ -1234,17 +1234,37 @@ PLAN: ${plan || "Not provided"}
   // Get all users with subscription status (admin only)
   app.get("/api/admin/users", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
-      const users = await storage.getAllUserSettings();
+      // Get all users from the users table (everyone who has logged in)
+      const allUsers = await storage.getAllUsers();
+      // Get settings for users who have saved them
+      const allSettings = await storage.getAllUserSettings();
       const allSubscriptions = await storage.getAllSubscriptions();
       
-      // Create a map of userId -> subscription for quick lookup
+      // Create maps for quick lookup
+      const settingsMap = new Map(allSettings.map(s => [s.userId, s]));
       const subscriptionMap = new Map(allSubscriptions.map(s => [s.userId, s]));
       
-      // Enrich users with subscription data
-      const enrichedUsers = users.map(user => ({
-        ...user,
-        subscription: subscriptionMap.get(user.userId) || null,
-      }));
+      // Merge users with their settings and subscriptions
+      const enrichedUsers = allUsers.map(user => {
+        const settings = settingsMap.get(user.id);
+        return {
+          // Base user data from users table
+          id: settings?.id || 0, // Use settings id if available, 0 for unsaved
+          odexId: user.id, // Keep the original user id
+          userId: user.id,
+          email: user.email,
+          // Use settings data if available, otherwise use users table data
+          firstName: settings?.firstName || user.firstName || null,
+          lastName: settings?.lastName || user.lastName || null,
+          preferredName: settings?.preferredName || null,
+          specialty: settings?.specialty || null,
+          practiceName: settings?.practiceName || null,
+          credentials: settings?.credentials || null,
+          createdAt: settings?.createdAt || user.createdAt,
+          // Subscription data
+          subscription: subscriptionMap.get(user.id) || null,
+        };
+      });
       
       res.json(enrichedUsers);
     } catch (error) {
