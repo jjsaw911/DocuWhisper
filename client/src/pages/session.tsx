@@ -28,7 +28,6 @@ import {
   FileText,
   Send,
   Wand2,
-  Settings,
   ChevronDown,
   PanelRightClose,
   PanelRightOpen,
@@ -1351,26 +1350,24 @@ Plan: ${soapNote.plan}
               </Button>
             )}
             
-            {/* Audio level visualization */}
-            <div className="flex items-center gap-0.5 h-6">
-              {audioLevel.map((level, i) => (
-                <div
-                  key={i}
-                  className={`w-1.5 rounded-full transition-all duration-100 ${
-                    recordingState === "recording" 
-                      ? level > 0.6 ? "bg-red-500" : level > 0.3 ? "bg-yellow-500" : "bg-primary"
-                      : "bg-muted-foreground/30"
-                  }`}
-                  style={{ height: `${Math.max(4, level * 24)}px` }}
-                />
-              ))}
-            </div>
-
-            {/* Microphone selection dropdown */}
+            {/* Microphone selection dropdown with audio-responsive icon */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-mic-settings">
-                  <Settings className="h-4 w-4" />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className={`h-8 w-8 transition-colors ${
+                    recordingState === "recording" 
+                      ? audioLevel.some(l => l > 0.5) 
+                        ? "text-green-500" 
+                        : audioLevel.some(l => l > 0.2) 
+                          ? "text-primary" 
+                          : "text-muted-foreground"
+                      : "text-muted-foreground"
+                  }`} 
+                  data-testid="button-mic-settings"
+                >
+                  <Mic className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">

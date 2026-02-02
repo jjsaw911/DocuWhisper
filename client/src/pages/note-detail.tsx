@@ -932,9 +932,8 @@ export default function NoteDetail() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* Resume Recording button */}
+            {/* Resume Recording button - primary color to stand out */}
             <Button
-              variant="outline"
               size="sm"
               asChild
               data-testid="button-resume-recording"
@@ -1111,23 +1110,6 @@ export default function NoteDetail() {
               </Dialog>
             )}
             
-            <Button
-              onClick={() => updateMutation.mutate()}
-              disabled={updateMutation.isPending}
-              data-testid="button-save"
-            >
-              {updateMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save
-                </>
-              )}
-            </Button>
           </div>
         </div>
       </div>
@@ -1135,9 +1117,6 @@ export default function NoteDetail() {
       <div className="p-6 max-w-4xl mx-auto">
         <div className="mb-6">
           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-            {note.specialty && (
-              <Badge variant="secondary">{note.specialty}</Badge>
-            )}
             {note.patientName && (
               <div className="flex items-center gap-1">
                 <User className="h-4 w-4" />
@@ -1180,19 +1159,73 @@ export default function NoteDetail() {
 
         <Card data-testid="card-soap" className="mb-6">
           <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-primary" />
                 SOAP Note
               </CardTitle>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => copyToClipboard(formData.soapNote)}
-                data-testid="button-copy-soap"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* Template dropdown */}
+                <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
+                  <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
+                    <SelectValue placeholder="Template" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default</SelectItem>
+                    {templates.map((template) => (
+                      <SelectItem key={template.id} value={template.id.toString()}>
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                {/* Re-transcribe button */}
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => regenerateMutation.mutate()}
+                  disabled={regenerateMutation.isPending || !note.transcript}
+                  data-testid="button-retranscribe"
+                >
+                  {regenerateMutation.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <>
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Redo
+                    </>
+                  )}
+                </Button>
+                
+                {/* Transcript toggle - only show if transcript exists */}
+                {note.transcript && (
+                  <Button 
+                    variant={showTranscript ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setShowTranscript(!showTranscript)}
+                    data-testid="button-toggle-transcript-header"
+                  >
+                    <FileText className="h-3 w-3 mr-1" />
+                    Transcript
+                    {showTranscript ? (
+                      <ChevronUp className="ml-1 h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="ml-1 h-3 w-3" />
+                    )}
+                  </Button>
+                )}
+                
+                {/* Copy button */}
+                <Button 
+                  variant="ghost" 
+                  size="icon"
+                  onClick={() => copyToClipboard(formData.soapNote)}
+                  data-testid="button-copy-soap"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1223,18 +1256,18 @@ Treatment plan..."
             />
             
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => setShowAiInstructions(!showAiInstructions)}
-              className="w-full"
+              className="text-xs text-muted-foreground"
               data-testid="button-toggle-ai"
             >
-              <Wand2 className="mr-2 h-4 w-4" />
+              <Wand2 className="mr-1 h-3 w-3" />
               AI Instructions
               {showAiInstructions ? (
-                <ChevronUp className="ml-2 h-4 w-4" />
+                <ChevronUp className="ml-1 h-3 w-3" />
               ) : (
-                <ChevronDown className="ml-2 h-4 w-4" />
+                <ChevronDown className="ml-1 h-3 w-3" />
               )}
             </Button>
 
@@ -1294,9 +1327,9 @@ Treatment plan..."
               </div>
             )}
 
-            <div className="flex items-center gap-2 pt-2 border-t">
+            <div className="flex items-center gap-2">
               <Select value={translateLanguage} onValueChange={setTranslateLanguage}>
-                <SelectTrigger className="w-[140px]" data-testid="select-translate-language">
+                <SelectTrigger className="w-[100px] text-xs" data-testid="select-translate-language">
                   <SelectValue placeholder="Language" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1308,22 +1341,19 @@ Treatment plan..."
                 </SelectContent>
               </Select>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => translateMutation.mutate(translateLanguage)}
                 disabled={translateMutation.isPending || !formData.soapNote}
-                className="flex-1"
+                className="text-xs text-muted-foreground"
                 data-testid="button-translate"
               >
                 {translateMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Translating...
-                  </>
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
                   <>
-                    <Languages className="mr-2 h-4 w-4" />
-                    Translate Note
+                    <Languages className="mr-1 h-3 w-3" />
+                    Translate
                   </>
                 )}
               </Button>
@@ -1876,46 +1906,30 @@ Treatment plan..."
           </CardContent>
         </Card>
 
-        {note.transcript && (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowTranscript(!showTranscript)}
-              className="w-full"
-              data-testid="button-toggle-transcript"
-            >
-              <AudioLines className="mr-2 h-4 w-4" />
-              Transcript
-              {showTranscript ? (
-                <ChevronUp className="ml-2 h-4 w-4" />
-              ) : (
-                <ChevronDown className="ml-2 h-4 w-4" />
-              )}
-            </Button>
-
-            {showTranscript && (
-              <Card data-testid="card-transcript">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-end">
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => copyToClipboard(note.transcript || "")}
-                      data-testid="button-copy-transcript"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-base whitespace-pre-wrap leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{note.transcript}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </>
+        {note.transcript && showTranscript && (
+          <Card data-testid="card-transcript" className="mb-6">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AudioLines className="h-4 w-4 text-primary" />
+                  Transcript
+                </CardTitle>
+                <Button 
+                  variant="ghost" 
+                  size="icon"
+                  onClick={() => copyToClipboard(note.transcript || "")}
+                  data-testid="button-copy-transcript"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <p className="text-base whitespace-pre-wrap leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{note.transcript}</p>
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>
