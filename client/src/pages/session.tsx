@@ -95,7 +95,7 @@ export default function Session() {
   const [audioLevel, setAudioLevel] = useState<number[]>([0, 0, 0, 0, 0]);
   const [transcriptEntries, setTranscriptEntries] = useState<TranscriptEntry[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("default");
-  const [activeTab, setActiveTab] = useState("context");
+  const [activeTab, setActiveTab] = useState("transcript");
   const [soapNote, setSoapNote] = useState<{
     subjective: string;
     objective: string;
