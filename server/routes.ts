@@ -713,6 +713,123 @@ Suggest the most relevant codes based on the documented findings. Include both p
     }
   });
 
+  // AI-powered task suggestions from SOAP note
+  app.post("/api/suggest-tasks", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = suggestCodesSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      const { subjective, objective, assessment, plan } = validationResult.data;
+      
+      const clinicalContent = `
+SUBJECTIVE: ${subjective || ""}
+OBJECTIVE: ${objective || ""}
+ASSESSMENT: ${assessment || ""}
+PLAN: ${plan || ""}
+      `.trim();
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical practice assistant. Based on the clinical documentation provided, identify any follow-up tasks that need to be completed by the clinical team.
+
+Look for things like:
+- Referrals mentioned in the plan
+- Orders for labs, imaging, or tests
+- Prescription refills or changes
+- Follow-up appointments to schedule
+- Patient education needs
+- Care coordination tasks
+- Communication tasks (calls, letters)
+
+Return a JSON object with an array of suggested tasks:
+{
+  "tasks": [
+    {
+      "title": "Brief task description",
+      "category": "document" | "order" | "coordinate" | "communicate",
+      "priority": "high" | "medium" | "low",
+      "reason": "Brief explanation of why this task is needed"
+    }
+  ]
+}
+
+Only suggest tasks that are clearly indicated in the documentation. If no tasks are needed, return an empty array.`
+          },
+          { role: "user", content: clinicalContent }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 1000,
+      });
+
+      const content = response.choices[0]?.message?.content || "{}";
+      const tasks = JSON.parse(content);
+      res.json(tasks);
+    } catch (error) {
+      console.error("Error suggesting tasks:", error);
+      res.status(500).json({ error: "Failed to suggest tasks" });
+    }
+  });
+
+  // AI-powered referral letter suggestions
+  app.post("/api/suggest-referrals", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const validationResult = suggestCodesSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
+      }
+      const { subjective, objective, assessment, plan } = validationResult.data;
+      
+      const clinicalContent = `
+SUBJECTIVE: ${subjective || ""}
+OBJECTIVE: ${objective || ""}
+ASSESSMENT: ${assessment || ""}
+PLAN: ${plan || ""}
+      `.trim();
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a medical referral coordinator. Based on the clinical documentation provided, identify any referrals that should be made to specialists.
+
+Look for:
+- Explicit referral recommendations in the plan
+- Conditions that warrant specialist evaluation
+- Complex cases beyond primary care scope
+
+Return a JSON object with an array of suggested referrals:
+{
+  "referrals": [
+    {
+      "specialty": "Specialist type (e.g., Cardiology, Orthopedics)",
+      "reason": "Brief reason for referral",
+      "urgency": "routine" | "urgent" | "emergent"
+    }
+  ]
+}
+
+Only suggest referrals that are clearly indicated in the documentation or clinically appropriate. If no referrals are needed, return an empty array.`
+          },
+          { role: "user", content: clinicalContent }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 1000,
+      });
+
+      const content = response.choices[0]?.message?.content || "{}";
+      const referrals = JSON.parse(content);
+      res.json(referrals);
+    } catch (error) {
+      console.error("Error suggesting referrals:", error);
+      res.status(500).json({ error: "Failed to suggest referrals" });
+    }
+  });
+
   // AI Chat assistant for documentation help
   app.post("/api/ai-assistant", isAuthenticated, async (req: any, res: Response) => {
     try {

@@ -261,6 +261,34 @@ export default function NoteDetail() {
   const [newTaskCategory, setNewTaskCategory] = useState("document");
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  
+  // Suggested tasks from AI
+  const [suggestedTasks, setSuggestedTasks] = useState<Array<{
+    title: string;
+    category: string;
+    priority: string;
+    reason: string;
+    confirmed?: boolean;
+  }>>([]);
+  const [isLoadingSuggestedTasks, setIsLoadingSuggestedTasks] = useState(false);
+  
+  // Suggested referrals from AI
+  const [suggestedReferrals, setSuggestedReferrals] = useState<Array<{
+    specialty: string;
+    reason: string;
+    urgency: string;
+    confirmed?: boolean;
+    letterGenerated?: string;
+  }>>([]);
+  const [isLoadingReferrals, setIsLoadingReferrals] = useState(false);
+  
+  // Additional manual diagnoses
+  const [additionalDiagnoses, setAdditionalDiagnoses] = useState<Array<{
+    code: string;
+    description: string;
+  }>>([]);
+  const [newDiagnosisCode, setNewDiagnosisCode] = useState("");
+  const [newDiagnosisDesc, setNewDiagnosisDesc] = useState("");
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -307,6 +335,138 @@ export default function NoteDetail() {
       patientName: formData.patientName || undefined,
       dueDate: newTaskDueDate || undefined,
     });
+  };
+
+  // Fetch AI-suggested tasks when opening task panel
+  const fetchSuggestedTasks = async () => {
+    if (!note) return;
+    setIsLoadingSuggestedTasks(true);
+    try {
+      const response = await apiRequest("POST", "/api/suggest-tasks", {
+        subjective: note.subjective,
+        objective: note.objective,
+        assessment: note.assessment,
+        plan: note.plan,
+      });
+      const data = await response.json();
+      setSuggestedTasks(data.tasks || []);
+    } catch (error) {
+      console.error("Failed to fetch suggested tasks:", error);
+    } finally {
+      setIsLoadingSuggestedTasks(false);
+    }
+  };
+
+  // Fetch AI-suggested referrals when opening referral panel
+  const fetchSuggestedReferrals = async () => {
+    if (!note) return;
+    setIsLoadingReferrals(true);
+    try {
+      const response = await apiRequest("POST", "/api/suggest-referrals", {
+        subjective: note.subjective,
+        objective: note.objective,
+        assessment: note.assessment,
+        plan: note.plan,
+      });
+      const data = await response.json();
+      setSuggestedReferrals(data.referrals || []);
+    } catch (error) {
+      console.error("Failed to fetch suggested referrals:", error);
+    } finally {
+      setIsLoadingReferrals(false);
+    }
+  };
+
+  // Handle opening task modal - fetch suggestions
+  const handleOpenTaskModal = () => {
+    setShowTaskModal(true);
+    if (suggestedTasks.length === 0) {
+      fetchSuggestedTasks();
+    }
+  };
+
+  // Handle opening referral modal - fetch suggestions
+  const handleOpenReferralModal = () => {
+    setShowReferralModal(true);
+    if (suggestedReferrals.length === 0) {
+      fetchSuggestedReferrals();
+    }
+  };
+
+  // Confirm a suggested task (create it)
+  const confirmSuggestedTask = (task: typeof suggestedTasks[0], index: number) => {
+    if (!id) return;
+    createTaskMutation.mutate({
+      title: task.title,
+      category: task.category,
+      noteId: parseInt(id),
+      patientName: formData.patientName || undefined,
+    });
+    // Mark as confirmed
+    setSuggestedTasks(prev => prev.map((t, i) => i === index ? { ...t, confirmed: true } : t));
+  };
+
+  // Remove a suggested task from list
+  const removeSuggestedTask = (index: number) => {
+    setSuggestedTasks(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Confirm a suggested referral (generate letter)
+  const confirmSuggestedReferral = async (referral: typeof suggestedReferrals[0], index: number) => {
+    try {
+      // Pass values directly to avoid stale state issues
+      const sections = parseSoapFromText(formData.soapNote);
+      const response = await apiRequest("POST", "/api/generate-referral", {
+        patientName: formData.patientName,
+        subjective: sections.subjective || "",
+        objective: sections.objective || "",
+        assessment: sections.assessment || "",
+        plan: sections.plan || "",
+        referToSpecialty: referral.specialty,
+        referralReason: referral.reason,
+      });
+      const data = await response.json();
+      
+      // Store letter on the suggestion and mark confirmed
+      setSuggestedReferrals(prev => prev.map((r, i) => 
+        i === index ? { ...r, confirmed: true, letterGenerated: data.referralLetter } : r
+      ));
+      
+      // Also set the main referral letter for display
+      setReferralLetter(data.referralLetter);
+      
+      toast({
+        title: "Referral letter generated",
+        description: `Referral to ${referral.specialty} created`,
+      });
+    } catch (error) {
+      toast({
+        title: "Failed to generate referral",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Remove a suggested referral from list
+  const removeSuggestedReferral = (index: number) => {
+    setSuggestedReferrals(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Add manual diagnosis
+  const addManualDiagnosis = () => {
+    if (!newDiagnosisCode.trim()) return;
+    setAdditionalDiagnoses(prev => [...prev, {
+      code: newDiagnosisCode.trim(),
+      description: newDiagnosisDesc.trim() || "Custom diagnosis",
+    }]);
+    setNewDiagnosisCode("");
+    setNewDiagnosisDesc("");
+  };
+
+  // Remove manual diagnosis
+  const removeManualDiagnosis = (index: number) => {
+    setAdditionalDiagnoses(prev => prev.filter((_, i) => i !== index));
   };
 
   const formatSoapNote = (note: Note) => {
@@ -470,7 +630,7 @@ export default function NoteDetail() {
 
   // Generate referral letter mutation
   const referralMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (params?: { specialty?: string; reason?: string }) => {
       const sections = parseSoapFromText(formData.soapNote);
       const response = await apiRequest("POST", "/api/generate-referral", {
         patientName: formData.patientName,
@@ -478,8 +638,8 @@ export default function NoteDetail() {
         objective: sections.objective || "",
         assessment: sections.assessment || "",
         plan: sections.plan || "",
-        referToSpecialty: referralSpecialty,
-        referralReason: referralReason,
+        referToSpecialty: params?.specialty || referralSpecialty,
+        referralReason: params?.reason || referralReason,
       });
       return response.json();
     },
@@ -605,6 +765,59 @@ export default function NoteDetail() {
   };
 
   const exportToPDF = () => {
+    // Build sections for confirmed items
+    const confirmedTasksHtml = noteTasks && noteTasks.length > 0 ? `
+      <div class="section">
+        <h2>Tasks</h2>
+        <ul>
+          ${noteTasks.map(task => `<li>${task.title} (${task.category}) - ${task.status === 'completed' ? 'Completed' : 'Pending'}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+
+    const hasDiagnoses = (suggestedCodes?.codes && suggestedCodes.codes.length > 0) || additionalDiagnoses.length > 0;
+    const diagnosesHtml = hasDiagnoses ? `
+      <div class="section">
+        <h2>Diagnoses</h2>
+        <ul>
+          ${(suggestedCodes?.codes || []).map(code => `<li><strong>${code.code}</strong> - ${code.description}</li>`).join('')}
+          ${additionalDiagnoses.map(diag => `<li><strong>${diag.code}</strong> - ${diag.description}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+
+    const hasCptCodes = suggestedCodes?.cptCodes && suggestedCodes.cptCodes.length > 0;
+    const cptCodesHtml = hasCptCodes ? `
+      <div class="section">
+        <h2>Billing Codes</h2>
+        <ul>
+          ${(suggestedCodes?.cptCodes || []).map(code => `<li><strong>${code.code}</strong> - ${code.description}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+
+    // Collect all confirmed referral letters
+    const confirmedReferralLetters = suggestedReferrals
+      .filter(r => r.confirmed && r.letterGenerated)
+      .map(r => ({ specialty: r.specialty, letter: r.letterGenerated! }));
+    
+    // Include manual referral letter if present
+    if (referralLetter && !confirmedReferralLetters.some(r => r.letter === referralLetter)) {
+      confirmedReferralLetters.push({ specialty: referralSpecialty || "Specialist", letter: referralLetter });
+    }
+
+    const referralHtml = confirmedReferralLetters.length > 0 ? `
+      <div class="section">
+        <h2>Referral Letters</h2>
+        ${confirmedReferralLetters.map(r => `
+          <div class="referral-content">
+            <p><strong>Referral to: ${r.specialty}</strong></p>
+            ${r.letter.replace(/\n/g, '<br>')}
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
+
     const content = `
       <html>
         <head>
@@ -612,10 +825,16 @@ export default function NoteDetail() {
           <style>
             body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
             h1 { color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px; }
+            h2 { color: #0d9488; font-size: 1.2em; margin-top: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
             .meta { color: #6b7280; margin-bottom: 24px; }
             .content { white-space: pre-wrap; line-height: 1.6; }
-            .transcript { background: #f3f4f6; padding: 16px; border-radius: 8px; margin-top: 32px; }
-            .transcript h2 { margin-top: 0; }
+            .section { margin-top: 24px; }
+            .section ul { margin: 0; padding-left: 20px; }
+            .section li { margin-bottom: 8px; }
+            .referral-content { background: #f3f4f6; padding: 16px; border-radius: 8px; margin-top: 12px; line-height: 1.6; }
+            @media print {
+              .section { page-break-inside: avoid; }
+            }
           </style>
         </head>
         <body>
@@ -625,6 +844,10 @@ export default function NoteDetail() {
             <p>Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>
           </div>
           <div class="content">${formData.soapNote}</div>
+          ${diagnosesHtml}
+          ${cptCodesHtml}
+          ${confirmedTasksHtml}
+          ${referralHtml}
         </body>
       </html>
     `;
@@ -1122,7 +1345,7 @@ Treatment plan..."
                 <Button
                   variant="outline"
                   size="lg"
-                  onClick={() => setShowTaskModal(true)}
+                  onClick={handleOpenTaskModal}
                   data-testid="button-create-task"
                 >
                   <ListTodo className="h-5 w-5" />
@@ -1133,7 +1356,7 @@ Treatment plan..."
                 <Button
                   variant="outline"
                   size="lg"
-                  onClick={() => setShowReferralModal(true)}
+                  onClick={handleOpenReferralModal}
                   data-testid="button-referral"
                 >
                   <FileSignature className="h-5 w-5" />
@@ -1184,7 +1407,7 @@ Treatment plan..."
             {showCodesPanel && suggestedCodes && (
               <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-codes">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Suggested Billing Codes</h4>
+                  <h4 className="font-medium">Billing Codes & Diagnoses</h4>
                   <Button variant="ghost" size="icon" onClick={() => setShowCodesPanel(false)} data-testid="button-close-codes">
                     <X className="h-4 w-4" />
                   </Button>
@@ -1192,7 +1415,7 @@ Treatment plan..."
                 
                 {suggestedCodes.codes && suggestedCodes.codes.length > 0 && (
                   <div>
-                    <h5 className="text-sm font-medium mb-2">ICD-10 Diagnosis Codes</h5>
+                    <h5 className="text-sm font-medium mb-2">AI Suggested ICD-10 Codes</h5>
                     <div className="space-y-2">
                       {suggestedCodes.codes.map((code, i) => (
                         <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
@@ -1211,6 +1434,55 @@ Treatment plan..."
                     </div>
                   </div>
                 )}
+
+                {/* Manually Added Diagnoses */}
+                {additionalDiagnoses.length > 0 && (
+                  <div>
+                    <h5 className="text-sm font-medium mb-2">Additional Diagnoses</h5>
+                    <div className="space-y-2">
+                      {additionalDiagnoses.map((diag, i) => (
+                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
+                          <Badge variant="outline">{diag.code}</Badge>
+                          <div className="flex-1">
+                            <p className="text-sm">{diag.description}</p>
+                          </div>
+                          <Button variant="ghost" size="icon" onClick={() => removeManualDiagnosis(i)}>
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Add Manual Diagnosis */}
+                <div className="border-t pt-3">
+                  <h5 className="text-sm font-medium mb-2">Add Diagnosis Manually</h5>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="ICD-10 Code"
+                      value={newDiagnosisCode}
+                      onChange={(e) => setNewDiagnosisCode(e.target.value)}
+                      className="w-32"
+                      data-testid="input-diagnosis-code"
+                    />
+                    <Input
+                      placeholder="Description"
+                      value={newDiagnosisDesc}
+                      onChange={(e) => setNewDiagnosisDesc(e.target.value)}
+                      className="flex-1"
+                      data-testid="input-diagnosis-desc"
+                    />
+                    <Button 
+                      onClick={addManualDiagnosis}
+                      disabled={!newDiagnosisCode.trim()}
+                      size="icon"
+                      data-testid="button-add-diagnosis"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
                 
                 {suggestedCodes.cptCodes && suggestedCodes.cptCodes.length > 0 && (
                   <div>
@@ -1323,52 +1595,119 @@ Treatment plan..."
             {showReferralModal && (
               <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-referral">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Generate Referral Letter</h4>
+                  <h4 className="font-medium">Referrals</h4>
                   <Button variant="ghost" size="icon" onClick={() => setShowReferralModal(false)} data-testid="button-close-referral">
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
                 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Refer to Specialty</Label>
-                    <Input
-                      placeholder="e.g., Cardiology, Orthopedics"
-                      value={referralSpecialty}
-                      onChange={(e) => setReferralSpecialty(e.target.value)}
-                      data-testid="input-referral-specialty"
-                    />
+                {/* AI Suggested Referrals */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-sm font-medium">Suggested Referrals</h5>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={fetchSuggestedReferrals}
+                      disabled={isLoadingReferrals}
+                    >
+                      {isLoadingReferrals ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    </Button>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Reason for Referral</Label>
-                    <Input
-                      placeholder="e.g., Further evaluation"
-                      value={referralReason}
-                      onChange={(e) => setReferralReason(e.target.value)}
-                      data-testid="input-referral-reason"
-                    />
-                  </div>
-                </div>
-                
-                <Button onClick={() => referralMutation.mutate()} disabled={referralMutation.isPending} className="w-full" data-testid="button-generate-referral">
-                  {referralMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
+                  
+                  {isLoadingReferrals ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                      <span className="ml-2 text-sm text-muted-foreground">Analyzing note...</span>
+                    </div>
+                  ) : suggestedReferrals.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-2">No referrals suggested from this note</p>
                   ) : (
-                    <>
-                      <FileSignature className="mr-2 h-4 w-4" />
-                      Generate Referral Letter
-                    </>
+                    <div className="space-y-2">
+                      {suggestedReferrals.map((ref, index) => (
+                        <div key={index} className={`flex items-start gap-2 p-2 rounded border ${ref.confirmed ? 'bg-green-50 dark:bg-green-900/20 border-green-200' : 'bg-background'}`}>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{ref.specialty}</p>
+                            <p className="text-xs text-muted-foreground">{ref.reason}</p>
+                            <Badge variant={ref.urgency === 'urgent' || ref.urgency === 'emergent' ? 'destructive' : 'secondary'} className="text-xs mt-1">
+                              {ref.urgency}
+                            </Badge>
+                          </div>
+                          {ref.confirmed ? (
+                            <Badge variant="default" className="bg-green-600">Letter Generated</Badge>
+                          ) : (
+                            <div className="flex gap-1">
+                              <Button 
+                                size="sm" 
+                                variant="default"
+                                onClick={() => confirmSuggestedReferral(ref, index)}
+                                disabled={referralMutation.isPending}
+                              >
+                                <FileSignature className="h-3 w-3 mr-1" />
+                                Generate
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="ghost"
+                                onClick={() => removeSuggestedReferral(index)}
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </Button>
+                </div>
+
+                {/* Manual Referral Entry */}
+                <div className="border-t pt-4 space-y-3">
+                  <h5 className="text-sm font-medium">Create Referral Letter Manually</h5>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Refer to Specialty</Label>
+                      <Input
+                        placeholder="e.g., Cardiology, Orthopedics"
+                        value={referralSpecialty}
+                        onChange={(e) => setReferralSpecialty(e.target.value)}
+                        data-testid="input-referral-specialty"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Reason for Referral</Label>
+                      <Input
+                        placeholder="e.g., Further evaluation"
+                        value={referralReason}
+                        onChange={(e) => setReferralReason(e.target.value)}
+                        data-testid="input-referral-reason"
+                      />
+                    </div>
+                  </div>
+                  
+                  <Button onClick={() => referralMutation.mutate({})} disabled={referralMutation.isPending} className="w-full" data-testid="button-generate-referral">
+                    {referralMutation.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <FileSignature className="mr-2 h-4 w-4" />
+                        Generate Referral Letter
+                      </>
+                    )}
+                  </Button>
+                </div>
                 
                 {referralLetter && (
                   <div className="p-3 bg-background rounded border">
                     <div className="flex justify-end mb-2 gap-2">
                       <Button variant="ghost" size="icon" onClick={() => copyToClipboard(referralLetter)} data-testid="button-copy-referral">
                         <Copy className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => setReferralLetter("")} data-testid="button-delete-referral">
+                        <X className="h-4 w-4" />
                       </Button>
                     </div>
                     <Textarea
@@ -1386,15 +1725,76 @@ Treatment plan..."
             {showTaskModal && (
               <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-create-task">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Create Task for This Note</h4>
+                  <h4 className="font-medium">Tasks for This Note</h4>
                   <Button variant="ghost" size="icon" onClick={() => setShowTaskModal(false)} data-testid="button-close-task-modal">
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
                 
-                <div className="space-y-3">
+                {/* AI Suggested Tasks */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-sm font-medium">Suggested Tasks</h5>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={fetchSuggestedTasks}
+                      disabled={isLoadingSuggestedTasks}
+                    >
+                      {isLoadingSuggestedTasks ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    </Button>
+                  </div>
+                  
+                  {isLoadingSuggestedTasks ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                      <span className="ml-2 text-sm text-muted-foreground">Analyzing note...</span>
+                    </div>
+                  ) : suggestedTasks.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-2">No tasks suggested from this note</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {suggestedTasks.map((task, index) => (
+                        <div key={index} className={`flex items-start gap-2 p-2 rounded border ${task.confirmed ? 'bg-green-50 dark:bg-green-900/20 border-green-200' : 'bg-background'}`}>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{task.title}</p>
+                            <p className="text-xs text-muted-foreground">{task.reason}</p>
+                            <div className="flex gap-1 mt-1">
+                              <Badge variant="outline" className="text-xs">{task.category}</Badge>
+                              <Badge variant={task.priority === 'high' ? 'destructive' : 'secondary'} className="text-xs">{task.priority}</Badge>
+                            </div>
+                          </div>
+                          {task.confirmed ? (
+                            <Badge variant="default" className="bg-green-600">Added</Badge>
+                          ) : (
+                            <div className="flex gap-1">
+                              <Button 
+                                size="sm" 
+                                variant="default"
+                                onClick={() => confirmSuggestedTask(task, index)}
+                                disabled={createTaskMutation.isPending}
+                              >
+                                <Check className="h-3 w-3" />
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="ghost"
+                                onClick={() => removeSuggestedTask(index)}
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual Task Entry */}
+                <div className="border-t pt-4 space-y-3">
+                  <h5 className="text-sm font-medium">Add Task Manually</h5>
                   <div className="space-y-2">
-                    <Label>Task Title</Label>
                     <Input
                       placeholder="e.g., Refer patient to GI for evaluation"
                       value={newTaskTitle}
@@ -1431,26 +1831,25 @@ Treatment plan..."
                       />
                     </div>
                   </div>
+                  <Button 
+                    onClick={handleCreateTask} 
+                    disabled={!newTaskTitle.trim() || createTaskMutation.isPending} 
+                    className="w-full" 
+                    data-testid="button-submit-task"
+                  >
+                    {createTaskMutation.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add Task
+                      </>
+                    )}
+                  </Button>
                 </div>
-                
-                <Button 
-                  onClick={handleCreateTask} 
-                  disabled={!newTaskTitle.trim() || createTaskMutation.isPending} 
-                  className="w-full" 
-                  data-testid="button-submit-task"
-                >
-                  {createTaskMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Create Task
-                    </>
-                  )}
-                </Button>
 
                 {noteTasks && noteTasks.length > 0 && (
                   <div className="mt-4 border-t pt-4">
