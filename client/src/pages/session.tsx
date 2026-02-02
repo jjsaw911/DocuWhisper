@@ -365,89 +365,28 @@ export default function Session() {
     isTranscribingRef.current = true;
     processedChunkIdsRef.current.add(chunkItem.id);
     
-    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes...`);
+    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (independent segment)...`);
     
     try {
-      const cumulativeTranscript = await transcribeChunk(chunkItem.blob);
+      // Each chunk is now independent - just the audio from this time segment
+      const transcriptText = await transcribeChunk(chunkItem.blob);
       
-      if (cumulativeTranscript && cumulativeTranscript.trim()) {
-        // Extract only the NEW content (delta) from cumulative transcript
-        // Since AI may rephrase slightly, use character-length-based extraction
-        const previousLength = lastCumulativeTranscriptRef.current.length;
-        const currentTranscript = cumulativeTranscript.trim();
-        let deltaText = currentTranscript;
+      if (transcriptText && transcriptText.trim()) {
+        const cleanedText = transcriptText.trim();
         
-        if (previousLength > 0) {
-          // Find approximate starting position for new content
-          // Look for a sentence boundary near the previous length position
-          // Allow for some variance (AI rephrasing may shift things ±20%)
-          const searchStart = Math.max(0, Math.floor(previousLength * 0.85));
-          const searchEnd = Math.min(currentTranscript.length, Math.ceil(previousLength * 1.15));
-          
-          // Find the LAST sentence boundary in the search range (to minimize overlap)
-          let splitPos = previousLength;
-          let lastBoundary = -1;
-          
-          // Look for sentence endings (. ? !) in the search range - prefer the LAST one
-          for (let i = searchStart; i < searchEnd && i < currentTranscript.length; i++) {
-            const char = currentTranscript[i];
-            if ((char === '.' || char === '?' || char === '!') && i + 1 < currentTranscript.length && currentTranscript[i + 1] === ' ') {
-              lastBoundary = i + 2; // After the punctuation and space
-            }
-          }
-          
-          if (lastBoundary > 0) {
-            splitPos = lastBoundary;
-          } else {
-            // No sentence boundary found - look for word boundary near end of search range
-            const nextSpace = currentTranscript.lastIndexOf(' ', searchEnd);
-            if (nextSpace > searchStart) {
-              splitPos = nextSpace + 1;
-            }
-          }
-          
-          deltaText = currentTranscript.substring(splitPos).trim();
-          
-          // Check if delta starts with content that duplicates end of committed text
-          // This catches cases where the AI slightly re-transcribes the last phrase
-          const committedText = committedTextRef.current;
-          if (committedText && deltaText) {
-            // Look for the first 30-50 chars of delta in the last 100 chars of committed
-            const deltaStart = deltaText.substring(0, Math.min(50, deltaText.length)).toLowerCase();
-            const committedEnd = committedText.substring(Math.max(0, committedText.length - 150)).toLowerCase();
-            
-            const dupIndex = committedEnd.indexOf(deltaStart.substring(0, 25));
-            if (dupIndex >= 0) {
-              // Found a duplicate - try to find where the new content actually starts
-              // Look for the next sentence in delta
-              const nextSentence = deltaText.search(/[.?!]\s+[A-Z]/);
-              if (nextSentence > 0) {
-                deltaText = deltaText.substring(nextSentence + 2).trim();
-                console.log(`[Delta] Removed duplicate prefix, new delta starts: "${deltaText.substring(0, 40)}..."`);
-              }
-            }
-          }
-          
-          console.log(`[Delta] Previous ${previousLength} chars, split at ${splitPos}, delta: "${deltaText.substring(0, 50)}..."`);
-        }
+        // Add the transcript directly - it's independent audio, not cumulative
+        const added = addTranscriptContent(cleanedText, chunkItem.timestampSec);
+        console.log(`[Chunk ${chunkItem.id}] Transcribed ${cleanedText.length} chars: ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
         
-        // Update cumulative tracker
-        lastCumulativeTranscriptRef.current = currentTranscript;
-        
-        if (deltaText) {
-          const added = addTranscriptContent(deltaText, chunkItem.timestampSec);
-          console.log(`[Chunk ${chunkItem.id}] Delta (${deltaText.length} chars from ${currentTranscript.length} cumulative): ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
-          
-          // Auto-backup after each chunk - ensures transcript is preserved even if browser crashes
+        if (added) {
+          // Auto-backup after each successful chunk
           saveBackup(committedTextRef.current, patientName, "general");
-        } else {
-          console.log(`[Chunk ${chunkItem.id}] No new content in this chunk (cumulative: ${currentTranscript.length} chars)`);
         }
       } else {
-        console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty or null)`);
+        console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty audio segment)`);
       }
     } catch (err) {
-      console.error(`[Chunk ${chunkItem.id}] Error:`, err);
+      console.error(`[Chunk ${chunkItem.id}] Transcription error:`, err);
     }
 
     // NOW mark as processed (after transcription completes)
@@ -511,17 +450,19 @@ export default function Session() {
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
+          // Store the raw fragment for final blob assembly
           chunksRef.current.push(e.data);
           
-          // Create a COMPLETE blob from all chunks so far (includes header from first chunk)
-          const completeBlob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
+          // Create INDEPENDENT chunk blob (just this segment, not cumulative)
+          // This prevents memory issues and AI confusion on long recordings
+          const independentBlob = new Blob([e.data], { type: mediaRecorder.mimeType });
           
-          // Create unique chunk item with the complete audio and timestamp
+          // Create unique chunk item with just this audio segment
           const chunkId = nextChunkIdRef.current++;
-          const timestampSec = chunkId * chunkIntervalSec; // 0, 40, 80, 120...
-          const chunkItem: ChunkItem = { id: chunkId, blob: completeBlob, processed: false, timestampSec };
+          const timestampSec = chunkId * chunkIntervalSec;
+          const chunkItem: ChunkItem = { id: chunkId, blob: independentBlob, processed: false, timestampSec };
           pendingChunksRef.current.push(chunkItem);
-          console.log(`[Chunk ${chunkId}] Queued at ${formatTime(timestampSec)} (${completeBlob.size} bytes from ${chunksRef.current.length} fragments)`);
+          console.log(`[Chunk ${chunkId}] Queued at ${formatTime(timestampSec)} (${independentBlob.size} bytes, independent segment)`);
           
           processNextChunk();
         }
