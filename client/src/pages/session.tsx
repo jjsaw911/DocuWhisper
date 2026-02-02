@@ -535,7 +535,8 @@ export default function Session() {
       processedChunkIdsRef.current.clear();
       
       // Reset transcript state - but PRESERVE existing transcript in resume mode
-      if (!isResumeMode || !resumeNoteData?.transcript) {
+      // Use refs to avoid stale closure issues
+      if (!isResumeModeRef.current || !resumeNoteDataRef.current?.transcript) {
         committedTextRef.current = "";
       }
       // Always reset these - they're for new recording session
