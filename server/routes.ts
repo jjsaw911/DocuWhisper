@@ -1831,17 +1831,27 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
-  // Admin: Update user settings (EMR role, access, etc.)
+  // Admin: Update user settings (EMR role, access, profile fields, etc.)
   app.put("/api/admin/users/:userId/settings", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
       const { userId } = req.params;
-      const { emrRole, requiresCosignature, supervisingPhysicianId, hasEmrAccess } = req.body;
+      const { 
+        emrRole, requiresCosignature, supervisingPhysicianId, hasEmrAccess,
+        firstName, lastName, preferredName, specialty, practiceName, credentials
+      } = req.body;
       
       // Build settings object for upsert
       const settingsData: any = { userId };
       if (emrRole !== undefined) settingsData.emrRole = emrRole;
       if (requiresCosignature !== undefined) settingsData.requiresCosignature = requiresCosignature;
       if (supervisingPhysicianId !== undefined) settingsData.supervisingPhysicianId = supervisingPhysicianId;
+      // Profile fields
+      if (firstName !== undefined) settingsData.firstName = firstName;
+      if (lastName !== undefined) settingsData.lastName = lastName;
+      if (preferredName !== undefined) settingsData.preferredName = preferredName;
+      if (specialty !== undefined) settingsData.specialty = specialty;
+      if (practiceName !== undefined) settingsData.practiceName = practiceName;
+      if (credentials !== undefined) settingsData.credentials = credentials;
       
       // Upsert user settings
       const updatedSettings = await storage.upsertUserSettings(settingsData);

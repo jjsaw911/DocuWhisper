@@ -16,6 +16,7 @@ import { useState } from "react";
 import { 
   ArrowLeft,
   Users,
+  User,
   Gift,
   Plus,
   Trash2,
@@ -183,6 +184,14 @@ export default function Admin() {
   const [editUserHasEmrAccess, setEditUserHasEmrAccess] = useState(false);
   const [editUserSubscription, setEditUserSubscription] = useState<Subscription | null>(null);
   const [selectedTrialGrant, setSelectedTrialGrant] = useState("");
+  // Profile fields for editing
+  const [editUserFirstName, setEditUserFirstName] = useState("");
+  const [editUserLastName, setEditUserLastName] = useState("");
+  const [editUserPreferredName, setEditUserPreferredName] = useState("");
+  const [editUserSpecialty, setEditUserSpecialty] = useState("");
+  const [editUserPracticeName, setEditUserPracticeName] = useState("");
+  const [editUserCredentials, setEditUserCredentials] = useState("");
+  const [editUserSettings, setEditUserSettings] = useState<any>(null);
   
   // Organization members state
   const [viewingOrgMembers, setViewingOrgMembers] = useState<number | null>(null);
@@ -507,8 +516,25 @@ export default function Admin() {
   });
 
   const updateUserSettingsMutation = useMutation({
-    mutationFn: async ({ userId, emrRole, requiresCosignature, hasEmrAccess }: { userId: string; emrRole?: string; requiresCosignature?: boolean; hasEmrAccess?: boolean }) => {
-      const response = await apiRequest("PUT", `/api/admin/users/${userId}/settings`, { emrRole, requiresCosignature, hasEmrAccess });
+    mutationFn: async ({ 
+      userId, emrRole, requiresCosignature, hasEmrAccess,
+      firstName, lastName, preferredName, specialty, practiceName, credentials
+    }: { 
+      userId: string; 
+      emrRole?: string; 
+      requiresCosignature?: boolean; 
+      hasEmrAccess?: boolean;
+      firstName?: string;
+      lastName?: string;
+      preferredName?: string;
+      specialty?: string;
+      practiceName?: string;
+      credentials?: string;
+    }) => {
+      const response = await apiRequest("PUT", `/api/admin/users/${userId}/settings`, { 
+        emrRole, requiresCosignature, hasEmrAccess,
+        firstName, lastName, preferredName, specialty, practiceName, credentials
+      });
       return response.json();
     },
     onSuccess: () => {
@@ -566,15 +592,30 @@ export default function Admin() {
     try {
       const response = await apiRequest("GET", `/api/admin/users/${userInfo.userId}/details`);
       const data = await response.json();
+      setEditUserSettings(data.settings);
       setEditUserEmrRole(data.settings?.emrRole || "");
       setEditUserRequiresCosign(data.settings?.requiresCosignature || false);
       setEditUserHasEmrAccess(data.subscription?.hasEmrAccess || false);
       setEditUserSubscription(data.subscription || null);
+      // Profile fields
+      setEditUserFirstName(data.settings?.firstName || "");
+      setEditUserLastName(data.settings?.lastName || "");
+      setEditUserPreferredName(data.settings?.preferredName || "");
+      setEditUserSpecialty(data.settings?.specialty || "");
+      setEditUserPracticeName(data.settings?.practiceName || "");
+      setEditUserCredentials(data.settings?.credentials || "");
     } catch {
+      setEditUserSettings(null);
       setEditUserEmrRole("");
       setEditUserRequiresCosign(false);
       setEditUserHasEmrAccess(false);
       setEditUserSubscription(null);
+      setEditUserFirstName("");
+      setEditUserLastName("");
+      setEditUserPreferredName("");
+      setEditUserSpecialty("");
+      setEditUserPracticeName("");
+      setEditUserCredentials("");
     }
   };
 
@@ -1777,17 +1818,108 @@ export default function Admin() {
 
       {/* Edit User Settings Dialog */}
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserCog className="h-5 w-5 text-primary" />
-              Edit User Settings
+              Manage User
             </DialogTitle>
             <DialogDescription>
-              Manage subscription and EMR settings for {editingUser?.preferredName || `${editingUser?.firstName || ""} ${editingUser?.lastName || ""}`.trim() || editingUser?.userId}
+              Edit profile, subscription, and access settings
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
+            {/* User Info Header */}
+            <div className="p-4 bg-muted/30 rounded-lg space-y-2 border">
+              <div className="flex items-center gap-2">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">
+                  {editUserPreferredName || `${editUserFirstName} ${editUserLastName}`.trim() || "No name set"}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-3 w-3" />
+                  <span>{editingUser?.email || "No email"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono">ID: {editingUser?.userId}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Profile Section */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-medium flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Profile
+              </h4>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-first-name" className="text-xs">First Name</Label>
+                  <Input
+                    id="edit-first-name"
+                    value={editUserFirstName}
+                    onChange={(e) => setEditUserFirstName(e.target.value)}
+                    placeholder="First name"
+                    data-testid="input-edit-first-name"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-last-name" className="text-xs">Last Name</Label>
+                  <Input
+                    id="edit-last-name"
+                    value={editUserLastName}
+                    onChange={(e) => setEditUserLastName(e.target.value)}
+                    placeholder="Last name"
+                    data-testid="input-edit-last-name"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-preferred-name" className="text-xs">Preferred Name (Display)</Label>
+                <Input
+                  id="edit-preferred-name"
+                  value={editUserPreferredName}
+                  onChange={(e) => setEditUserPreferredName(e.target.value)}
+                  placeholder="Display name"
+                  data-testid="input-edit-preferred-name"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-credentials" className="text-xs">Credentials</Label>
+                  <Input
+                    id="edit-credentials"
+                    value={editUserCredentials}
+                    onChange={(e) => setEditUserCredentials(e.target.value)}
+                    placeholder="e.g., MD, NP, PA-C"
+                    data-testid="input-edit-credentials"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-specialty" className="text-xs">Specialty</Label>
+                  <Input
+                    id="edit-specialty"
+                    value={editUserSpecialty}
+                    onChange={(e) => setEditUserSpecialty(e.target.value)}
+                    placeholder="e.g., Primary Care"
+                    data-testid="input-edit-specialty"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-practice-name" className="text-xs">Practice Name</Label>
+                <Input
+                  id="edit-practice-name"
+                  value={editUserPracticeName}
+                  onChange={(e) => setEditUserPracticeName(e.target.value)}
+                  placeholder="Practice or clinic name"
+                  data-testid="input-edit-practice-name"
+                />
+              </div>
+            </div>
+
             {/* Subscription Status Section */}
             <div className="p-4 bg-muted/50 rounded-lg space-y-3">
               <div className="flex items-center justify-between">
@@ -1861,58 +1993,62 @@ export default function Admin() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="emr-role">EMR Role</Label>
-              <Select value={editUserEmrRole} onValueChange={setEditUserEmrRole}>
-                <SelectTrigger id="emr-role" data-testid="select-edit-emr-role">
-                  <SelectValue placeholder="Select EMR role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">No Role</SelectItem>
-                  {Object.entries(EMR_ROLES).map(([key, role]) => (
-                    <SelectItem key={key} value={key}>
-                      {role.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Physician, NP/PA, Scribe, Front Desk, etc.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
-              <div className="space-y-1">
-                <Label htmlFor="emr-access" className="text-sm font-medium">
-                  EMR Access
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Allow this user to access EMR features
-                </p>
+            {/* EMR Settings Section */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-medium flex items-center gap-2">
+                <Shield className="h-4 w-4" />
+                EMR Settings
+              </h4>
+              <div className="space-y-2">
+                <Label htmlFor="emr-role" className="text-xs">EMR Role</Label>
+                <Select value={editUserEmrRole} onValueChange={setEditUserEmrRole}>
+                  <SelectTrigger id="emr-role" data-testid="select-edit-emr-role">
+                    <SelectValue placeholder="Select EMR role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No Role</SelectItem>
+                    {Object.entries(EMR_ROLES).map(([key, role]) => (
+                      <SelectItem key={key} value={key}>
+                        {role.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <Switch
-                id="emr-access"
-                checked={editUserHasEmrAccess}
-                onCheckedChange={setEditUserHasEmrAccess}
-                data-testid="switch-edit-emr-access"
-              />
-            </div>
 
-            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
-              <div className="space-y-1">
-                <Label htmlFor="requires-cosign" className="text-sm font-medium">
-                  Requires Co-signature
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Encounters require supervising physician co-signature
-                </p>
+              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                <div className="space-y-0.5">
+                  <Label htmlFor="emr-access" className="text-sm font-medium">
+                    EMR Access
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Allow access to EMR features
+                  </p>
+                </div>
+                <Switch
+                  id="emr-access"
+                  checked={editUserHasEmrAccess}
+                  onCheckedChange={setEditUserHasEmrAccess}
+                  data-testid="switch-edit-emr-access"
+                />
               </div>
-              <Switch
-                id="requires-cosign"
-                checked={editUserRequiresCosign}
-                onCheckedChange={setEditUserRequiresCosign}
-                data-testid="switch-edit-cosign"
-              />
+
+              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                <div className="space-y-0.5">
+                  <Label htmlFor="requires-cosign" className="text-sm font-medium">
+                    Requires Co-signature
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Notes need physician sign-off
+                  </p>
+                </div>
+                <Switch
+                  id="requires-cosign"
+                  checked={editUserRequiresCosign}
+                  onCheckedChange={setEditUserRequiresCosign}
+                  data-testid="switch-edit-cosign"
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -1924,6 +2060,12 @@ export default function Admin() {
                 if (editingUser) {
                   updateUserSettingsMutation.mutate({
                     userId: editingUser.userId,
+                    firstName: editUserFirstName,
+                    lastName: editUserLastName,
+                    preferredName: editUserPreferredName,
+                    specialty: editUserSpecialty,
+                    practiceName: editUserPracticeName,
+                    credentials: editUserCredentials,
                     emrRole: editUserEmrRole || undefined,
                     requiresCosignature: editUserRequiresCosign,
                     hasEmrAccess: editUserHasEmrAccess,
