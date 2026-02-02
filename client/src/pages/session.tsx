@@ -739,8 +739,25 @@ export default function Session() {
         .map((e) => e.text)
         .join("\n");
 
+      // Generate title: use patient name if provided, otherwise auto-generate from transcript
+      let title: string;
+      if (patientName) {
+        title = `${patientName} - ${new Date().toLocaleDateString()}`;
+      } else if (transcript.trim()) {
+        // Auto-generate title from chief complaint/symptoms
+        try {
+          const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
+          const titleData = await titleResponse.json();
+          title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
+        } catch {
+          title = `Session - ${new Date().toLocaleDateString()}`;
+        }
+      } else {
+        title = `Session - ${new Date().toLocaleDateString()}`;
+      }
+
       const response = await apiRequest("POST", "/api/notes", {
-        title: patientName ? `${patientName} - ${new Date().toLocaleDateString()}` : `Session - ${new Date().toLocaleDateString()}`,
+        title,
         patientName,
         specialty: "general",
         subjective: soapNote?.subjective || "",
