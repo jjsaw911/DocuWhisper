@@ -179,7 +179,7 @@ export default function Admin() {
   
   // User settings management state
   const [editingUser, setEditingUser] = useState<UserInfo | null>(null);
-  const [editUserEmrRole, setEditUserEmrRole] = useState("");
+  const [editUserEmrRole, setEditUserEmrRole] = useState("none");
   const [editUserRequiresCosign, setEditUserRequiresCosign] = useState(false);
   const [editUserHasEmrAccess, setEditUserHasEmrAccess] = useState(false);
   const [editUserSubscription, setEditUserSubscription] = useState<Subscription | null>(null);
@@ -604,7 +604,7 @@ export default function Admin() {
       const response = await apiRequest("GET", `/api/admin/users/${userInfo.userId}/details`);
       const data = await response.json();
       setEditUserSettings(data.settings);
-      setEditUserEmrRole(data.settings?.emrRole || "");
+      setEditUserEmrRole(data.settings?.emrRole || "none");
       setEditUserRequiresCosign(data.settings?.requiresCosignature || false);
       setEditUserHasEmrAccess(data.subscription?.hasEmrAccess || false);
       setEditUserCredentials(data.settings?.credentials || "");
@@ -617,7 +617,7 @@ export default function Admin() {
       if (data.subscription) setEditUserSubscription(data.subscription);
     } catch {
       setEditUserSettings(null);
-      setEditUserEmrRole("");
+      setEditUserEmrRole("none");
       setEditUserRequiresCosign(false);
       setEditUserHasEmrAccess(false);
       setEditUserCredentials("");
@@ -2011,7 +2011,7 @@ export default function Admin() {
                     <SelectValue placeholder="Select EMR role" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">No Role</SelectItem>
+                    <SelectItem value="none">No Role</SelectItem>
                     {Object.entries(EMR_ROLES).map(([key, role]) => (
                       <SelectItem key={key} value={key}>
                         {role.label}
@@ -2071,7 +2071,7 @@ export default function Admin() {
                     specialty: editUserSpecialty,
                     practiceName: editUserPracticeName,
                     credentials: editUserCredentials,
-                    emrRole: editUserEmrRole || undefined,
+                    emrRole: editUserEmrRole === "none" ? undefined : editUserEmrRole,
                     requiresCosignature: editUserRequiresCosign,
                     hasEmrAccess: editUserHasEmrAccess,
                   });
