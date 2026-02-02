@@ -586,6 +586,7 @@ export default function Admin() {
   };
 
   const openEditUser = async (userInfo: UserInfo) => {
+    console.log("[Admin] Opening edit dialog for user:", userInfo);
     setEditingUser(userInfo);
     setSelectedTrialGrant("");
     
@@ -596,6 +597,7 @@ export default function Admin() {
     setEditUserSpecialty(userInfo.specialty || "");
     setEditUserPracticeName(userInfo.practiceName || "");
     setEditUserSubscription(userInfo.subscription || null);
+    console.log("[Admin] Initial subscription set to:", userInfo.subscription);
     
     // Fetch additional details (EMR settings, credentials, etc.)
     try {
