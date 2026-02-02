@@ -291,26 +291,40 @@ export default function Session() {
   };
 
   const transcribeChunk = async (audioBlob: Blob): Promise<string | null> => {
+    // Add timeout to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    
     try {
       const formData = new FormData();
       formData.append("audio", audioBlob, "chunk.webm");
       formData.append("language", transcriptionLanguage);
 
+      console.log(`[transcribeChunk] Starting transcription of ${audioBlob.size} bytes`);
       const response = await fetch("/api/transcribe", {
         method: "POST",
         body: formData,
         credentials: "include",
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
+      
       if (!response.ok) {
-        console.error("Chunk transcription failed");
+        console.error("Chunk transcription failed with status:", response.status);
         return null;
       }
 
       const data = await response.json();
+      console.log(`[transcribeChunk] Completed, got ${data.transcript?.length || 0} chars`);
       return data.transcript || null;
-    } catch (error) {
-      console.error("Chunk transcription error:", error);
+    } catch (error: unknown) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.error("Chunk transcription timed out after 60 seconds");
+      } else {
+        console.error("Chunk transcription error:", error);
+      }
       return null;
     }
   };
@@ -398,12 +412,16 @@ export default function Session() {
   const processNextChunk = async () => {
     // Find next unprocessed chunk
     const chunkItem = pendingChunksRef.current.find(c => !c.processed);
+    const pendingCount = pendingChunksRef.current.length;
+    const unprocessedCount = pendingChunksRef.current.filter(c => !c.processed).length;
+    console.log(`[processNextChunk] Called. Pending: ${pendingCount}, Unprocessed: ${unprocessedCount}, isTranscribing: ${isTranscribingRef.current}`);
+    
     if (!chunkItem) {
       console.log("[Chunk] No unprocessed chunks remaining");
       return;
     }
     if (isTranscribingRef.current) {
-      console.log("[Chunk] Already transcribing, will be picked up later");
+      console.log(`[Chunk] Already transcribing, chunk ${chunkItem.id} will be picked up when current finishes`);
       return;
     }
     
@@ -503,6 +521,7 @@ export default function Session() {
       lastCumulativeTranscriptRef.current = "";
 
       mediaRecorder.ondataavailable = (e) => {
+        console.log(`[MediaRecorder] ondataavailable fired, size: ${e.data.size}, recorder state: ${mediaRecorder.state}`);
         if (e.data.size > 0) {
           // Store the raw fragment for final blob assembly
           chunksRef.current.push(e.data);
@@ -521,8 +540,14 @@ export default function Session() {
           processNextChunk();
         }
       };
+      
+      // Debug: log when recorder unexpectedly stops
+      mediaRecorder.onerror = (event) => {
+        console.error("[MediaRecorder] Error:", event);
+      };
 
       mediaRecorder.start(20000); // 20-second chunks for faster feedback
+      console.log("[MediaRecorder] Started with 20-second chunks");
       setRecordingState("recording");
       setDuration(0);
       addTranscriptEntry("Listening... transcript will appear as you speak");
