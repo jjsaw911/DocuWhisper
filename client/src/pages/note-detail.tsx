@@ -29,6 +29,8 @@ import {
   Wand2,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Languages,
   FileSignature,
   Code2,
@@ -45,7 +47,9 @@ import {
   Wifi,
   WifiOff,
   ClipboardCopy,
-  Mic
+  Mic,
+  PanelRightClose,
+  PanelRightOpen
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
@@ -255,6 +259,7 @@ export default function NoteDetail() {
   const [showSummaryPanel, setShowSummaryPanel] = useState(false);
   const [summaryType, setSummaryType] = useState("brief");
   const [generatedSummary, setGeneratedSummary] = useState("");
+  const [showAiToolsPanel, setShowAiToolsPanel] = useState(false);
   
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -907,8 +912,8 @@ export default function NoteDetail() {
   }
 
   return (
-    <div className="h-full overflow-auto bg-background">
-      <div className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
+    <div className="h-full overflow-hidden bg-background flex flex-col">
+      <div className="border-b bg-background/95 backdrop-blur z-10">
         <div className="flex h-14 items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" asChild data-testid="button-back">
@@ -1114,25 +1119,28 @@ export default function NoteDetail() {
         </div>
       </div>
 
-      <div className="p-6 max-w-4xl mx-auto">
-        <div className="mb-6">
-          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-            {note.patientName && (
-              <div className="flex items-center gap-1">
-                <User className="h-4 w-4" />
-                <span>{note.patientName}</span>
+      <div className="flex-1 flex overflow-hidden">
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-auto">
+          <div className="p-6 max-w-4xl mx-auto">
+            <div className="mb-6">
+              <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                {note.patientName && (
+                  <div className="flex items-center gap-1">
+                    <User className="h-4 w-4" />
+                    <span>{note.patientName}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1">
+                  <Calendar className="h-4 w-4" />
+                  <span>{new Date(note.createdAt).toLocaleDateString()}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Clock className="h-4 w-4" />
+                  <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
+                </div>
               </div>
-            )}
-            <div className="flex items-center gap-1">
-              <Calendar className="h-4 w-4" />
-              <span>{new Date(note.createdAt).toLocaleDateString()}</span>
             </div>
-            <div className="flex items-center gap-1">
-              <Clock className="h-4 w-4" />
-              <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
-            </div>
-          </div>
-        </div>
 
         <Card data-testid="card-details" className="mb-6">
           <CardContent className="pt-4 grid gap-4 sm:grid-cols-2">
@@ -1361,576 +1369,416 @@ Treatment plan..."
           </CardContent>
         </Card>
 
-        {/* AI Tools Section */}
-        <Card className="mb-6">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
-              AI Tools
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div className="flex flex-col items-center">
+            {note.transcript && showTranscript && (
+              <Card data-testid="card-transcript" className="mb-6">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <AudioLines className="h-4 w-4 text-primary" />
+                      Transcript
+                    </CardTitle>
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      onClick={() => copyToClipboard(note.transcript || "")}
+                      data-testid="button-copy-transcript"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="p-4 bg-muted/50 rounded-lg">
+                    <p className="text-base whitespace-pre-wrap leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{note.transcript}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+
+        {/* AI Tools Collapsible Side Panel */}
+        <div 
+          className={`transition-all duration-300 border-l bg-background flex flex-col ${showAiToolsPanel ? 'w-80' : 'w-12'}`}
+          data-testid="panel-ai-tools"
+        >
+          {/* Toggle Button */}
+          <button
+            onClick={() => setShowAiToolsPanel(!showAiToolsPanel)}
+            className="flex items-center justify-center h-12 w-full border-b hover-elevate"
+            data-testid="button-toggle-ai-tools"
+          >
+            {showAiToolsPanel ? (
+              <ChevronRight className="h-5 w-5" />
+            ) : (
+              <Sparkles className="h-5 w-5 text-primary" />
+            )}
+          </button>
+
+          {/* Panel Content */}
+          {showAiToolsPanel && (
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <h3 className="font-semibold">AI Tools</h3>
+              </div>
+
+              {/* Tool Buttons */}
+              <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
-                  size="lg"
+                  className="flex flex-col h-auto py-3"
                   onClick={handleOpenTaskModal}
-                  data-testid="button-create-task"
+                  data-testid="button-create-task-panel"
                 >
-                  <ListTodo className="h-5 w-5" />
+                  <ListTodo className="h-5 w-5 mb-1" />
+                  <span className="text-xs">Add Task</span>
                 </Button>
-                <span className="text-xs mt-1 text-muted-foreground">Add Task</span>
-              </div>
-              <div className="flex flex-col items-center">
                 <Button
                   variant="outline"
-                  size="lg"
+                  className="flex flex-col h-auto py-3"
                   onClick={handleOpenReferralModal}
-                  data-testid="button-referral"
+                  data-testid="button-referral-panel"
                 >
-                  <FileSignature className="h-5 w-5" />
+                  <FileSignature className="h-5 w-5 mb-1" />
+                  <span className="text-xs">Referral</span>
                 </Button>
-                <span className="text-xs mt-1 text-muted-foreground">Referral</span>
-              </div>
-              <div className="flex flex-col items-center">
                 <Button
                   variant="outline"
-                  size="lg"
+                  className="flex flex-col h-auto py-3"
                   onClick={() => codesMutation.mutate()}
                   disabled={codesMutation.isPending}
-                  data-testid="button-codes"
+                  data-testid="button-codes-panel"
                 >
                   {codesMutation.isPending ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <Loader2 className="h-5 w-5 mb-1 animate-spin" />
                   ) : (
-                    <Code2 className="h-5 w-5" />
+                    <Code2 className="h-5 w-5 mb-1" />
                   )}
+                  <span className="text-xs">ICD-10</span>
                 </Button>
-                <span className="text-xs mt-1 text-muted-foreground">ICD-10</span>
-              </div>
-              <div className="flex flex-col items-center">
                 <Button
                   variant="outline"
-                  size="lg"
+                  className="flex flex-col h-auto py-3"
                   onClick={() => setShowAiChat(!showAiChat)}
-                  data-testid="button-ai-chat"
+                  data-testid="button-ai-chat-panel"
                 >
-                  <MessageSquare className="h-5 w-5" />
+                  <MessageSquare className="h-5 w-5 mb-1" />
+                  <span className="text-xs">AI Chat</span>
                 </Button>
-                <span className="text-xs mt-1 text-muted-foreground">AI Chat</span>
-              </div>
-              <div className="flex flex-col items-center">
                 <Button
                   variant="outline"
-                  size="lg"
+                  className="flex flex-col h-auto py-3 col-span-2"
                   onClick={() => setShowSummaryPanel(!showSummaryPanel)}
-                  data-testid="button-summary"
+                  data-testid="button-summary-panel"
                 >
-                  <ClipboardList className="h-5 w-5" />
+                  <ClipboardList className="h-5 w-5 mb-1" />
+                  <span className="text-xs">Summary</span>
                 </Button>
-                <span className="text-xs mt-1 text-muted-foreground">Summary</span>
               </div>
-            </div>
 
-            {/* ICD-10 Codes Panel */}
-            {showCodesPanel && suggestedCodes && (
-              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-codes">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Billing Codes & Diagnoses</h4>
-                  <Button variant="ghost" size="icon" onClick={() => setShowCodesPanel(false)} data-testid="button-close-codes">
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                
-                {suggestedCodes.codes && suggestedCodes.codes.length > 0 && (
-                  <div>
-                    <h5 className="text-sm font-medium mb-2">AI Suggested ICD-10 Codes</h5>
+              {/* ICD-10 Codes Panel */}
+              {showCodesPanel && suggestedCodes && (
+                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">Billing Codes</h4>
+                    <Button variant="ghost" size="icon" onClick={() => setShowCodesPanel(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  {suggestedCodes.codes && suggestedCodes.codes.length > 0 && (
                     <div className="space-y-2">
+                      <h5 className="text-xs font-medium">ICD-10 Codes</h5>
                       {suggestedCodes.codes.map((code, i) => (
-                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
-                          <Badge variant={code.category === "primary" ? "default" : "secondary"}>
+                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border text-xs">
+                          <Badge variant={code.category === "primary" ? "default" : "secondary"} className="text-xs">
                             {code.code}
                           </Badge>
-                          <div className="flex-1">
-                            <p className="text-sm">{code.description}</p>
-                            <p className="text-xs text-muted-foreground capitalize">{code.category} - {code.confidence} confidence</p>
+                          <div className="flex-1 min-w-0">
+                            <p className="truncate">{code.description}</p>
                           </div>
-                          <Button variant="ghost" size="icon" onClick={() => copyToClipboard(code.code)}>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(code.code)}>
                             <Copy className="h-3 w-3" />
                           </Button>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* Manually Added Diagnoses */}
-                {additionalDiagnoses.length > 0 && (
-                  <div>
-                    <h5 className="text-sm font-medium mb-2">Additional Diagnoses</h5>
+                  {suggestedCodes.cptCodes && suggestedCodes.cptCodes.length > 0 && (
                     <div className="space-y-2">
-                      {additionalDiagnoses.map((diag, i) => (
-                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
-                          <Badge variant="outline">{diag.code}</Badge>
-                          <div className="flex-1">
-                            <p className="text-sm">{diag.description}</p>
+                      <h5 className="text-xs font-medium">CPT Codes</h5>
+                      {suggestedCodes.cptCodes.map((code, i) => (
+                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border text-xs">
+                          <Badge variant="outline" className="text-xs">{code.code}</Badge>
+                          <div className="flex-1 min-w-0">
+                            <p className="truncate">{code.description}</p>
                           </div>
-                          <Button variant="ghost" size="icon" onClick={() => removeManualDiagnosis(i)}>
-                            <X className="h-3 w-3" />
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(code.code)}>
+                            <Copy className="h-3 w-3" />
                           </Button>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+              )}
 
-                {/* Add Manual Diagnosis */}
-                <div className="border-t pt-3">
-                  <h5 className="text-sm font-medium mb-2">Add Diagnosis Manually</h5>
+              {/* AI Chat Panel */}
+              {showAiChat && (
+                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">AI Assistant</h4>
+                    <Button variant="ghost" size="icon" onClick={() => setShowAiChat(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="max-h-[200px] overflow-auto space-y-2">
+                    {chatHistory.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-2">
+                        Ask questions about documentation or clinical guidance
+                      </p>
+                    )}
+                    {chatHistory.map((msg, i) => (
+                      <div key={i} className={`p-2 rounded text-xs ${msg.role === "user" ? "bg-primary/10 ml-4" : "bg-background mr-4 border"}`}>
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                  
                   <div className="flex gap-2">
                     <Input
-                      placeholder="ICD-10 Code"
-                      value={newDiagnosisCode}
-                      onChange={(e) => setNewDiagnosisCode(e.target.value)}
-                      className="w-32"
-                      data-testid="input-diagnosis-code"
+                      placeholder="Ask a question..."
+                      value={chatQuestion}
+                      onChange={(e) => setChatQuestion(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
+                      className="text-xs"
+                    />
+                    <Button size="icon" onClick={handleSendChat} disabled={aiChatMutation.isPending || !chatQuestion.trim()}>
+                      {aiChatMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Summary Panel */}
+              {showSummaryPanel && (
+                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">Patient Summary</h4>
+                    <Button variant="ghost" size="icon" onClick={() => setShowSummaryPanel(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <Select value={summaryType} onValueChange={setSummaryType}>
+                      <SelectTrigger className="text-xs">
+                        <SelectValue placeholder="Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="brief">Brief</SelectItem>
+                        <SelectItem value="detailed">Detailed</SelectItem>
+                        <SelectItem value="handover">Handover</SelectItem>
+                        <SelectItem value="discharge">Discharge</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" onClick={() => summaryMutation.mutate()} disabled={summaryMutation.isPending}>
+                      {summaryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate"}
+                    </Button>
+                  </div>
+                  
+                  {generatedSummary && (
+                    <div className="p-2 bg-background rounded border">
+                      <div className="flex justify-end mb-1">
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(generatedSummary)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <p className="text-xs whitespace-pre-wrap">{generatedSummary}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Referral Panel */}
+              {showReferralModal && (
+                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">Referrals</h4>
+                    <Button variant="ghost" size="icon" onClick={() => setShowReferralModal(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  {/* Suggested Referrals */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs font-medium">Suggested</h5>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSuggestedReferrals} disabled={isLoadingReferrals}>
+                        {isLoadingReferrals ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                      </Button>
+                    </div>
+                    
+                    {isLoadingReferrals ? (
+                      <div className="flex items-center justify-center py-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : suggestedReferrals.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-1">No referrals suggested</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {suggestedReferrals.map((ref, index) => (
+                          <div key={index} className={`flex items-start gap-2 p-2 rounded border text-xs ${ref.confirmed ? 'bg-green-50 dark:bg-green-900/20' : 'bg-background'}`}>
+                            <div className="flex-1">
+                              <p className="font-medium">{ref.specialty}</p>
+                              <Badge variant={ref.urgency === 'urgent' || ref.urgency === 'emergent' ? 'destructive' : 'secondary'} className="text-xs">
+                                {ref.urgency}
+                              </Badge>
+                            </div>
+                            {!ref.confirmed && (
+                              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => confirmSuggestedReferral(ref, index)}>
+                                <FileSignature className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual Entry */}
+                  <div className="border-t pt-2 space-y-2">
+                    <h5 className="text-xs font-medium">Create Manually</h5>
+                    <Input
+                      placeholder="Specialty"
+                      value={referralSpecialty}
+                      onChange={(e) => setReferralSpecialty(e.target.value)}
+                      className="text-xs"
                     />
                     <Input
-                      placeholder="Description"
-                      value={newDiagnosisDesc}
-                      onChange={(e) => setNewDiagnosisDesc(e.target.value)}
-                      className="flex-1"
-                      data-testid="input-diagnosis-desc"
+                      placeholder="Reason"
+                      value={referralReason}
+                      onChange={(e) => setReferralReason(e.target.value)}
+                      className="text-xs"
                     />
-                    <Button 
-                      onClick={addManualDiagnosis}
-                      disabled={!newDiagnosisCode.trim()}
-                      size="icon"
-                      data-testid="button-add-diagnosis"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-                
-                {suggestedCodes.cptCodes && suggestedCodes.cptCodes.length > 0 && (
-                  <div>
-                    <h5 className="text-sm font-medium mb-2">CPT E/M Codes</h5>
-                    <div className="space-y-2">
-                      {suggestedCodes.cptCodes.map((code, i) => (
-                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border">
-                          <Badge variant="outline">{code.code}</Badge>
-                          <div className="flex-1">
-                            <p className="text-sm">{code.description}</p>
-                            <p className="text-xs text-muted-foreground">{code.rationale}</p>
-                          </div>
-                          <Button variant="ghost" size="icon" onClick={() => copyToClipboard(code.code)}>
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* AI Chat Panel */}
-            {showAiChat && (
-              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-ai-chat">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-medium">AI Assistant</h4>
-                  <Button variant="ghost" size="icon" onClick={() => setShowAiChat(false)} data-testid="button-close-ai-chat">
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                
-                <div className="max-h-[300px] overflow-auto space-y-3">
-                  {chatHistory.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      Ask questions about documentation, coding, or clinical guidance
-                    </p>
-                  )}
-                  {chatHistory.map((msg, i) => (
-                    <div key={i} className={`p-3 rounded-lg ${msg.role === "user" ? "bg-primary/10 ml-8" : "bg-background mr-8 border"}`}>
-                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                    </div>
-                  ))}
-                </div>
-                
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Ask a question..."
-                    value={chatQuestion}
-                    onChange={(e) => setChatQuestion(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
-                    data-testid="input-ai-chat"
-                  />
-                  <Button onClick={handleSendChat} disabled={aiChatMutation.isPending || !chatQuestion.trim()} data-testid="button-send-ai-chat">
-                    {aiChatMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {/* Patient Summary Panel */}
-            {showSummaryPanel && (
-              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-summary">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Generate Patient Summary</h4>
-                  <Button variant="ghost" size="icon" onClick={() => setShowSummaryPanel(false)} data-testid="button-close-summary">
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                
-                <div className="flex gap-2">
-                  <Select value={summaryType} onValueChange={setSummaryType}>
-                    <SelectTrigger className="w-[180px]" data-testid="select-summary-type">
-                      <SelectValue placeholder="Summary type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="brief">Brief Summary</SelectItem>
-                      <SelectItem value="detailed">Detailed Summary</SelectItem>
-                      <SelectItem value="handover">Handover Summary</SelectItem>
-                      <SelectItem value="discharge">Discharge Instructions</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button onClick={() => summaryMutation.mutate()} disabled={summaryMutation.isPending} className="flex-1" data-testid="button-generate-summary">
-                    {summaryMutation.isPending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Generating...
-                      </>
-                    ) : (
-                      "Generate"
-                    )}
-                  </Button>
-                </div>
-                
-                {generatedSummary && (
-                  <div className="p-3 bg-background rounded border">
-                    <div className="flex justify-end mb-2">
-                      <Button variant="ghost" size="icon" onClick={() => copyToClipboard(generatedSummary)} data-testid="button-copy-summary">
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <p className="text-sm whitespace-pre-wrap" data-testid="text-summary">{generatedSummary}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Referral Letter Modal/Panel */}
-            {showReferralModal && (
-              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-referral">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Referrals</h4>
-                  <Button variant="ghost" size="icon" onClick={() => setShowReferralModal(false)} data-testid="button-close-referral">
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                
-                {/* AI Suggested Referrals */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h5 className="text-sm font-medium">Suggested Referrals</h5>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={fetchSuggestedReferrals}
-                      disabled={isLoadingReferrals}
-                    >
-                      {isLoadingReferrals ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    <Button size="sm" className="w-full" onClick={() => referralMutation.mutate({})} disabled={referralMutation.isPending}>
+                      {referralMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate Letter"}
                     </Button>
                   </div>
                   
-                  {isLoadingReferrals ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                      <span className="ml-2 text-sm text-muted-foreground">Analyzing note...</span>
-                    </div>
-                  ) : suggestedReferrals.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-2">No referrals suggested from this note</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {suggestedReferrals.map((ref, index) => (
-                        <div key={index} className={`flex items-start gap-2 p-2 rounded border ${ref.confirmed ? 'bg-green-50 dark:bg-green-900/20 border-green-200' : 'bg-background'}`}>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{ref.specialty}</p>
-                            <p className="text-xs text-muted-foreground">{ref.reason}</p>
-                            <Badge variant={ref.urgency === 'urgent' || ref.urgency === 'emergent' ? 'destructive' : 'secondary'} className="text-xs mt-1">
-                              {ref.urgency}
-                            </Badge>
-                          </div>
-                          {ref.confirmed ? (
-                            <Badge variant="default" className="bg-green-600">Letter Generated</Badge>
-                          ) : (
-                            <div className="flex gap-1">
-                              <Button 
-                                size="sm" 
-                                variant="default"
-                                onClick={() => confirmSuggestedReferral(ref, index)}
-                                disabled={referralMutation.isPending}
-                              >
-                                <FileSignature className="h-3 w-3 mr-1" />
-                                Generate
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant="ghost"
-                                onClick={() => removeSuggestedReferral(index)}
-                              >
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                  {referralLetter && (
+                    <div className="p-2 bg-background rounded border">
+                      <div className="flex justify-end mb-1 gap-1">
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(referralLetter)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReferralLetter("")}>
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={referralLetter}
+                        onChange={(e) => setReferralLetter(e.target.value)}
+                        className="min-h-[150px] text-xs"
+                      />
                     </div>
                   )}
                 </div>
+              )}
 
-                {/* Manual Referral Entry */}
-                <div className="border-t pt-4 space-y-3">
-                  <h5 className="text-sm font-medium">Create Referral Letter Manually</h5>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Refer to Specialty</Label>
-                      <Input
-                        placeholder="e.g., Cardiology, Orthopedics"
-                        value={referralSpecialty}
-                        onChange={(e) => setReferralSpecialty(e.target.value)}
-                        data-testid="input-referral-specialty"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Reason for Referral</Label>
-                      <Input
-                        placeholder="e.g., Further evaluation"
-                        value={referralReason}
-                        onChange={(e) => setReferralReason(e.target.value)}
-                        data-testid="input-referral-reason"
-                      />
-                    </div>
-                  </div>
-                  
-                  <Button onClick={() => referralMutation.mutate({})} disabled={referralMutation.isPending} className="w-full" data-testid="button-generate-referral">
-                    {referralMutation.isPending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <FileSignature className="mr-2 h-4 w-4" />
-                        Generate Referral Letter
-                      </>
-                    )}
-                  </Button>
-                </div>
-                
-                {referralLetter && (
-                  <div className="p-3 bg-background rounded border">
-                    <div className="flex justify-end mb-2 gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => copyToClipboard(referralLetter)} data-testid="button-copy-referral">
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => setReferralLetter("")} data-testid="button-delete-referral">
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <Textarea
-                      value={referralLetter}
-                      onChange={(e) => setReferralLetter(e.target.value)}
-                      className="min-h-[300px] text-sm"
-                      data-testid="textarea-referral-letter"
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Create Task Modal/Panel */}
-            {showTaskModal && (
-              <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4" data-testid="panel-create-task">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-medium">Tasks for This Note</h4>
-                  <Button variant="ghost" size="icon" onClick={() => setShowTaskModal(false)} data-testid="button-close-task-modal">
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                
-                {/* AI Suggested Tasks */}
-                <div className="space-y-2">
+              {/* Task Panel */}
+              {showTaskModal && (
+                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
                   <div className="flex items-center justify-between">
-                    <h5 className="text-sm font-medium">Suggested Tasks</h5>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={fetchSuggestedTasks}
-                      disabled={isLoadingSuggestedTasks}
-                    >
-                      {isLoadingSuggestedTasks ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    <h4 className="font-medium text-sm">Tasks</h4>
+                    <Button variant="ghost" size="icon" onClick={() => setShowTaskModal(false)}>
+                      <X className="h-4 w-4" />
                     </Button>
                   </div>
                   
-                  {isLoadingSuggestedTasks ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                      <span className="ml-2 text-sm text-muted-foreground">Analyzing note...</span>
+                  {/* Suggested Tasks */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs font-medium">Suggested</h5>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSuggestedTasks} disabled={isLoadingSuggestedTasks}>
+                        {isLoadingSuggestedTasks ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                      </Button>
                     </div>
-                  ) : suggestedTasks.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-2">No tasks suggested from this note</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {suggestedTasks.map((task, index) => (
-                        <div key={index} className={`flex items-start gap-2 p-2 rounded border ${task.confirmed ? 'bg-green-50 dark:bg-green-900/20 border-green-200' : 'bg-background'}`}>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{task.title}</p>
-                            <p className="text-xs text-muted-foreground">{task.reason}</p>
-                            <div className="flex gap-1 mt-1">
+                    
+                    {isLoadingSuggestedTasks ? (
+                      <div className="flex items-center justify-center py-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : suggestedTasks.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-1">No tasks suggested</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {suggestedTasks.map((task, index) => (
+                          <div key={index} className={`flex items-start gap-2 p-2 rounded border text-xs ${task.confirmed ? 'bg-green-50 dark:bg-green-900/20' : 'bg-background'}`}>
+                            <div className="flex-1">
+                              <p className="font-medium">{task.title}</p>
                               <Badge variant="outline" className="text-xs">{task.category}</Badge>
-                              <Badge variant={task.priority === 'high' ? 'destructive' : 'secondary'} className="text-xs">{task.priority}</Badge>
                             </div>
-                          </div>
-                          {task.confirmed ? (
-                            <Badge variant="default" className="bg-green-600">Added</Badge>
-                          ) : (
-                            <div className="flex gap-1">
-                              <Button 
-                                size="sm" 
-                                variant="default"
-                                onClick={() => confirmSuggestedTask(task, index)}
-                                disabled={createTaskMutation.isPending}
-                              >
+                            {!task.confirmed && (
+                              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => confirmSuggestedTask(task, index)}>
                                 <Check className="h-3 w-3" />
                               </Button>
-                              <Button 
-                                size="sm" 
-                                variant="ghost"
-                                onClick={() => removeSuggestedTask(index)}
-                              >
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual Entry */}
+                  <div className="border-t pt-2 space-y-2">
+                    <h5 className="text-xs font-medium">Add Manually</h5>
+                    <Input
+                      placeholder="Task description"
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      className="text-xs"
+                    />
+                    <Select value={newTaskCategory} onValueChange={setNewTaskCategory}>
+                      <SelectTrigger className="text-xs">
+                        <SelectValue placeholder="Category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TASK_CATEGORIES.map((cat) => (
+                          <SelectItem key={cat.value} value={cat.value}>
+                            {cat.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" className="w-full" onClick={handleCreateTask} disabled={!newTaskTitle.trim() || createTaskMutation.isPending}>
+                      {createTaskMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Task"}
+                    </Button>
+                  </div>
+
+                  {noteTasks && noteTasks.length > 0 && (
+                    <div className="border-t pt-2">
+                      <h5 className="text-xs font-medium mb-1">Linked Tasks ({noteTasks.length})</h5>
+                      <div className="space-y-1">
+                        {noteTasks.slice(0, 3).map((task) => (
+                          <div key={task.id} className="flex items-center gap-2 text-xs p-1 bg-background rounded">
+                            <ListTodo className="h-3 w-3 text-muted-foreground" />
+                            <span className={task.status === "completed" ? "line-through text-muted-foreground" : ""}>
+                              {task.title}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
-
-                {/* Manual Task Entry */}
-                <div className="border-t pt-4 space-y-3">
-                  <h5 className="text-sm font-medium">Add Task Manually</h5>
-                  <div className="space-y-2">
-                    <Input
-                      placeholder="e.g., Refer patient to GI for evaluation"
-                      value={newTaskTitle}
-                      onChange={(e) => setNewTaskTitle(e.target.value)}
-                      data-testid="input-new-task-title"
-                    />
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Category</Label>
-                      <Select value={newTaskCategory} onValueChange={setNewTaskCategory}>
-                        <SelectTrigger data-testid="select-new-task-category">
-                          <SelectValue placeholder="Select category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TASK_CATEGORIES.map((cat) => (
-                            <SelectItem key={cat.value} value={cat.value}>
-                              <div className="flex items-center gap-2">
-                                <cat.icon className="h-4 w-4" />
-                                {cat.label}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Due Date (optional)</Label>
-                      <Input
-                        type="date"
-                        value={newTaskDueDate}
-                        onChange={(e) => setNewTaskDueDate(e.target.value)}
-                        data-testid="input-new-task-due-date"
-                      />
-                    </div>
-                  </div>
-                  <Button 
-                    onClick={handleCreateTask} 
-                    disabled={!newTaskTitle.trim() || createTaskMutation.isPending} 
-                    className="w-full" 
-                    data-testid="button-submit-task"
-                  >
-                    {createTaskMutation.isPending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Creating...
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add Task
-                      </>
-                    )}
-                  </Button>
-                </div>
-
-                {noteTasks && noteTasks.length > 0 && (
-                  <div className="mt-4 border-t pt-4">
-                    <h5 className="text-sm font-medium mb-2">Tasks linked to this note ({noteTasks.length})</h5>
-                    <div className="space-y-2">
-                      {noteTasks.slice(0, 3).map((task) => (
-                        <div key={task.id} className="flex items-center gap-2 text-sm p-2 bg-background rounded">
-                          <ListTodo className="h-4 w-4 text-muted-foreground" />
-                          <span className={task.status === "completed" ? "line-through text-muted-foreground" : ""}>
-                            {task.title}
-                          </span>
-                        </div>
-                      ))}
-                      {noteTasks.length > 3 && (
-                        <Link href="/tasks" className="text-sm text-primary hover:underline">
-                          View all {noteTasks.length} tasks
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {note.transcript && showTranscript && (
-          <Card data-testid="card-transcript" className="mb-6">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <AudioLines className="h-4 w-4 text-primary" />
-                  Transcript
-                </CardTitle>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => copyToClipboard(note.transcript || "")}
-                  data-testid="button-copy-transcript"
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <p className="text-base whitespace-pre-wrap leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{note.transcript}</p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
