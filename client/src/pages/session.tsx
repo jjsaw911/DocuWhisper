@@ -512,8 +512,11 @@ export default function Session() {
       nextChunkIdRef.current = 0;
       processedChunkIdsRef.current.clear();
       
-      // Reset transcript state
-      committedTextRef.current = "";
+      // Reset transcript state - but PRESERVE existing transcript in resume mode
+      if (!isResumeMode || !resumeNoteData?.transcript) {
+        committedTextRef.current = "";
+      }
+      // Always reset these - they're for new recording session
       partialTextRef.current = "";
       recentLinesRef.current = [];
       lastCumulativeTranscriptRef.current = "";
