@@ -967,6 +967,7 @@ export default function Session() {
 
       // Clear backup and navigate to saved note
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", savedNoteId.toString()] });
       clearBackup();
 
       navigate(`/notes/${savedNoteId}`);
