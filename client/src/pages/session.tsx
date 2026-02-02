@@ -76,6 +76,18 @@ export default function Session() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isNewSession = !params.id || params.id === "new";
+  
+  // Check for resume mode from URL query parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const resumeNoteId = urlParams.get("resumeId");
+  const [isResumeMode, setIsResumeMode] = useState(!!resumeNoteId);
+  const [resumeNoteData, setResumeNoteData] = useState<{
+    id: number;
+    title: string;
+    transcript: string;
+    patientName: string | null;
+    patientContext: string | null;
+  } | null>(null);
 
   const [patientName, setPatientName] = useState("");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -165,6 +177,48 @@ export default function Session() {
       setHasBackup(true);
     }
   }, [loadBackup]);
+
+  // Load existing note data when in resume mode
+  useEffect(() => {
+    if (resumeNoteId) {
+      const fetchNote = async () => {
+        try {
+          const response = await apiRequest("GET", `/api/notes/${resumeNoteId}`);
+          const note = await response.json();
+          setResumeNoteData({
+            id: note.id,
+            title: note.title,
+            transcript: note.transcript || "",
+            patientName: note.patientName,
+            patientContext: note.patientContext,
+          });
+          // Pre-populate fields
+          if (note.patientName) setPatientName(note.patientName);
+          if (note.patientContext) setContextText(note.patientContext);
+          // Show existing transcript
+          if (note.transcript) {
+            addTranscriptEntry("--- Previous transcript ---", "system");
+            addTranscriptEntry(note.transcript, "content");
+            committedTextRef.current = note.transcript;
+            addTranscriptEntry("--- Recording new audio below ---", "system");
+          }
+          toast({
+            title: "Resuming session",
+            description: `Adding more to "${note.title}"`,
+          });
+        } catch (error) {
+          console.error("Failed to load note for resume:", error);
+          toast({
+            title: "Failed to load note",
+            description: "Starting a new session instead.",
+            variant: "destructive",
+          });
+          setIsResumeMode(false);
+        }
+      };
+      fetchNote();
+    }
+  }, [resumeNoteId]);
 
   // Enumerate available microphones
   useEffect(() => {
@@ -630,13 +684,9 @@ export default function Session() {
         return;
       }
 
-      // Just show ready message - don't auto-generate or save
-      addTranscriptEntry("Ready. Click Resume to add more audio, or Generate SOAP when done.");
-      
-      toast({
-        title: "Recording complete",
-        description: "Click Resume to add more, or Generate SOAP when ready.",
-      });
+      // Auto-generate SOAP and save
+      addTranscriptEntry("Generating SOAP note...");
+      await autoGenerateAndSave(fullTranscript);
 
     } catch (error) {
       console.error("Finalization failed:", error);
@@ -645,9 +695,98 @@ export default function Session() {
         description: "There was an issue processing the recording.",
         variant: "destructive",
       });
+      setRecordingState("idle");
     }
+  };
 
-    setRecordingState("idle");
+  // Automatic SOAP generation and save after transcription
+  const autoGenerateAndSave = async (transcript: string) => {
+    try {
+      // Step 1: Generate SOAP note
+      const soapResponse = await apiRequest("POST", "/api/generate-soap", {
+        transcript,
+        patientName,
+        specialty: "general",
+        templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+        outputLanguage: transcriptionLanguage,
+        context: contextText || undefined,
+      });
+      const soapData = await soapResponse.json();
+      setSoapNote(soapData);
+
+      addTranscriptEntry("Saving note...");
+
+      let savedNoteId: number;
+
+      if (isResumeMode && resumeNoteData) {
+        // Update existing note (resume mode)
+        const updateResponse = await apiRequest("PATCH", `/api/notes/${resumeNoteData.id}`, {
+          subjective: soapData.subjective || "",
+          objective: soapData.objective || "",
+          assessment: soapData.assessment || "",
+          plan: soapData.plan || "",
+          transcript,
+          patientContext: contextText || null,
+        });
+        await updateResponse.json();
+        savedNoteId = resumeNoteData.id;
+        
+        toast({
+          title: "Session updated",
+          description: "Your additional recording has been added.",
+        });
+      } else {
+        // Create new note
+        let title: string;
+        if (patientName) {
+          title = `${patientName} - ${new Date().toLocaleDateString()}`;
+        } else if (transcript.trim()) {
+          try {
+            const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
+            const titleData = await titleResponse.json();
+            title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
+          } catch {
+            title = `Session - ${new Date().toLocaleDateString()}`;
+          }
+        } else {
+          title = `Session - ${new Date().toLocaleDateString()}`;
+        }
+
+        const saveResponse = await apiRequest("POST", "/api/notes", {
+          title,
+          patientName,
+          specialty: "general",
+          subjective: soapData.subjective || "",
+          objective: soapData.objective || "",
+          assessment: soapData.assessment || "",
+          plan: soapData.plan || "",
+          transcript,
+          patientContext: contextText || null,
+        });
+        const savedNote = await saveResponse.json();
+        savedNoteId = savedNote.id;
+        
+        toast({
+          title: "Session complete",
+          description: "Your note has been saved automatically.",
+        });
+      }
+
+      // Clear backup and navigate to saved note
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      clearBackup();
+
+      navigate(`/notes/${savedNoteId}`);
+
+    } catch (error) {
+      console.error("Auto-save failed:", error);
+      toast({
+        title: "Auto-save failed",
+        description: "Please try saving manually.",
+        variant: "destructive",
+      });
+      setRecordingState("idle");
+    }
   };
 
   const transcribeMutation = useMutation({
@@ -671,25 +810,21 @@ export default function Session() {
     },
     onSuccess: async (data) => {
       if (data.transcript) {
-        // Add transcript content - this makes hasTranscript true
+        // Add transcript content
         addTranscriptEntry(data.transcript, "content");
         committedTextRef.current = (committedTextRef.current + " " + data.transcript).trim();
         
-        // Just show ready message - don't auto-generate or save
-        addTranscriptEntry("Ready. Click Resume to add more audio, or Generate SOAP when done.");
-        
-        toast({
-          title: "Recording complete",
-          description: "Click Resume to add more, or Generate SOAP when ready.",
-        });
+        // Auto-generate SOAP and save
+        addTranscriptEntry("Generating SOAP note...");
+        await autoGenerateAndSave(committedTextRef.current);
       } else {
         toast({
           title: "No speech detected",
           description: "The recording didn't capture any speech. Please try again.",
           variant: "destructive",
         });
+        setRecordingState("idle");
       }
-      setRecordingState("idle");
     },
     onError: (error: Error) => {
       setRecordingState("idle");

@@ -44,7 +44,8 @@ import {
   Pill,
   Wifi,
   WifiOff,
-  ClipboardCopy
+  ClipboardCopy,
+  Mic
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
@@ -714,6 +715,19 @@ export default function NoteDetail() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* Resume Recording button */}
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+              data-testid="button-resume-recording"
+            >
+              <Link href={`/session?resumeId=${id}`}>
+                <Mic className="h-4 w-4 mr-2" />
+                Add More
+              </Link>
+            </Button>
+            
             {/* Drug interaction check button */}
             <DrugInteractionDialog text={formData.soapNote} />
             
