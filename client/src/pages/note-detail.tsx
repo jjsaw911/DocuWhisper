@@ -1121,135 +1121,136 @@ export default function NoteDetail() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Main Content Area */}
-        <div className="flex-1 overflow-auto">
-          <div className="p-6 max-w-4xl mx-auto">
-            <div className="mb-6">
-              <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                {note.patientName && (
-                  <div className="flex items-center gap-1">
-                    <User className="h-4 w-4" />
-                    <span>{note.patientName}</span>
-                  </div>
-                )}
+        <div className="flex-1 overflow-auto p-6">
+          <div className="max-w-4xl mx-auto space-y-6">
+            {/* Metadata */}
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+              {note.patientName && (
                 <div className="flex items-center gap-1">
-                  <Calendar className="h-4 w-4" />
-                  <span>{new Date(note.createdAt).toLocaleDateString()}</span>
+                  <User className="h-4 w-4" />
+                  <span>{note.patientName}</span>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
-                  <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
-                </div>
+              )}
+              <div className="flex items-center gap-1">
+                <Calendar className="h-4 w-4" />
+                <span>{new Date(note.createdAt).toLocaleDateString()}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Clock className="h-4 w-4" />
+                <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
               </div>
             </div>
 
-        <Card data-testid="card-details" className="mb-6">
-          <CardContent className="pt-4 grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="title">Title</Label>
-              <Input
-                id="title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                data-testid="input-title"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="patientName">Patient Name</Label>
-              <Input
-                id="patientName"
-                value={formData.patientName}
-                onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
-                data-testid="input-patient-name"
-              />
-            </div>
-          </CardContent>
-        </Card>
+            {/* Title/Patient Card */}
+            <Card data-testid="card-details">
+              <CardContent className="pt-4 grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="title">Title</Label>
+                  <Input
+                    id="title"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    data-testid="input-title"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="patientName">Patient Name</Label>
+                  <Input
+                    id="patientName"
+                    value={formData.patientName}
+                    onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
+                    data-testid="input-patient-name"
+                  />
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card data-testid="card-soap" className="mb-6">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                SOAP Note
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                {/* Template dropdown */}
-                <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
-                  <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
-                    <SelectValue placeholder="Template" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Default</SelectItem>
-                    {templates.map((template) => (
-                      <SelectItem key={template.id} value={template.id.toString()}>
-                        {template.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                
-                {/* Re-transcribe button */}
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => regenerateMutation.mutate()}
-                  disabled={regenerateMutation.isPending || !note.transcript}
-                  data-testid="button-retranscribe"
-                >
-                  {regenerateMutation.isPending ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <>
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                      Redo
-                    </>
-                  )}
-                </Button>
-                
-                {/* Transcript toggle - only show if transcript exists */}
-                {note.transcript && (
-                  <Button 
-                    variant={showTranscript ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => setShowTranscript(!showTranscript)}
-                    data-testid="button-toggle-transcript-header"
-                  >
-                    <FileText className="h-3 w-3 mr-1" />
-                    Transcript
-                    {showTranscript ? (
-                      <ChevronUp className="ml-1 h-3 w-3" />
-                    ) : (
-                      <ChevronDown className="ml-1 h-3 w-3" />
+            {/* SOAP Note Card */}
+            <Card data-testid="card-soap">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    SOAP Note
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    {/* Template dropdown */}
+                    <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
+                      <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
+                        <SelectValue placeholder="Template" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default</SelectItem>
+                        {templates.map((template) => (
+                          <SelectItem key={template.id} value={template.id.toString()}>
+                            {template.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    
+                    {/* Re-transcribe button */}
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => regenerateMutation.mutate()}
+                      disabled={regenerateMutation.isPending || !note.transcript}
+                      data-testid="button-retranscribe"
+                    >
+                      {regenerateMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <>
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Redo
+                        </>
+                      )}
+                    </Button>
+                    
+                    {/* Transcript toggle - only show if transcript exists */}
+                    {note.transcript && (
+                      <Button 
+                        variant={showTranscript ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setShowTranscript(!showTranscript)}
+                        data-testid="button-toggle-transcript-header"
+                      >
+                        <FileText className="h-3 w-3 mr-1" />
+                        Transcript
+                        {showTranscript ? (
+                          <ChevronUp className="ml-1 h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="ml-1 h-3 w-3" />
+                        )}
+                      </Button>
                     )}
-                  </Button>
-                )}
+                    
+                    {/* Copy button */}
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      onClick={() => copyToClipboard(formData.soapNote)}
+                      data-testid="button-copy-soap"
+                    >
+                      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Drug interaction alert */}
+                <DrugInteractionAlert text={formData.soapNote} />
                 
-                {/* Copy button */}
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => copyToClipboard(formData.soapNote)}
-                  data-testid="button-copy-soap"
-                >
-                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Drug interaction alert */}
-            <DrugInteractionAlert text={formData.soapNote} />
-            
-            <MedicalAutocomplete
-              value={formData.soapNote}
-              onChange={(value) => {
-                setFormData({ ...formData, soapNote: value });
-                // Send update to collaborators
-                sendUpdate("soapNote", value);
-              }}
-              className="min-h-[400px] text-base leading-relaxed"
-              rows={16}
-              placeholder="SUBJECTIVE:
+                <MedicalAutocomplete
+                  value={formData.soapNote}
+                  onChange={(value) => {
+                    setFormData({ ...formData, soapNote: value });
+                    // Send update to collaborators
+                    sendUpdate("soapNote", value);
+                  }}
+                  className="min-h-[400px] text-base leading-relaxed"
+                  rows={16}
+                  placeholder="SUBJECTIVE:
 Patient's symptoms...
 
 OBJECTIVE:
@@ -1260,115 +1261,116 @@ Diagnosis...
 
 PLAN:
 Treatment plan..."
-              data-testid="textarea-soap"
-            />
-            
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowAiInstructions(!showAiInstructions)}
-              className="text-xs text-muted-foreground"
-              data-testid="button-toggle-ai"
-            >
-              <Wand2 className="mr-1 h-3 w-3" />
-              AI Instructions
-              {showAiInstructions ? (
-                <ChevronUp className="ml-1 h-3 w-3" />
-              ) : (
-                <ChevronDown className="ml-1 h-3 w-3" />
-              )}
-            </Button>
-
-            {showAiInstructions && (
-              <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">Template</Label>
-                  <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
-                    <SelectTrigger data-testid="select-regenerate-template">
-                      <SelectValue placeholder="Use default template" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">Default (no template)</SelectItem>
-                      {templates.map((template) => (
-                        <SelectItem key={template.id} value={template.id.toString()}>
-                          {template.name}
-                          {template.isDefault && " (Default)"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Choose a template to change how the SOAP note is generated
-                  </p>
-                </div>
-                <Textarea
-                  placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on chest pain symptoms' or 'Add that patient has history of diabetes'"
-                  value={aiInstructions}
-                  onChange={(e) => setAiInstructions(e.target.value)}
-                  className="min-h-[80px]"
-                  data-testid="textarea-ai-instructions"
+                  data-testid="textarea-soap"
                 />
-                <Button 
-                  variant="secondary" 
-                  onClick={() => regenerateMutation.mutate()}
-                  disabled={regenerateMutation.isPending || !note.transcript}
-                  className="w-full"
-                  data-testid="button-regenerate"
+                
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAiInstructions(!showAiInstructions)}
+                  className="text-xs text-muted-foreground"
+                  data-testid="button-toggle-ai"
                 >
-                  {regenerateMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Regenerating...
-                    </>
+                  <Wand2 className="mr-1 h-3 w-3" />
+                  AI Instructions
+                  {showAiInstructions ? (
+                    <ChevronUp className="ml-1 h-3 w-3" />
                   ) : (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Regenerate SOAP Note
-                    </>
+                    <ChevronDown className="ml-1 h-3 w-3" />
                   )}
                 </Button>
-                {!note.transcript && (
-                  <p className="text-xs text-muted-foreground text-center">
-                    Regeneration requires a transcript.
-                  </p>
-                )}
-              </div>
-            )}
 
-            <div className="flex items-center gap-2">
-              <Select value={translateLanguage} onValueChange={setTranslateLanguage}>
-                <SelectTrigger className="w-[100px] text-xs" data-testid="select-translate-language">
-                  <SelectValue placeholder="Language" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="es">Spanish</SelectItem>
-                  <SelectItem value="fr">French</SelectItem>
-                  <SelectItem value="de">German</SelectItem>
-                  <SelectItem value="pt">Portuguese</SelectItem>
-                  <SelectItem value="en">English</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => translateMutation.mutate(translateLanguage)}
-                disabled={translateMutation.isPending || !formData.soapNote}
-                className="text-xs text-muted-foreground"
-                data-testid="button-translate"
-              >
-                {translateMutation.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <>
-                    <Languages className="mr-1 h-3 w-3" />
-                    Translate
-                  </>
+                {showAiInstructions && (
+                  <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Template</Label>
+                      <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
+                        <SelectTrigger data-testid="select-regenerate-template">
+                          <SelectValue placeholder="Use default template" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default (no template)</SelectItem>
+                          {templates.map((template) => (
+                            <SelectItem key={template.id} value={template.id.toString()}>
+                              {template.name}
+                              {template.isDefault && " (Default)"}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Choose a template to change how the SOAP note is generated
+                      </p>
+                    </div>
+                    <Textarea
+                      placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on chest pain symptoms' or 'Add that patient has history of diabetes'"
+                      value={aiInstructions}
+                      onChange={(e) => setAiInstructions(e.target.value)}
+                      className="min-h-[80px]"
+                      data-testid="textarea-ai-instructions"
+                    />
+                    <Button 
+                      variant="secondary" 
+                      onClick={() => regenerateMutation.mutate()}
+                      disabled={regenerateMutation.isPending || !note.transcript}
+                      className="w-full"
+                      data-testid="button-regenerate"
+                    >
+                      {regenerateMutation.isPending ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Regenerating...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          Regenerate SOAP Note
+                        </>
+                      )}
+                    </Button>
+                    {!note.transcript && (
+                      <p className="text-xs text-muted-foreground text-center">
+                        Regeneration requires a transcript.
+                      </p>
+                    )}
+                  </div>
                 )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
 
+                <div className="flex items-center gap-2">
+                  <Select value={translateLanguage} onValueChange={setTranslateLanguage}>
+                    <SelectTrigger className="w-[100px] text-xs" data-testid="select-translate-language">
+                      <SelectValue placeholder="Language" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="es">Spanish</SelectItem>
+                      <SelectItem value="fr">French</SelectItem>
+                      <SelectItem value="de">German</SelectItem>
+                      <SelectItem value="pt">Portuguese</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => translateMutation.mutate(translateLanguage)}
+                    disabled={translateMutation.isPending || !formData.soapNote}
+                    className="text-xs text-muted-foreground"
+                    data-testid="button-translate"
+                  >
+                    {translateMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <>
+                        <Languages className="mr-1 h-3 w-3" />
+                        Translate
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Transcript Card */}
             {note.transcript && showTranscript && (
               <Card data-testid="card-transcript" className="mb-6">
                 <CardHeader className="pb-3">
