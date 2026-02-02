@@ -1867,8 +1867,8 @@ PLAN: ${plan || "Not provided"}
       const subscription = await storage.getSubscription(userId);
       
       res.json({
-        settings,
-        subscription,
+        settings: settings || null,
+        subscription: subscription || null,
       });
     } catch (error) {
       console.error("Error getting user details:", error);
