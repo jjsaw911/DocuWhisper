@@ -125,6 +125,7 @@ export default function Session() {
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationRef = useRef<number | null>(null);
+  const isRecordingRef = useRef<boolean>(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isTranscribingRef = useRef<boolean>(false);
   
@@ -495,7 +496,7 @@ export default function Session() {
   };
 
   const updateAudioLevel = useCallback(() => {
-    if (analyserRef.current && recordingState === "recording") {
+    if (analyserRef.current && isRecordingRef.current) {
       const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
       analyserRef.current.getByteFrequencyData(dataArray);
       
@@ -510,7 +511,7 @@ export default function Session() {
       
       animationRef.current = requestAnimationFrame(updateAudioLevel);
     }
-  }, [recordingState]);
+  }, []);
 
   const startRecording = async () => {
     try {
@@ -627,6 +628,7 @@ export default function Session() {
       // Store interval ref for cleanup
       (streamRef.current as any)._segmentInterval = segmentInterval;
       
+      isRecordingRef.current = true;
       setRecordingState("recording");
       setDuration(0);
       addTranscriptEntry("Listening... transcript will appear as you speak");
@@ -666,6 +668,7 @@ export default function Session() {
         recorder.stop();
       }
       
+      isRecordingRef.current = false;
       setRecordingState("paused");
       addTranscriptEntry("Transcript paused - processing audio...");
       
@@ -744,6 +747,7 @@ export default function Session() {
       const segmentInterval = setInterval(cycleSegment, chunkIntervalSec * 1000);
       (streamRef.current as any)._segmentInterval = segmentInterval;
       
+      isRecordingRef.current = true;
       setRecordingState("recording");
       addTranscriptEntry("Transcript resumed");
       
@@ -763,6 +767,8 @@ export default function Session() {
         (streamRef.current as any)._segmentInterval = null;
         console.log("[Stop] Segment interval cleared");
       }
+      
+      isRecordingRef.current = false;
       
       if (mediaRecorderRef.current) {
         const recorder = mediaRecorderRef.current;
