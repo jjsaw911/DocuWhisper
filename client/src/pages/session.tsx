@@ -80,6 +80,7 @@ export default function Session() {
   // Check for resume mode from URL query parameter
   const urlParams = new URLSearchParams(window.location.search);
   const resumeNoteId = urlParams.get("resumeId");
+  const autoStartRecording = urlParams.get("autoStart") === "true";
   const [isResumeMode, setIsResumeMode] = useState(!!resumeNoteId);
   const [resumeNoteData, setResumeNoteData] = useState<{
     id: number;
@@ -92,6 +93,8 @@ export default function Session() {
   // Refs to avoid stale closures in async callbacks
   const isResumeModeRef = useRef(!!resumeNoteId);
   const resumeNoteDataRef = useRef<typeof resumeNoteData>(null);
+  const hasAutoStartedRef = useRef(false);
+  const startRecordingRef = useRef<(() => Promise<void>) | null>(null);
 
   const [patientName, setPatientName] = useState("");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -215,6 +218,15 @@ export default function Session() {
             title: "Resuming session",
             description: `Adding more to "${note.title}"`,
           });
+          
+          // Auto-start recording if autoStart param is set
+          if (autoStartRecording && !hasAutoStartedRef.current) {
+            hasAutoStartedRef.current = true;
+            // Small delay to ensure everything is initialized
+            setTimeout(() => {
+              startRecordingRef.current?.();
+            }, 500);
+          }
         } catch (error) {
           console.error("Failed to load note for resume:", error);
           toast({
@@ -228,7 +240,7 @@ export default function Session() {
       };
       fetchNote();
     }
-  }, [resumeNoteId]);
+  }, [resumeNoteId, autoStartRecording]);
 
   // Enumerate available microphones
   useEffect(() => {
@@ -633,6 +645,9 @@ export default function Session() {
       });
     }
   };
+  
+  // Assign to ref for use in useEffect (auto-start)
+  startRecordingRef.current = startRecording;
 
   const pauseRecording = () => {
     if (mediaRecorderRef.current && recordingState === "recording") {

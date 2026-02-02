@@ -722,9 +722,9 @@ export default function NoteDetail() {
               asChild
               data-testid="button-resume-recording"
             >
-              <Link href={`/session?resumeId=${id}`}>
+              <Link href={`/session?resumeId=${id}&autoStart=true`}>
                 <Mic className="h-4 w-4 mr-2" />
-                Add More
+                Resume
               </Link>
             </Button>
             
