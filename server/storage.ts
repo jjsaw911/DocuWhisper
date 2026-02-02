@@ -206,12 +206,20 @@ class DatabaseStorage implements IStorage {
   }
 
   async updateSubscription(userId: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined> {
-    const [updated] = await db
-      .update(subscriptions)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(subscriptions.userId, userId))
+    // Use upsert to create subscription if it doesn't exist
+    const [result] = await db
+      .insert(subscriptions)
+      .values({ 
+        userId,
+        status: "inactive",
+        ...data,
+      })
+      .onConflictDoUpdate({
+        target: subscriptions.userId,
+        set: { ...data, updatedAt: new Date() },
+      })
       .returning();
-    return updated;
+    return result;
   }
 
   async getTemplatesByUser(userId: string): Promise<Template[]> {
@@ -252,16 +260,24 @@ class DatabaseStorage implements IStorage {
   }
 
   async extendSubscription(userId: string, newPeriodEnd: Date): Promise<Subscription | undefined> {
-    const [updated] = await db
-      .update(subscriptions)
-      .set({ 
-        currentPeriodEnd: newPeriodEnd,
+    // Use upsert to create subscription if it doesn't exist
+    const [result] = await db
+      .insert(subscriptions)
+      .values({ 
+        userId,
         status: "active",
-        updatedAt: new Date() 
+        currentPeriodEnd: newPeriodEnd,
       })
-      .where(eq(subscriptions.userId, userId))
+      .onConflictDoUpdate({
+        target: subscriptions.userId,
+        set: { 
+          currentPeriodEnd: newPeriodEnd,
+          status: "active",
+          updatedAt: new Date() 
+        },
+      })
       .returning();
-    return updated;
+    return result;
   }
 
   // Invite functions
