@@ -10,7 +10,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams, useLocation } from "wouter";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import html2pdf from "html2pdf.js";
 import { 
   ArrowLeft, 
   Save,
@@ -55,6 +56,7 @@ import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-i
 import { useCollaboration } from "@/hooks/use-collaboration";
 import { CollaboratorAvatars } from "@/components/collaborator-avatars";
 import { MedicalAutocomplete } from "@/components/medical-autocomplete";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Select,
   SelectContent,
@@ -770,7 +772,6 @@ export default function NoteDetail() {
   };
 
   const exportToPDF = () => {
-    // Build sections for confirmed items
     const confirmedTasksHtml = noteTasks && noteTasks.length > 0 ? `
       <div class="section">
         <h2>Tasks</h2>
@@ -801,12 +802,10 @@ export default function NoteDetail() {
       </div>
     ` : '';
 
-    // Collect all confirmed referral letters
     const confirmedReferralLetters = suggestedReferrals
       .filter(r => r.confirmed && r.letterGenerated)
       .map(r => ({ specialty: r.specialty, letter: r.letterGenerated! }));
     
-    // Include manual referral letter if present
     if (referralLetter && !confirmedReferralLetters.some(r => r.letter === referralLetter)) {
       confirmedReferralLetters.push({ specialty: referralSpecialty || "Specialist", letter: referralLetter });
     }
@@ -823,46 +822,62 @@ export default function NoteDetail() {
       </div>
     ` : '';
 
-    const content = `
-      <html>
-        <head>
-          <title>${formData.title || "SOAP Note"}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
-            h1 { color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px; }
-            h2 { color: #0d9488; font-size: 1.2em; margin-top: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
-            .meta { color: #6b7280; margin-bottom: 24px; }
-            .content { white-space: pre-wrap; line-height: 1.6; }
-            .section { margin-top: 24px; }
-            .section ul { margin: 0; padding-left: 20px; }
-            .section li { margin-bottom: 8px; }
-            .referral-content { background: #f3f4f6; padding: 16px; border-radius: 8px; margin-top: 12px; line-height: 1.6; }
-            @media print {
-              .section { page-break-inside: avoid; }
-            }
-          </style>
-        </head>
-        <body>
-          <h1>${formData.title || "SOAP Note"}</h1>
-          <div class="meta">
-            ${formData.patientName ? `<p>Patient: ${formData.patientName}</p>` : ""}
-            <p>Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>
-          </div>
-          <div class="content">${formData.soapNote}</div>
-          ${diagnosesHtml}
-          ${cptCodesHtml}
-          ${confirmedTasksHtml}
-          ${referralHtml}
-        </body>
-      </html>
-    `;
+    const buildSectionHtml = (title: string, items: string[]) => {
+      if (items.length === 0) return '';
+      return `
+        <div style="margin-top: 24px;">
+          <h2 style="color: #0d9488; font-size: 1.2em; margin-top: 0; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">${title}</h2>
+          <ul style="margin: 0; padding-left: 20px;">
+            ${items.map(item => `<li style="margin-bottom: 8px;">${item}</li>`).join('')}
+          </ul>
+        </div>
+      `;
+    };
+
+    const diagnosesItems = [
+      ...(suggestedCodes?.codes || []).map(code => `<strong>${code.code}</strong> - ${code.description}`),
+      ...additionalDiagnoses.map(diag => `<strong>${diag.code}</strong> - ${diag.description}`)
+    ];
     
-    const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      printWindow.document.write(content);
-      printWindow.document.close();
-      printWindow.print();
-    }
+    const cptItems = (suggestedCodes?.cptCodes || []).map(code => `<strong>${code.code}</strong> - ${code.description}`);
+    
+    const taskItems = (noteTasks || []).map(task => `${task.title} (${task.category}) - ${task.status === 'completed' ? 'Completed' : 'Pending'}`);
+
+    const referralSections = confirmedReferralLetters.map(r => `
+      <div style="margin-top: 24px;">
+        <h2 style="color: #0d9488; font-size: 1.2em; margin-top: 0; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">Referral to: ${r.specialty}</h2>
+        <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; line-height: 1.6; white-space: pre-wrap;">${r.letter}</div>
+      </div>
+    `).join('');
+
+    const container = document.createElement('div');
+    container.innerHTML = `
+      <div style="font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
+        <h1 style="color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px; margin-top: 0;">${formData.title || "SOAP Note"}</h1>
+        <div style="color: #6b7280; margin-bottom: 24px;">
+          ${formData.patientName ? `<p style="margin: 4px 0;">Patient: ${formData.patientName}</p>` : ""}
+          <p style="margin: 4px 0;">Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>
+        </div>
+        <div style="white-space: pre-wrap; line-height: 1.6;">${formData.soapNote}</div>
+        ${buildSectionHtml("Diagnoses", diagnosesItems)}
+        ${buildSectionHtml("Billing Codes", cptItems)}
+        ${buildSectionHtml("Tasks", taskItems)}
+        ${referralSections}
+      </div>
+    `;
+
+    const filename = `${(formData.title || formData.patientName || 'SOAP-Note').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+
+    const opt = {
+      margin: 0.5,
+      filename: filename,
+      image: { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'in' as const, format: 'letter' as const, orientation: 'portrait' as const }
+    };
+
+    html2pdf().set(opt).from(container).save();
+    toast({ title: "Downloading PDF", description: "Your SOAP note is being saved as PDF." });
   };
 
   const shareNote = async () => {
@@ -1045,6 +1060,8 @@ export default function NoteDetail() {
             <Button variant="outline" size="icon" onClick={exportToPDF} data-testid="button-export">
               <Download className="h-4 w-4" />
             </Button>
+            
+            <ThemeToggle />
             
             {/* Copy to EMR button - only show if user has EMR access */}
             {hasEmrAccess && (

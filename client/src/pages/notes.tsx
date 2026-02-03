@@ -175,9 +175,14 @@ export default function Notes() {
                         <AlertDialogContent>
                           <AlertDialogHeader>
                             <AlertDialogTitle>Delete note?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This action cannot be undone. This will permanently delete the note
-                              "{note.title}".
+                            <AlertDialogDescription className="space-y-2">
+                              <p>
+                                This action cannot be undone. This will permanently delete the note
+                                "{note.title}".
+                              </p>
+                              <p className="text-destructive font-medium">
+                                Warning: This note will be permanently removed and will no longer be included in your analytics data.
+                              </p>
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -186,7 +191,7 @@ export default function Notes() {
                               onClick={() => deleteMutation.mutate(note.id)}
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                             >
-                              Delete
+                              Delete Permanently
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

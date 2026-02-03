@@ -914,6 +914,97 @@ PLAN: ${plan || "Not provided"}
     }
   });
 
+  // AI Drug Interaction Check - fallback when database doesn't have medications
+  app.post("/api/ai-drug-interactions", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      // Validate input with Zod
+      const inputSchema = z.object({
+        medications: z.array(z.string().min(1).max(100)).min(2).max(50)
+      });
+      
+      const parseResult = inputSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          error: "Invalid input", 
+          details: parseResult.error.errors,
+          interactions: [] 
+        });
+      }
+      
+      const { medications } = parseResult.data;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a clinical pharmacist assistant. Analyze the following medications for potential drug-drug interactions. 
+            
+For each interaction found, provide:
+- The two drugs involved
+- Severity level: "high", "moderate", or "low"
+- Brief description of the interaction
+- Clinical recommendation
+
+Respond ONLY with a valid JSON array of objects with this structure:
+[
+  {
+    "drug1": "medication name",
+    "drug2": "medication name", 
+    "severity": "high|moderate|low",
+    "description": "Brief description of the interaction mechanism",
+    "recommendation": "Clinical recommendation for managing this interaction"
+  }
+]
+
+If no significant interactions are found, return an empty array: []
+Focus only on clinically significant interactions. Do not include minor or theoretical interactions.`
+          },
+          { 
+            role: "user", 
+            content: `Check for drug interactions between these medications: ${medications.join(", ")}`
+          }
+        ],
+        max_completion_tokens: 1500,
+        temperature: 0.3,
+      });
+
+      const content = response.choices[0]?.message?.content || "[]";
+      
+      // Parse and validate the JSON response
+      const interactionSchema = z.array(z.object({
+        drug1: z.string(),
+        drug2: z.string(),
+        severity: z.enum(["high", "moderate", "low"]),
+        description: z.string(),
+        recommendation: z.string()
+      }));
+      
+      try {
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) {
+          return res.json({ interactions: [], source: "ai", warning: "No interactions found in AI response" });
+        }
+        
+        const parsed = JSON.parse(jsonMatch[0]);
+        const validated = interactionSchema.safeParse(parsed);
+        
+        if (!validated.success) {
+          console.error("AI response validation failed:", validated.error);
+          return res.json({ interactions: [], source: "ai", warning: "AI response format was invalid" });
+        }
+        
+        res.json({ interactions: validated.data, source: "ai" });
+      } catch (parseError) {
+        console.error("Error parsing AI response:", parseError);
+        res.json({ interactions: [], source: "ai", error: "Could not parse AI response" });
+      }
+    } catch (error) {
+      console.error("Error checking AI drug interactions:", error);
+      res.status(500).json({ error: "Failed to check drug interactions with AI" });
+    }
+  });
+
   // Template CRUD endpoints
   app.get("/api/templates", isAuthenticated, async (req: any, res: Response) => {
     try {
