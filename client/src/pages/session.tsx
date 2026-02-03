@@ -12,6 +12,7 @@ import { useLocation, useParams } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { DrugInteractionAlert } from "@/components/drug-interaction-alert";
+import { useRecording } from "@/contexts/recording-context";
 import {
   Mic,
   Square,
@@ -73,6 +74,7 @@ export default function Session() {
   const params = useParams<{ id?: string }>();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { setIsRecording: setGlobalRecording, setAudioLevel: setGlobalAudioLevel } = useRecording();
 
   const isNewSession = !params.id || params.id === "new";
   
@@ -508,10 +510,11 @@ export default function Session() {
         levels.push(Math.min(avg / 128, 1));
       }
       setAudioLevel(levels);
+      setGlobalAudioLevel(levels);
       
       animationRef.current = requestAnimationFrame(updateAudioLevel);
     }
-  }, []);
+  }, [setGlobalAudioLevel]);
 
   const startRecording = async () => {
     try {
@@ -630,6 +633,7 @@ export default function Session() {
       
       isRecordingRef.current = true;
       setRecordingState("recording");
+      setGlobalRecording(true);
       setDuration(0);
       addTranscriptEntry("Listening... transcript will appear as you speak");
 
@@ -670,6 +674,7 @@ export default function Session() {
       
       isRecordingRef.current = false;
       setRecordingState("paused");
+      setGlobalRecording(false);
       addTranscriptEntry("Transcript paused - processing audio...");
       
       if (timerRef.current) {
@@ -681,6 +686,7 @@ export default function Session() {
         animationRef.current = null;
       }
       setAudioLevel([0, 0, 0, 0, 0]);
+      setGlobalAudioLevel([0, 0, 0, 0, 0]);
     }
   };
 
@@ -749,6 +755,7 @@ export default function Session() {
       
       isRecordingRef.current = true;
       setRecordingState("recording");
+      setGlobalRecording(true);
       addTranscriptEntry("Transcript resumed");
       
       timerRef.current = setInterval(() => {
@@ -769,6 +776,8 @@ export default function Session() {
       }
       
       isRecordingRef.current = false;
+      setGlobalRecording(false);
+      setGlobalAudioLevel([0, 0, 0, 0, 0]);
       
       if (mediaRecorderRef.current) {
         const recorder = mediaRecorderRef.current;

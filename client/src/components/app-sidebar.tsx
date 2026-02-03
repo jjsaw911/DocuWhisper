@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { useRecording } from "@/contexts/recording-context";
 import {
   Sidebar,
   SidebarContent,
@@ -54,6 +55,7 @@ import {
   ClipboardList,
   Trash2,
   AlertTriangle,
+  Mic,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -79,6 +81,7 @@ export function AppSidebar() {
   const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { isRecording, audioLevel } = useRecording();
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
@@ -176,9 +179,44 @@ export function AppSidebar() {
   return (
     <Sidebar className="border-r">
       <SidebarHeader className="p-4">
-        <div className="flex items-center gap-2">
-          <img src={logoImage} alt="DocuWhisper" className="h-8 w-8 rounded-lg" />
-          <span className="font-semibold text-lg">DocuWhisper</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <img src={logoImage} alt="DocuWhisper" className="h-8 w-8 rounded-lg" />
+            <span className="font-semibold text-lg">DocuWhisper</span>
+          </div>
+          {/* Recording Indicator */}
+          {isRecording && (() => {
+            const maxLevel = audioLevel.length > 0 ? Math.max(...audioLevel) : 0;
+            return (
+              <div className="flex items-center gap-1" data-testid="recording-indicator">
+                <div 
+                  className="relative flex items-center justify-center w-8 h-8"
+                  style={{
+                    transform: `scale(${1 + maxLevel * 0.3})`,
+                    transition: 'transform 0.1s ease-out',
+                  }}
+                >
+                  <Mic 
+                    className="h-4 w-4 transition-colors duration-100"
+                    style={{
+                      color: maxLevel > 0.1 
+                        ? 'hsl(var(--destructive))' 
+                        : 'hsl(var(--primary))',
+                    }}
+                  />
+                  {/* Pulsing ring */}
+                  <span 
+                    className="absolute inset-0 rounded-full animate-ping opacity-40"
+                    style={{
+                      backgroundColor: maxLevel > 0.1 
+                        ? 'hsl(var(--destructive))' 
+                        : 'hsl(var(--primary))',
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </SidebarHeader>
 

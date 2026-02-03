@@ -313,7 +313,7 @@ export default function NoteDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/notes", id, "tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
-      setShowTaskModal(false);
+      // Keep panel open - only clear the form inputs
       setNewTaskTitle("");
       setNewTaskCategory("document");
       setNewTaskDueDate("");
