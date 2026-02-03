@@ -53,7 +53,18 @@ import {
   CalendarDays,
   ClipboardList,
   Trash2,
+  AlertTriangle,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { Note, UserSettings } from "@shared/schema";
 import logoImage from "@/assets/logo.png";
 
@@ -65,6 +76,7 @@ export function AppSidebar() {
   const { user } = useAuth();
   const [location, navigate] = useLocation();
   const [scribeMenuOpen, setScribeMenuOpen] = useState(false);
+  const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -78,12 +90,14 @@ export function AppSidebar() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      setNoteToDelete(null);
       toast({
         title: "Note deleted",
-        description: "The note has been removed",
+        description: "The note has been permanently removed and will no longer appear in analytics",
       });
     },
     onError: () => {
+      setNoteToDelete(null);
       toast({
         title: "Error",
         description: "Failed to delete note",
@@ -91,6 +105,17 @@ export function AppSidebar() {
       });
     },
   });
+  
+  const handleDeleteClick = (e: React.MouseEvent, note: Note) => {
+    e.stopPropagation();
+    setNoteToDelete(note);
+  };
+  
+  const confirmDelete = () => {
+    if (noteToDelete) {
+      deleteNoteMutation.mutate(noteToDelete.id);
+    }
+  };
 
   const { data: adminCheck } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -244,10 +269,7 @@ export function AppSidebar() {
                                   )}
                                 </div>
                                 <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteNoteMutation.mutate(note.id);
-                                  }}
+                                  onClick={(e) => handleDeleteClick(e, note)}
                                   className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
                                   data-testid={`button-delete-note-${note.id}`}
                                 >
@@ -422,6 +444,36 @@ export function AppSidebar() {
           </span>
         </div>
       </SidebarFooter>
+      
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!noteToDelete} onOpenChange={(open) => !open && setNoteToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete Note
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>
+                Are you sure you want to delete "{noteToDelete?.title || noteToDelete?.patientName || 'this note'}"?
+              </p>
+              <p className="text-destructive font-medium">
+                This action cannot be undone. The note will be permanently removed and will no longer be included in your analytics data.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive hover:bg-destructive/90"
+              data-testid="button-confirm-delete"
+            >
+              Delete Permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sidebar>
   );
 }

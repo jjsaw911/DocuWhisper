@@ -216,6 +216,294 @@ export const drugInteractions: DrugInteraction[] = [
     severity: "moderate",
     description: "PPIs may reduce levothyroxine absorption",
     recommendation: "Monitor TSH. May need dose adjustment."
+  },
+  
+  // Additional Opioid Interactions
+  {
+    drug1: "oxycodone",
+    drug2: "benzodiazepine",
+    severity: "high",
+    description: "Combined CNS/respiratory depression, increased overdose risk",
+    recommendation: "FDA Black Box Warning. Avoid if possible. Use lowest doses if necessary."
+  },
+  {
+    drug1: "hydrocodone",
+    drug2: "alprazolam",
+    severity: "high",
+    description: "Combined CNS/respiratory depression risk",
+    recommendation: "Avoid combination. Use alternative pain or anxiety management."
+  },
+  {
+    drug1: "fentanyl",
+    drug2: "lorazepam",
+    severity: "high",
+    description: "Severe respiratory depression risk",
+    recommendation: "Contraindicated outside monitored settings."
+  },
+  {
+    drug1: "morphine",
+    drug2: "gabapentin",
+    severity: "moderate",
+    description: "Increased CNS depression and respiratory depression risk",
+    recommendation: "Use with caution. Monitor for sedation."
+  },
+  {
+    drug1: "tramadol",
+    drug2: "gabapentin",
+    severity: "moderate",
+    description: "Increased sedation and seizure risk",
+    recommendation: "Use with caution. Consider lower doses."
+  },
+  
+  // GLP-1 Agonists (Ozempic, Mounjaro, etc.)
+  {
+    drug1: "semaglutide",
+    drug2: "insulin",
+    severity: "moderate",
+    description: "Increased hypoglycemia risk",
+    recommendation: "Reduce insulin dose by 20-30% when starting. Monitor closely."
+  },
+  {
+    drug1: "tirzepatide",
+    drug2: "sulfonylurea",
+    severity: "moderate",
+    description: "Increased hypoglycemia risk",
+    recommendation: "Consider reducing sulfonylurea dose."
+  },
+  {
+    drug1: "liraglutide",
+    drug2: "warfarin",
+    severity: "moderate",
+    description: "GLP-1 may alter warfarin absorption",
+    recommendation: "Monitor INR more frequently when starting or adjusting."
+  },
+  
+  // DOACs (Direct Oral Anticoagulants)
+  {
+    drug1: "apixaban",
+    drug2: "aspirin",
+    severity: "moderate",
+    description: "Increased bleeding risk",
+    recommendation: "Avoid dual therapy unless clearly indicated. Monitor for bleeding."
+  },
+  {
+    drug1: "rivaroxaban",
+    drug2: "ibuprofen",
+    severity: "moderate",
+    description: "Increased bleeding risk with NSAIDs",
+    recommendation: "Avoid NSAIDs. Use acetaminophen for pain."
+  },
+  {
+    drug1: "dabigatran",
+    drug2: "verapamil",
+    severity: "moderate",
+    description: "Verapamil increases dabigatran levels",
+    recommendation: "Take dabigatran 2 hours before verapamil if combination needed."
+  },
+  {
+    drug1: "apixaban",
+    drug2: "ketoconazole",
+    severity: "high",
+    description: "Strong CYP3A4/P-gp inhibitors dramatically increase apixaban levels",
+    recommendation: "Avoid combination or reduce apixaban dose by 50%."
+  },
+  
+  // Antibiotics Additional
+  {
+    drug1: "levofloxacin",
+    drug2: "prednisone",
+    severity: "moderate",
+    description: "Increased tendon rupture risk",
+    recommendation: "Use alternative antibiotic if possible. Warn patient of tendon symptoms."
+  },
+  {
+    drug1: "fluoroquinolone",
+    drug2: "steroid",
+    severity: "moderate",
+    description: "Increased tendon rupture risk",
+    recommendation: "Use alternative antibiotic class when possible."
+  },
+  {
+    drug1: "clarithromycin",
+    drug2: "simvastatin",
+    severity: "high",
+    description: "Dramatically increased statin levels and rhabdomyolysis risk",
+    recommendation: "Hold statin during clarithromycin course."
+  },
+  {
+    drug1: "erythromycin",
+    drug2: "digoxin",
+    severity: "moderate",
+    description: "Erythromycin increases digoxin levels",
+    recommendation: "Monitor digoxin levels. May need dose reduction."
+  },
+  
+  // Antipsychotics
+  {
+    drug1: "quetiapine",
+    drug2: "methadone",
+    severity: "high",
+    description: "Both prolong QT interval",
+    recommendation: "Monitor ECG. Use alternative agents if possible."
+  },
+  {
+    drug1: "haloperidol",
+    drug2: "metoclopramide",
+    severity: "moderate",
+    description: "Additive extrapyramidal effects",
+    recommendation: "Avoid combination. Increased movement disorder risk."
+  },
+  {
+    drug1: "olanzapine",
+    drug2: "benzodiazepine",
+    severity: "high",
+    description: "Severe hypotension and respiratory depression with IM olanzapine",
+    recommendation: "Avoid IM olanzapine within 1 hour of benzodiazepine."
+  },
+  
+  // ACE Inhibitors/ARBs
+  {
+    drug1: "lisinopril",
+    drug2: "ibuprofen",
+    severity: "moderate",
+    description: "NSAIDs reduce ACE inhibitor effectiveness and increase kidney injury risk",
+    recommendation: "Avoid chronic NSAID use. Monitor kidney function."
+  },
+  {
+    drug1: "losartan",
+    drug2: "potassium supplement",
+    severity: "moderate",
+    description: "Both can increase potassium levels",
+    recommendation: "Monitor potassium levels. Avoid supplements unless deficient."
+  },
+  {
+    drug1: "ace inhibitor",
+    drug2: "arb",
+    severity: "high",
+    description: "Dual RAAS blockade increases kidney injury and hyperkalemia risk",
+    recommendation: "Avoid combination. Use one agent only."
+  },
+  
+  // Muscle Relaxants
+  {
+    drug1: "cyclobenzaprine",
+    drug2: "tramadol",
+    severity: "moderate",
+    description: "Increased serotonin syndrome risk and CNS depression",
+    recommendation: "Use with caution. Consider alternative muscle relaxant."
+  },
+  {
+    drug1: "baclofen",
+    drug2: "opioid",
+    severity: "moderate",
+    description: "Additive CNS depression",
+    recommendation: "Use lowest effective doses. Monitor for sedation."
+  },
+  {
+    drug1: "tizanidine",
+    drug2: "fluvoxamine",
+    severity: "high",
+    description: "Fluvoxamine dramatically increases tizanidine levels",
+    recommendation: "Contraindicated combination."
+  },
+  
+  // SGLT2 Inhibitors
+  {
+    drug1: "empagliflozin",
+    drug2: "diuretic",
+    severity: "moderate",
+    description: "Increased dehydration and hypotension risk",
+    recommendation: "May need to reduce diuretic dose. Ensure adequate hydration."
+  },
+  {
+    drug1: "canagliflozin",
+    drug2: "insulin",
+    severity: "moderate",
+    description: "Increased hypoglycemia risk",
+    recommendation: "May need to reduce insulin dose."
+  },
+  
+  // PDE5 Inhibitors
+  {
+    drug1: "sildenafil",
+    drug2: "nitrate",
+    severity: "high",
+    description: "Severe hypotension - potentially fatal",
+    recommendation: "Contraindicated. Never combine."
+  },
+  {
+    drug1: "tadalafil",
+    drug2: "nitroglycerin",
+    severity: "high",
+    description: "Severe hypotension - potentially fatal",
+    recommendation: "Contraindicated. Allow 48+ hours between doses."
+  },
+  {
+    drug1: "sildenafil",
+    drug2: "alpha blocker",
+    severity: "moderate",
+    description: "Risk of significant hypotension",
+    recommendation: "Start with low sildenafil dose if on stable alpha blocker."
+  },
+  
+  // Antiepileptics
+  {
+    drug1: "carbamazepine",
+    drug2: "oral contraceptive",
+    severity: "high",
+    description: "Carbamazepine reduces contraceptive effectiveness",
+    recommendation: "Use non-hormonal or higher-dose contraception."
+  },
+  {
+    drug1: "valproate",
+    drug2: "lamotrigine",
+    severity: "moderate",
+    description: "Valproate doubles lamotrigine levels",
+    recommendation: "Use lower lamotrigine dose (half the usual)."
+  },
+  {
+    drug1: "phenytoin",
+    drug2: "warfarin",
+    severity: "moderate",
+    description: "Complex interaction - initial increase then decrease in warfarin effect",
+    recommendation: "Monitor INR closely. May need warfarin adjustment."
+  },
+  
+  // Common Brand Name Interactions
+  {
+    drug1: "eliquis",
+    drug2: "aspirin",
+    severity: "moderate",
+    description: "Increased bleeding risk with dual antithrombotic therapy",
+    recommendation: "Avoid unless clearly indicated. Monitor for bleeding."
+  },
+  {
+    drug1: "xarelto",
+    drug2: "advil",
+    severity: "moderate",
+    description: "Increased bleeding risk",
+    recommendation: "Avoid NSAIDs. Use acetaminophen for pain."
+  },
+  {
+    drug1: "norco",
+    drug2: "xanax",
+    severity: "high",
+    description: "Combined CNS/respiratory depression",
+    recommendation: "FDA Black Box Warning. Avoid if possible."
+  },
+  {
+    drug1: "ozempic",
+    drug2: "lantus",
+    severity: "moderate",
+    description: "Increased hypoglycemia risk",
+    recommendation: "May need to reduce insulin dose when starting GLP-1."
+  },
+  {
+    drug1: "mounjaro",
+    drug2: "metformin",
+    severity: "low",
+    description: "GI side effects may be additive",
+    recommendation: "Generally safe combination. Monitor for GI tolerability."
   }
 ];
 
@@ -227,17 +515,131 @@ function normalizeDrugName(name: string): string {
 // Extract medications from text
 export function extractMedications(text: string): string[] {
   const commonDrugs = [
-    "acetaminophen", "albuterol", "amlodipine", "amiodarone", "amoxicillin", 
-    "aspirin", "atenolol", "atorvastatin", "azithromycin", "calcium",
-    "carvedilol", "cephalexin", "ciprofloxacin", "clarithromycin", "clopidogrel",
-    "contrast", "diazepam", "digoxin", "diltiazem", "doxycycline",
-    "enalapril", "escitalopram", "fluoxetine", "furosemide", "gabapentin",
-    "hydrochlorothiazide", "ibuprofen", "insulin", "levothyroxine", "lisinopril",
-    "lorazepam", "losartan", "metformin", "metoprolol", "metronidazole",
-    "naproxen", "omeprazole", "ondansetron", "opioid", "pantoprazole", 
-    "potassium", "prednisone", "propranolol", "rosuvastatin", "sertraline", 
-    "simvastatin", "spironolactone", "tizanidine", "tramadol", "trazodone",
-    "verapamil", "warfarin", "zolpidem"
+    // Analgesics & NSAIDs
+    "acetaminophen", "tylenol", "aspirin", "ibuprofen", "advil", "motrin", "naproxen", "aleve",
+    "celecoxib", "celebrex", "meloxicam", "mobic", "diclofenac", "voltaren", "ketorolac", "toradol",
+    "indomethacin", "indocin", "piroxicam",
+    
+    // Opioids
+    "tramadol", "ultram", "hydrocodone", "vicodin", "norco", "oxycodone", "oxycontin", "percocet",
+    "morphine", "fentanyl", "codeine", "methadone", "buprenorphine", "suboxone", "tapentadol",
+    "opioid", "hydromorphone", "dilaudid", "meperidine", "demerol",
+    
+    // Antibiotics
+    "amoxicillin", "augmentin", "azithromycin", "zithromax", "zpak", "z-pak", "ciprofloxacin", "cipro",
+    "levofloxacin", "levaquin", "doxycycline", "metronidazole", "flagyl", "clindamycin", "cleocin",
+    "sulfamethoxazole", "bactrim", "trimethoprim", "cephalexin", "keflex", "ceftriaxone", "rocephin",
+    "amoxicillin-clavulanate", "nitrofurantoin", "macrobid", "clarithromycin", "biaxin", "penicillin",
+    "vancomycin", "gentamicin", "tetracycline", "erythromycin",
+    
+    // Cardiovascular - Antihypertensives
+    "lisinopril", "enalapril", "ramipril", "benazepril", "losartan", "cozaar", "valsartan", "diovan",
+    "irbesartan", "olmesartan", "amlodipine", "norvasc", "nifedipine", "diltiazem", "cardizem",
+    "verapamil", "metoprolol", "lopressor", "toprol", "atenolol", "tenormin", "carvedilol", "coreg",
+    "propranolol", "bisoprolol", "nebivolol", "labetalol", "clonidine", "hydralazine",
+    "hydrochlorothiazide", "hctz", "chlorthalidone", "furosemide", "lasix", "bumetanide", "bumex",
+    "torsemide", "spironolactone", "aldactone", "eplerenone", "triamterene",
+    
+    // Cardiovascular - Other
+    "digoxin", "lanoxin", "amiodarone", "pacerone", "sotalol", "flecainide", "dronedarone",
+    "warfarin", "coumadin", "apixaban", "eliquis", "rivaroxaban", "xarelto", "dabigatran", "pradaxa",
+    "edoxaban", "savaysa", "heparin", "enoxaparin", "lovenox", "clopidogrel", "plavix",
+    "ticagrelor", "brilinta", "prasugrel", "effient", "isosorbide", "nitroglycerin", "ranolazine",
+    
+    // Statins & Cholesterol
+    "atorvastatin", "lipitor", "simvastatin", "zocor", "rosuvastatin", "crestor", "pravastatin",
+    "lovastatin", "fluvastatin", "pitavastatin", "ezetimibe", "zetia", "fenofibrate", "tricor",
+    "gemfibrozil", "lopid", "niacin", "omega-3", "fish oil",
+    
+    // Diabetes
+    "metformin", "glucophage", "glipizide", "glucotrol", "glyburide", "glimepiride", "amaryl",
+    "sitagliptin", "januvia", "linagliptin", "tradjenta", "saxagliptin", "alogliptin",
+    "empagliflozin", "jardiance", "dapagliflozin", "farxiga", "canagliflozin", "invokana",
+    "liraglutide", "victoza", "semaglutide", "ozempic", "wegovy", "rybelsus", "dulaglutide", "trulicity",
+    "tirzepatide", "mounjaro", "exenatide", "byetta", "pioglitazone", "actos",
+    "insulin", "lantus", "levemir", "tresiba", "humalog", "novolog", "basaglar", "toujeo",
+    
+    // Respiratory
+    "albuterol", "proair", "ventolin", "proventil", "levalbuterol", "ipratropium", "atrovent",
+    "tiotropium", "spiriva", "fluticasone", "flovent", "budesonide", "pulmicort", "symbicort",
+    "advair", "breo", "salmeterol", "formoterol", "montelukast", "singulair", "prednisone",
+    "prednisolone", "methylprednisolone", "medrol", "dexamethasone", "theophylline",
+    
+    // Gastrointestinal
+    "omeprazole", "prilosec", "esomeprazole", "nexium", "lansoprazole", "prevacid",
+    "pantoprazole", "protonix", "rabeprazole", "famotidine", "pepcid", "ranitidine", "zantac",
+    "sucralfate", "carafate", "ondansetron", "zofran", "promethazine", "phenergan", "metoclopramide",
+    "reglan", "dicyclomine", "bentyl", "hyoscyamine", "loperamide", "imodium", "bismuth", "pepto",
+    
+    // Mental Health - Antidepressants
+    "fluoxetine", "prozac", "sertraline", "zoloft", "escitalopram", "lexapro", "citalopram", "celexa",
+    "paroxetine", "paxil", "fluvoxamine", "venlafaxine", "effexor", "duloxetine", "cymbalta",
+    "desvenlafaxine", "pristiq", "bupropion", "wellbutrin", "mirtazapine", "remeron",
+    "trazodone", "desyrel", "nortriptyline", "pamelor", "amitriptyline", "elavil", "doxepin",
+    "vortioxetine", "trintellix", "vilazodone", "viibryd",
+    
+    // Mental Health - Anxiolytics & Sedatives
+    "lorazepam", "ativan", "alprazolam", "xanax", "diazepam", "valium", "clonazepam", "klonopin",
+    "temazepam", "restoril", "triazolam", "halcion", "buspirone", "buspar", "hydroxyzine", "vistaril",
+    "zolpidem", "ambien", "eszopiclone", "lunesta", "zaleplon", "sonata", "suvorexant", "belsomra",
+    "ramelteon", "rozerem", "melatonin",
+    
+    // Mental Health - Antipsychotics
+    "quetiapine", "seroquel", "risperidone", "risperdal", "olanzapine", "zyprexa", "aripiprazole", "abilify",
+    "ziprasidone", "geodon", "haloperidol", "haldol", "lurasidone", "latuda", "paliperidone", "invega",
+    "clozapine", "clozaril", "cariprazine", "vraylar", "brexpiprazole", "rexulti",
+    
+    // Mental Health - Mood Stabilizers & ADHD
+    "lithium", "lamotrigine", "lamictal", "valproate", "depakote", "carbamazepine", "tegretol",
+    "oxcarbazepine", "trileptal", "topiramate", "topamax",
+    "methylphenidate", "ritalin", "concerta", "adderall", "amphetamine", "dextroamphetamine", "vyvanse",
+    "lisdexamfetamine", "atomoxetine", "strattera", "guanfacine", "intuniv",
+    
+    // Seizure Medications
+    "levetiracetam", "keppra", "phenytoin", "dilantin", "gabapentin", "neurontin", "pregabalin", "lyrica",
+    "phenobarbital", "primidone", "zonisamide", "zonegran", "lacosamide", "vimpat",
+    
+    // Thyroid
+    "levothyroxine", "synthroid", "levoxyl", "tirosint", "liothyronine", "cytomel", "methimazole",
+    "propylthiouracil", "ptu",
+    
+    // Muscle Relaxants
+    "cyclobenzaprine", "flexeril", "methocarbamol", "robaxin", "tizanidine", "zanaflex",
+    "baclofen", "carisoprodol", "soma", "metaxalone", "skelaxin", "orphenadrine",
+    
+    // Gout & Rheumatology
+    "allopurinol", "zyloprim", "febuxostat", "uloric", "colchicine", "colcrys", "probenecid",
+    "methotrexate", "trexall", "hydroxychloroquine", "plaquenil", "sulfasalazine",
+    "leflunomide", "arava", "adalimumab", "humira", "etanercept", "enbrel",
+    
+    // Osteoporosis
+    "alendronate", "fosamax", "risedronate", "actonel", "ibandronate", "boniva",
+    "zoledronic acid", "reclast", "denosumab", "prolia", "teriparatide", "forteo",
+    "calcium", "vitamin d", "calcitriol",
+    
+    // Urological
+    "tamsulosin", "flomax", "alfuzosin", "uroxatral", "silodosin", "rapaflo", "doxazosin", "cardura",
+    "finasteride", "proscar", "propecia", "dutasteride", "avodart", "oxybutynin", "ditropan",
+    "tolterodine", "detrol", "solifenacin", "vesicare", "mirabegron", "myrbetriq",
+    "sildenafil", "viagra", "tadalafil", "cialis", "vardenafil", "levitra",
+    
+    // Hormones & Contraceptives
+    "estrogen", "estradiol", "premarin", "progesterone", "medroxyprogesterone", "provera", "depo-provera",
+    "norethindrone", "testosterone", "androgel", "raloxifene", "evista", "tamoxifen",
+    "letrozole", "femara", "anastrozole", "arimidex",
+    
+    // Allergy & Immunology
+    "diphenhydramine", "benadryl", "cetirizine", "zyrtec", "loratadine", "claritin", "fexofenadine",
+    "allegra", "levocetirizine", "xyzal", "desloratadine", "clarinex", "pseudoephedrine", "sudafed",
+    "phenylephrine", "epinephrine", "epipen", "prednisone", "dexamethasone",
+    
+    // Topicals & Eye Drops
+    "latanoprost", "xalatan", "timolol", "brimonidine", "dorzolamide", "travoprost",
+    "mometasone", "nasonex", "fluticasone", "flonase", "triamcinolone", "nasacort",
+    
+    // Contrast & Other
+    "contrast", "gadolinium", "iodine", "radiocontrast", "potassium", "magnesium", "iron", "ferrous",
+    "multivitamin", "folic acid", "b12", "vitamin b", "zinc", "selenium"
   ];
   
   const lowerText = text.toLowerCase();

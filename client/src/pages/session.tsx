@@ -134,7 +134,7 @@ export default function Session() {
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
-  const chunkIntervalSec = 20; // 20-second chunks for faster feedback
+  const chunkIntervalSec = 5; // 5-second chunks for faster feedback with timestamps
   
   // Transcript state: committedText (stable) + partialText (interim)
   const committedTextRef = useRef<string>(""); // Finalized transcript
