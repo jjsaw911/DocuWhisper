@@ -461,8 +461,17 @@ Apply these instructions when generating the note. If the user asks to omit cert
       // Check if using a custom template (user-defined format)
       if (customPrompt) {
         // Custom template - let it define the output format
-        // The template specifies the format (e.g., HPI + Plan instead of SOAP)
-        systemPrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript.
+        // Detect if template uses HPI format (mentions HPI as a section)
+        const isHpiFormat = customPrompt.toLowerCase().includes('hpi') && 
+                           (customPrompt.toLowerCase().includes('section 1. hpi') || 
+                            customPrompt.toLowerCase().includes('required structure') ||
+                            customPrompt.toLowerCase().includes('hpi must appear'));
+        
+        console.log("[generate-soap] Custom template detected, HPI format:", isHpiFormat);
+        
+        if (isHpiFormat) {
+          // HPI + Plan format (e.g., Allergy and Immunology template)
+          systemPrompt = `You are a medical documentation assistant generating clinical notes in HPI + Plan format.
 
 ${specialty ? `Specialty: ${specialty}` : ""}
 ${patientName ? `Patient: ${patientName}` : ""}
@@ -470,26 +479,46 @@ ${contextSection}
 
 CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
 
+TEMPLATE INSTRUCTIONS (follow these exactly):
 ${customPrompt}
 ${aiInstructionsSection}${languageInstruction}
 
-Based on the transcript and the formatting instructions above, return ONLY valid JSON. Use the section names specified in the template instructions.
-
-If the template specifies HPI and Plan format, return:
+REQUIRED OUTPUT FORMAT - You MUST return valid JSON with BOTH fields:
 {
-  "hpi": "<history of present illness content>",
-  "plan": "<plan content with impression and bullet points>"
+  "hpi": "<Your complete HPI section following the template rules above - write as a clinical paragraph, present tense, encounter-based phrasing>",
+  "plan": "<Your complete Plan section starting with 'Impression:' paragraph followed by bulleted items>"
 }
 
-If the template specifies standard SOAP format, return:
+IMPORTANT: 
+- The "hpi" field must contain the full History of Present Illness paragraph
+- The "plan" field must contain BOTH the Impression paragraph AND the bulleted plan items
+- Do NOT omit either field
+- Return ONLY the JSON object, no other text`;
+        } else {
+          // Other custom template format - could be SOAP or other sections
+          systemPrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript.
+
+${specialty ? `Specialty: ${specialty}` : ""}
+${patientName ? `Patient: ${patientName}` : ""}
+${contextSection}
+
+CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
+
+TEMPLATE INSTRUCTIONS (follow these exactly):
+${customPrompt}
+${aiInstructionsSection}${languageInstruction}
+
+Based on the transcript and the formatting instructions above, return ONLY valid JSON.
+
+If the template defines custom sections, use those section names as JSON keys.
+If no specific sections are defined, use standard SOAP format:
 {
   "subjective": "<patient complaints>",
   "objective": "<exam findings>",
   "assessment": "<diagnosis>",
   "plan": "<treatment plan>"
-}
-
-Match your JSON keys to the sections specified in the template.`;
+}`;
+        }
       } else {
         // Default SOAP format
         const basePrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
