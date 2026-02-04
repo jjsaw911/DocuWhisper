@@ -558,9 +558,11 @@ Based on the transcript, return ONLY valid JSON with the extracted information:
       });
 
       const content = response.choices[0]?.message?.content || "{}";
-      console.log("SOAP API response content:", content);
+      console.log("[generate-soap] Raw API response:", content);
       const soapNote = JSON.parse(content);
-      console.log("Parsed SOAP note:", soapNote);
+      console.log("[generate-soap] Parsed note keys:", Object.keys(soapNote));
+      console.log("[generate-soap] Has HPI:", !!soapNote.hpi, "Has Plan:", !!soapNote.plan);
+      console.log("[generate-soap] HPI length:", soapNote.hpi?.length || 0, "Plan length:", soapNote.plan?.length || 0);
 
       res.json(soapNote);
     } catch (error) {
