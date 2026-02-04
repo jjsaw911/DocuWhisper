@@ -291,35 +291,48 @@ export function AppSidebar() {
                             <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
                               {date}
                             </div>
-                            {dateNotes.map((note) => (
-                              <DropdownMenuItem
-                                key={note.id}
-                                className="cursor-pointer group"
-                                onClick={() => {
-                                  setScribeMenuOpen(false);
-                                  navigate(`/notes/${note.id}`);
-                                }}
-                                data-testid={`note-item-${note.id}`}
-                              >
-                                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                                  <span className="truncate font-medium text-sm">
-                                    {note.title || note.patientName || "Untitled"}
-                                  </span>
-                                  {note.patientName && note.title !== note.patientName && (
-                                    <span className="truncate text-xs text-muted-foreground">
-                                      {note.patientName}
-                                    </span>
-                                  )}
-                                </div>
-                                <button
-                                  onClick={(e) => handleDeleteClick(e, note)}
-                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
-                                  data-testid={`button-delete-note-${note.id}`}
+                            {dateNotes.map((note) => {
+                              const isCurrentNote = location === `/notes/${note.id}`;
+                              return (
+                                <DropdownMenuItem
+                                  key={note.id}
+                                  className={`cursor-pointer group ${isCurrentNote ? 'bg-accent' : ''}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    const targetPath = `/notes/${note.id}`;
+                                    setScribeMenuOpen(false);
+                                    // Use setTimeout to ensure navigation happens after menu closes
+                                    setTimeout(() => {
+                                      navigate(targetPath);
+                                    }, 10);
+                                  }}
+                                  data-testid={`note-item-${note.id}`}
                                 >
-                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                </button>
-                              </DropdownMenuItem>
-                            ))}
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    {isCurrentNote && (
+                                      <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                                    )}
+                                    <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                      <span className={`truncate text-sm ${isCurrentNote ? 'font-semibold' : 'font-medium'}`}>
+                                        {note.title || note.patientName || "Untitled"}
+                                      </span>
+                                      {note.patientName && note.title !== note.patientName && (
+                                        <span className="truncate text-xs text-muted-foreground">
+                                          {note.patientName}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={(e) => handleDeleteClick(e, note)}
+                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
+                                    data-testid={`button-delete-note-${note.id}`}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                  </button>
+                                </DropdownMenuItem>
+                              );
+                            })}
                           </div>
                         ))}
                       </ScrollArea>
