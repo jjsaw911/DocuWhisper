@@ -19,6 +19,7 @@ export const notes = pgTable("notes", {
   plan: text("plan"),
   transcript: text("transcript"),
   patientContext: text("patient_context"), // Background info: history, medications, allergies
+  templateId: integer("template_id"), // Template used for SOAP generation
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });

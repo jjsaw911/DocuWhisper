@@ -49,6 +49,7 @@ const updateNoteSchema = z.object({
   transcript: z.string().nullable().optional(),
   patientContext: z.string().nullable().optional(),
   patientId: z.number().nullable().optional(),
+  templateId: z.number().nullable().optional(),
 });
 
 const translateNoteSchema = z.object({

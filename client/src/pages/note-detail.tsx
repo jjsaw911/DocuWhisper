@@ -598,6 +598,7 @@ export default function NoteDetail() {
     });
     setSoapHistory([]);
     setHistoryIndex(-1);
+    setSelectedTemplateId("");
   }, [id]);
   
   useEffect(() => {
@@ -611,6 +612,10 @@ export default function NoteDetail() {
       // Initialize history with the original note content
       setSoapHistory([initialSoap]);
       setHistoryIndex(0);
+      // Load the saved template selection
+      if (note.templateId) {
+        setSelectedTemplateId(note.templateId.toString());
+      }
     }
   }, [note, id]);
 
@@ -725,6 +730,7 @@ export default function NoteDetail() {
         await apiRequest("PATCH", `/api/notes/${id}`, {
           title: formData.title,
           patientName: formData.patientName,
+          templateId: selectedTemplateId ? parseInt(selectedTemplateId) : null,
           ...noteData,
         });
         
