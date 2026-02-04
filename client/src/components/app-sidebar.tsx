@@ -111,7 +111,12 @@ export function AppSidebar() {
   
   const handleDeleteClick = (e: React.MouseEvent, note: Note) => {
     e.stopPropagation();
-    setNoteToDelete(note);
+    e.preventDefault();
+    setScribeMenuOpen(false);
+    // Small delay to ensure dropdown closes before dialog opens
+    setTimeout(() => {
+      setNoteToDelete(note);
+    }, 100);
   };
   
   const confirmDelete = () => {
