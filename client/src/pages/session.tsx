@@ -936,11 +936,22 @@ export default function Session() {
       
       if (currentIsResumeMode && currentResumeNoteData) {
         // Update existing note (resume mode)
-        const updateResponse = await apiRequest("PATCH", `/api/notes/${currentResumeNoteData.id}`, {
+        // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
+        const noteData = soapData.hpi ? {
+          subjective: soapData.hpi,
+          objective: "",
+          assessment: "",
+          plan: soapData.plan || "",
+        } : {
           subjective: soapData.subjective || "",
           objective: soapData.objective || "",
           assessment: soapData.assessment || "",
           plan: soapData.plan || "",
+        };
+        console.log("[Save] HPI format detected:", !!soapData.hpi, "Saving noteData:", noteData);
+        
+        const updateResponse = await apiRequest("PATCH", `/api/notes/${currentResumeNoteData.id}`, {
+          ...noteData,
           transcript,
           patientContext: contextText || null,
         });
@@ -968,14 +979,25 @@ export default function Session() {
           title = `Session - ${new Date().toLocaleDateString()}`;
         }
 
-        const saveResponse = await apiRequest("POST", "/api/notes", {
-          title,
-          patientName,
-          specialty: "general",
+        // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
+        const noteData = soapData.hpi ? {
+          subjective: soapData.hpi,
+          objective: "",
+          assessment: "",
+          plan: soapData.plan || "",
+        } : {
           subjective: soapData.subjective || "",
           objective: soapData.objective || "",
           assessment: soapData.assessment || "",
           plan: soapData.plan || "",
+        };
+        console.log("[Save New] HPI format detected:", !!soapData.hpi, "Saving noteData:", noteData);
+
+        const saveResponse = await apiRequest("POST", "/api/notes", {
+          title,
+          patientName,
+          specialty: "general",
+          ...noteData,
           transcript,
           patientContext: contextText || null,
         });
