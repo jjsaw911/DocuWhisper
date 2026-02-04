@@ -404,19 +404,25 @@ class DatabaseStorage implements IStorage {
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const [totalNotesResult] = await db.select({ count: count() }).from(notes).where(eq(notes.userId, userId));
+    // All analytics are based on rolling 30-day period (only notes/tasks that currently exist)
+    const [totalNotesResult] = await db.select({ count: count() }).from(notes).where(
+      and(eq(notes.userId, userId), gte(notes.createdAt, monthAgo))
+    );
     const [notesThisWeekResult] = await db.select({ count: count() }).from(notes).where(
       and(eq(notes.userId, userId), gte(notes.createdAt, weekAgo))
     );
     const [notesThisMonthResult] = await db.select({ count: count() }).from(notes).where(
       and(eq(notes.userId, userId), gte(notes.createdAt, monthAgo))
     );
-    const [totalTasksResult] = await db.select({ count: count() }).from(tasks).where(eq(tasks.userId, userId));
+    // Tasks are also limited to rolling 30 days (by creation date)
+    const [totalTasksResult] = await db.select({ count: count() }).from(tasks).where(
+      and(eq(tasks.userId, userId), gte(tasks.createdAt, monthAgo))
+    );
     const [tasksCompletedResult] = await db.select({ count: count() }).from(tasks).where(
-      and(eq(tasks.userId, userId), eq(tasks.status, "completed"))
+      and(eq(tasks.userId, userId), eq(tasks.status, "completed"), gte(tasks.createdAt, monthAgo))
     );
     const [tasksPendingResult] = await db.select({ count: count() }).from(tasks).where(
-      and(eq(tasks.userId, userId), eq(tasks.status, "todo"))
+      and(eq(tasks.userId, userId), eq(tasks.status, "todo"), gte(tasks.createdAt, monthAgo))
     );
     const [tasksCompletedThisWeekResult] = await db.select({ count: count() }).from(tasks).where(
       and(eq(tasks.userId, userId), eq(tasks.status, "completed"), gte(tasks.completedAt, weekAgo))
@@ -614,9 +620,15 @@ class DatabaseStorage implements IStorage {
   }
 
   async getTrendingDiagnoses(userId: string): Promise<{ diagnosis: string; count: number }[]> {
-    // Get all assessments from user's notes
+    const monthAgo = new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000);
+    
+    // Get assessments from user's notes in the last 30 days only
     const userNotes = await db.select({ assessment: notes.assessment }).from(notes).where(
-      and(eq(notes.userId, userId), sql`${notes.assessment} IS NOT NULL AND ${notes.assessment} != ''`)
+      and(
+        eq(notes.userId, userId), 
+        sql`${notes.assessment} IS NOT NULL AND ${notes.assessment} != ''`,
+        gte(notes.createdAt, monthAgo)
+      )
     );
     
     // Parse diagnoses from assessments (common patterns: numbered lists, bullet points, or sentences)

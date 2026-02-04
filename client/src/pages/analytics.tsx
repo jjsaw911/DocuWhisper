@@ -79,7 +79,7 @@ export default function Analytics() {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <Card data-testid="card-total-notes">
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Total Notes</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Notes (Last 30 Days)</CardTitle>
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -98,7 +98,7 @@ export default function Analytics() {
 
             <Card data-testid="card-pending-tasks">
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Pending Tasks</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Pending Tasks (30 Days)</CardTitle>
                 <Clock className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -117,7 +117,7 @@ export default function Analytics() {
 
             <Card data-testid="card-completion-rate">
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Task Completion</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Task Completion (30 Days)</CardTitle>
                 <Target className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -136,7 +136,7 @@ export default function Analytics() {
 
             <Card data-testid="card-time-saved">
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Time Saved</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Time Saved (30 Days)</CardTitle>
                 <Zap className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>

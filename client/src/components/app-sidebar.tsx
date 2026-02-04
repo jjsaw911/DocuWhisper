@@ -179,7 +179,8 @@ export function AppSidebar() {
   };
 
   const groupedNotes = groupNotesByDate(notes);
-  const recentNotes = notes.slice(0, 10);
+  // Show all notes instead of just recent ones
+  const allNotes = notes;
 
   return (
     <Sidebar className="border-r">
@@ -280,13 +281,13 @@ export function AppSidebar() {
                       </Button>
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    {recentNotes.length === 0 ? (
+                    {allNotes.length === 0 ? (
                       <div className="px-2 py-4 text-center text-sm text-muted-foreground">
                         No sessions yet. Start a new session to begin.
                       </div>
                     ) : (
-                      <ScrollArea className="h-[300px]">
-                        {Object.entries(groupNotesByDate(recentNotes)).map(([date, dateNotes]) => (
+                      <ScrollArea className="h-[400px]">
+                        {Object.entries(groupNotesByDate(allNotes)).map(([date, dateNotes]) => (
                           <div key={date}>
                             <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
                               {date}
