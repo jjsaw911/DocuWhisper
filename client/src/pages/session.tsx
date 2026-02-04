@@ -105,10 +105,12 @@ export default function Session() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("default");
   const [activeTab, setActiveTab] = useState("transcript");
   const [soapNote, setSoapNote] = useState<{
-    subjective: string;
-    objective: string;
-    assessment: string;
-    plan: string;
+    subjective?: string;
+    objective?: string;
+    assessment?: string;
+    plan?: string;
+    hpi?: string;
+    [key: string]: string | undefined;
   } | null>(null);
   
   // New features: Visit mode, Context, AI command
@@ -1106,14 +1108,24 @@ export default function Session() {
         title = `Session - ${new Date().toLocaleDateString()}`;
       }
 
-      const response = await apiRequest("POST", "/api/notes", {
-        title,
-        patientName,
-        specialty: "general",
+      // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
+      const noteData = soapNote?.hpi ? {
+        subjective: soapNote.hpi,
+        objective: "",
+        assessment: "",
+        plan: soapNote?.plan || "",
+      } : {
         subjective: soapNote?.subjective || "",
         objective: soapNote?.objective || "",
         assessment: soapNote?.assessment || "",
         plan: soapNote?.plan || "",
+      };
+      
+      const response = await apiRequest("POST", "/api/notes", {
+        title,
+        patientName,
+        specialty: "general",
+        ...noteData,
         transcript,
         patientContext: contextText || null,
       });
@@ -1170,19 +1182,28 @@ export default function Session() {
     try {
       const fullTranscript = committedTextRef.current || transcriptEntries.filter(e => e.type === "content").map(e => e.text).join(" ");
       
+      // Build note content based on format (HPI+Plan or SOAP)
+      const noteContentSection = soapNote ? (
+        soapNote.hpi ? `
+Clinical Note:
+HPI: ${soapNote.hpi}
+Plan: ${soapNote.plan || ''}
+` : `
+SOAP Note:
+Subjective: ${soapNote.subjective || ''}
+Objective: ${soapNote.objective || ''}
+Assessment: ${soapNote.assessment || ''}
+Plan: ${soapNote.plan || ''}
+`
+      ) : "";
+      
       const response = await apiRequest("POST", "/api/ai-assistant", {
         question: aiCommand,
         noteContent: `
 Patient: ${patientName || "Not specified"}
 Context: ${contextText || "None provided"}
 Transcript: ${fullTranscript || "No transcript yet"}
-${soapNote ? `
-SOAP Note:
-Subjective: ${soapNote.subjective}
-Objective: ${soapNote.objective}
-Assessment: ${soapNote.assessment}
-Plan: ${soapNote.plan}
-` : ""}
+${noteContentSection}
         `.trim(),
       });
 
@@ -1583,19 +1604,23 @@ Plan: ${soapNote.plan}
                 {soapNote ? (
                   <div className="space-y-4">
                     <DrugInteractionAlert 
-                      text={`${soapNote.subjective} ${soapNote.objective} ${soapNote.assessment} ${soapNote.plan}`} 
+                      text={`${soapNote.subjective || ''} ${soapNote.objective || ''} ${soapNote.assessment || ''} ${soapNote.plan || ''} ${soapNote.hpi || ''}`} 
                     />
                     
-                    {[
+                    {/* Dynamically show sections based on what the AI returned */}
+                    {(soapNote.hpi ? [
+                      { key: "hpi", label: "HPI" },
+                      { key: "plan", label: "Plan" },
+                    ] : [
                       { key: "subjective", label: "Subjective" },
                       { key: "objective", label: "Objective" },
                       { key: "assessment", label: "Assessment" },
                       { key: "plan", label: "Plan" },
-                    ].map(({ key, label }) => (
+                    ]).filter(({ key }) => soapNote[key]).map(({ key, label }) => (
                       <div key={key}>
                         <h3 className="font-medium text-sm mb-1">{label}</h3>
                         <MedicalAutocomplete
-                          value={soapNote[key as keyof typeof soapNote]}
+                          value={soapNote[key] || ''}
                           onChange={(value) =>
                             setSoapNote((prev) =>
                               prev ? { ...prev, [key]: value } : null

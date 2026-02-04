@@ -449,7 +449,50 @@ ${context}
 Use this background information to inform your assessment. Include relevant context in the appropriate SOAP sections (e.g., past medical history in Subjective, relevant medications in Plan).
 ` : "";
 
-      const basePrompt = customPrompt || `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
+      const aiInstructionsSection = aiInstructions ? `
+
+IMPORTANT - User Instructions (follow these carefully):
+${aiInstructions}
+
+Apply these instructions when generating the note. If the user asks to omit certain information, do not include it. If they ask to add context, incorporate it appropriately.` : "";
+
+      let systemPrompt: string;
+      
+      // Check if using a custom template (user-defined format)
+      if (customPrompt) {
+        // Custom template - let it define the output format
+        // The template specifies the format (e.g., HPI + Plan instead of SOAP)
+        systemPrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript.
+
+${specialty ? `Specialty: ${specialty}` : ""}
+${patientName ? `Patient: ${patientName}` : ""}
+${contextSection}
+
+CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
+
+${customPrompt}
+${aiInstructionsSection}${languageInstruction}
+
+Based on the transcript and the formatting instructions above, return ONLY valid JSON. Use the section names specified in the template instructions.
+
+If the template specifies HPI and Plan format, return:
+{
+  "hpi": "<history of present illness content>",
+  "plan": "<plan content with impression and bullet points>"
+}
+
+If the template specifies standard SOAP format, return:
+{
+  "subjective": "<patient complaints>",
+  "objective": "<exam findings>",
+  "assessment": "<diagnosis>",
+  "plan": "<treatment plan>"
+}
+
+Match your JSON keys to the sections specified in the template.`;
+      } else {
+        // Default SOAP format
+        const basePrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
 
 ${specialty ? `Specialty: ${specialty}` : ""}
 ${patientName ? `Patient: ${patientName}` : ""}
@@ -464,14 +507,7 @@ Generate a SOAP note with these sections:
 
 Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."${languageInstruction}`;
 
-      const aiInstructionsSection = aiInstructions ? `
-
-IMPORTANT - User Instructions (follow these carefully):
-${aiInstructions}
-
-Apply these instructions when generating the SOAP note. If the user asks to omit certain information, do not include it. If they ask to add context, incorporate it appropriately.` : "";
-
-      const systemPrompt = `${basePrompt}${aiInstructionsSection}
+        systemPrompt = `${basePrompt}${aiInstructionsSection}
 
 Based on the transcript, return ONLY valid JSON with the extracted information:
 {
@@ -480,6 +516,7 @@ Based on the transcript, return ONLY valid JSON with the extracted information:
   "assessment": "<actual diagnosis from transcript>",
   "plan": "<actual treatment plan from transcript>"
 }`;
+      }
 
       const response = await openai.chat.completions.create({
         model: "gpt-5.1",
