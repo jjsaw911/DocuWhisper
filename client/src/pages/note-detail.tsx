@@ -601,8 +601,17 @@ export default function NoteDetail() {
     setSelectedTemplateId("");
   }, [id]);
   
+  // Track whether we've done initial load for this note ID
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  
   useEffect(() => {
-    if (note && note.id === parseInt(id || "0")) {
+    // Reset initial load flag when note ID changes
+    setInitialLoadDone(false);
+  }, [id]);
+  
+  useEffect(() => {
+    // Only run on initial load, not on refetches after regeneration
+    if (note && note.id === parseInt(id || "0") && !initialLoadDone) {
       const initialSoap = formatSoapNote(note);
       setFormData({
         title: note.title || "",
@@ -613,11 +622,10 @@ export default function NoteDetail() {
       setSoapHistory([initialSoap]);
       setHistoryIndex(0);
       // Load the saved template selection
-      if (note.templateId) {
-        setSelectedTemplateId(note.templateId.toString());
-      }
+      setSelectedTemplateId(note.templateId ? note.templateId.toString() : "");
+      setInitialLoadDone(true);
     }
-  }, [note, id]);
+  }, [note, id, initialLoadDone]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
