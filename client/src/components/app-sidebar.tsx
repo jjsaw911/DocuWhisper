@@ -326,10 +326,10 @@ export function AppSidebar() {
                                   </div>
                                   <button
                                     onClick={(e) => handleDeleteClick(e, note)}
-                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
+                                    className="shrink-0 p-1 hover:bg-destructive/10 rounded transition-colors ml-2"
                                     data-testid={`button-delete-note-${note.id}`}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
                                   </button>
                                 </DropdownMenuItem>
                               );
