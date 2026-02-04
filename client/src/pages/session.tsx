@@ -291,6 +291,13 @@ export default function Session() {
   // Get language from settings (default to English)
   const transcriptionLanguage = userSettings?.language || "en";
 
+  // Set the user's default template when settings are loaded
+  useEffect(() => {
+    if (userSettings?.defaultTemplateId && selectedTemplateId === "default") {
+      setSelectedTemplateId(userSettings.defaultTemplateId.toString());
+    }
+  }, [userSettings?.defaultTemplateId]);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;

@@ -401,6 +401,7 @@ export async function registerRoutes(
       }
       
       const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context } = validationResult.data;
+      const userId = req.user.claims.sub;
       
       console.log("SOAP generation request - transcript length:", transcript.length);
       console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
@@ -408,10 +409,22 @@ export async function registerRoutes(
       console.log("SOAP generation request - context provided:", !!context);
 
       let customPrompt = "";
-      if (templateId) {
-        const template = await storage.getTemplate(templateId);
+      let effectiveTemplateId = templateId;
+      
+      // If no template specified, check for user's default template
+      if (!effectiveTemplateId) {
+        const userSettings = await storage.getUserSettings(userId);
+        if (userSettings?.defaultTemplateId) {
+          effectiveTemplateId = userSettings.defaultTemplateId;
+          console.log("SOAP generation - using user's default template:", effectiveTemplateId);
+        }
+      }
+      
+      if (effectiveTemplateId) {
+        const template = await storage.getTemplate(effectiveTemplateId);
         if (template) {
           customPrompt = template.prompt;
+          console.log("SOAP generation - using custom template prompt:", template.name);
         }
       }
 
