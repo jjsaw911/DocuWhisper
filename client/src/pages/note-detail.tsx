@@ -28,6 +28,8 @@ import {
   Download,
   Share2,
   Wand2,
+  Undo2,
+  Redo2,
   ChevronDown,
   ChevronUp,
   ChevronLeft,
@@ -142,6 +144,42 @@ export default function NoteDetail() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [copied, setCopied] = useState(false);
   const [translateLanguage, setTranslateLanguage] = useState("es");
+  
+  // Undo/redo history for SOAP note
+  const [soapHistory, setSoapHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  
+  // Push current state to history before a change
+  const pushToHistory = (currentValue: string) => {
+    // Only push if different from the last history entry
+    if (soapHistory[historyIndex] !== currentValue) {
+      const newHistory = soapHistory.slice(0, historyIndex + 1);
+      newHistory.push(currentValue);
+      // Keep max 20 history entries
+      if (newHistory.length > 20) newHistory.shift();
+      setSoapHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+    }
+  };
+  
+  const canUndo = historyIndex > 0;
+  const canRedo = historyIndex < soapHistory.length - 1;
+  
+  const handleUndo = () => {
+    if (canUndo) {
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      setFormData(prev => ({ ...prev, soapNote: soapHistory[newIndex] }));
+    }
+  };
+  
+  const handleRedo = () => {
+    if (canRedo) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      setFormData(prev => ({ ...prev, soapNote: soapHistory[newIndex] }));
+    }
+  };
   
   // New feature states
   const [showReferralModal, setShowReferralModal] = useState(false);
@@ -540,11 +578,15 @@ export default function NoteDetail() {
 
   useEffect(() => {
     if (note) {
+      const initialSoap = formatSoapNote(note);
       setFormData({
         title: note.title || "",
         patientName: note.patientName || "",
-        soapNote: formatSoapNote(note),
+        soapNote: initialSoap,
       });
+      // Initialize history with the original note content
+      setSoapHistory([initialSoap]);
+      setHistoryIndex(0);
     }
   }, [note]);
 
@@ -577,6 +619,9 @@ export default function NoteDetail() {
 
   const regenerateMutation = useMutation({
     mutationFn: async () => {
+      // Save current state to history before regenerating
+      pushToHistory(formData.soapNote);
+      
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript: note?.transcript || "",
         patientName: formData.patientName,
@@ -586,7 +631,7 @@ export default function NoteDetail() {
       });
       return response.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       console.log("[Regenerate] AI response keys:", Object.keys(data));
       console.log("[Regenerate] Has HPI:", !!data.hpi, "Has Plan:", !!data.plan);
       
@@ -604,15 +649,55 @@ export default function NoteDetail() {
         if (data.plan) newSoapNote.push(`PLAN:\n${data.plan}`);
       }
       
+      const newSoapText = newSoapNote.join("\n\n");
+      
+      // Update form data
       setFormData(prev => ({
         ...prev,
-        soapNote: newSoapNote.join("\n\n"),
+        soapNote: newSoapText,
       }));
+      
+      // Push new state to history
+      pushToHistory(newSoapText);
+      
       setShowAiInstructions(false);
-      toast({
-        title: "SOAP note regenerated",
-        description: "The note has been regenerated with your instructions",
-      });
+      
+      // Auto-save the regenerated note
+      try {
+        // Parse the new SOAP text to save to database
+        const noteData = data.hpi ? {
+          subjective: data.hpi,
+          objective: "",
+          assessment: "",
+          plan: data.plan || "",
+        } : {
+          subjective: data.subjective || "",
+          objective: data.objective || "",
+          assessment: data.assessment || "",
+          plan: data.plan || "",
+        };
+        
+        await apiRequest("PATCH", `/api/notes/${id}`, {
+          title: formData.title,
+          patientName: formData.patientName,
+          ...noteData,
+        });
+        
+        queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+        
+        toast({
+          title: "Note regenerated & saved",
+          description: "Your changes have been saved automatically",
+        });
+      } catch (error) {
+        console.error("Auto-save failed:", error);
+        toast({
+          title: "Note regenerated",
+          description: "Note was regenerated but auto-save failed. Please save manually.",
+          variant: "destructive",
+        });
+      }
     },
     onError: () => {
       toast({
@@ -979,6 +1064,31 @@ export default function NoteDetail() {
                 <ArrowLeft className="h-5 w-5" />
               </Link>
             </Button>
+            
+            {/* Undo/Redo buttons */}
+            <div className="flex items-center border-r pr-3 mr-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleUndo}
+                disabled={!canUndo}
+                title="Undo (Ctrl+Z)"
+                data-testid="button-undo"
+              >
+                <Undo2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleRedo}
+                disabled={!canRedo}
+                title="Redo (Ctrl+Y)"
+                data-testid="button-redo"
+              >
+                <Redo2 className="h-4 w-4" />
+              </Button>
+            </div>
+            
             <span className="text-lg font-semibold truncate max-w-[300px]">
               {note.title}
             </span>
