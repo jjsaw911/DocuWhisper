@@ -1,4 +1,4 @@
-import { Switch, Route, useRoute } from "wouter";
+import { Switch, Route, useRoute, useParams } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,7 +12,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Session from "@/pages/session";
-import NoteDetail from "@/pages/note-detail";
+import NoteDetailPage from "@/pages/note-detail";
 import Subscription from "@/pages/subscription";
 import Templates from "@/pages/templates";
 import Tasks from "@/pages/tasks";
@@ -26,6 +26,12 @@ import EMRPatients from "@/pages/emr/patients";
 import EMRPatientDetail from "@/pages/emr/patient-detail";
 import EMRSchedule from "@/pages/emr/schedule";
 import EMRTeam from "@/pages/emr/team";
+
+// Wrapper to force remount when note ID changes - fixes navigation showing wrong note
+function NoteDetail() {
+  const { id } = useParams<{ id: string }>();
+  return <NoteDetailPage key={id} />;
+}
 
 function AuthenticatedLayout() {
   useSessionTimeout(); // HIPAA compliance - auto-logout after 30 min inactivity
