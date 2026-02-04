@@ -576,8 +576,20 @@ export default function NoteDetail() {
     return sections;
   };
 
+  // Reset form data when navigating to a different note (id changes)
   useEffect(() => {
-    if (note) {
+    // Reset form to prevent showing stale data from previous note
+    setFormData({
+      title: "",
+      patientName: "",
+      soapNote: "",
+    });
+    setSoapHistory([]);
+    setHistoryIndex(-1);
+  }, [id]);
+  
+  useEffect(() => {
+    if (note && note.id === parseInt(id || "0")) {
       const initialSoap = formatSoapNote(note);
       setFormData({
         title: note.title || "",
@@ -588,7 +600,7 @@ export default function NoteDetail() {
       setSoapHistory([initialSoap]);
       setHistoryIndex(0);
     }
-  }, [note]);
+  }, [note, id]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
