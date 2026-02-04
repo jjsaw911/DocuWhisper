@@ -1060,6 +1060,7 @@ export default function Session() {
         .map((e) => e.text)
         .join("\n");
 
+      console.log("[Regenerate] Sending request with templateId:", selectedTemplateId);
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript,
         patientName,
@@ -1068,9 +1069,13 @@ export default function Session() {
         outputLanguage: transcriptionLanguage,
         context: contextText || undefined,
       });
-      return response.json();
+      const data = await response.json();
+      console.log("[Regenerate] Received response:", data);
+      console.log("[Regenerate] Response keys:", Object.keys(data));
+      return data;
     },
     onSuccess: (data) => {
+      console.log("[Regenerate] Setting soapNote state:", data);
       setSoapNote(data);
       setActiveTab("soap");
       setTranscriptPanelOpen(false); // Collapse transcript panel when SOAP is generated
