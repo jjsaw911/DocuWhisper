@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Link, useParams, useLocation } from "wouter";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import html2pdf from "html2pdf.js";
+import DOMPurify from "dompurify";
 import { 
   ArrowLeft, 
   Save,
@@ -1038,7 +1039,7 @@ export default function NoteDetail() {
     `).join('');
 
     const container = document.createElement('div');
-    container.innerHTML = `
+    const rawHtml = `
       <div style="font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
         <h1 style="color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px; margin-top: 0;">${formData.title || "SOAP Note"}</h1>
         <div style="color: #6b7280; margin-bottom: 24px;">
@@ -1052,6 +1053,7 @@ export default function NoteDetail() {
         ${referralSections}
       </div>
     `;
+    container.innerHTML = DOMPurify.sanitize(rawHtml);
 
     const filename = `${(formData.title || formData.patientName || 'SOAP-Note').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
 
