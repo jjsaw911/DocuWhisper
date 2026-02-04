@@ -90,10 +90,22 @@ export function AppSidebar() {
   const deleteNoteMutation = useMutation({
     mutationFn: async (noteId: number) => {
       await apiRequest("DELETE", `/api/notes/${noteId}`);
+      return noteId;
     },
-    onSuccess: () => {
+    onSuccess: (deletedNoteId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
       setNoteToDelete(null);
+      
+      // If we're currently viewing the deleted note, navigate to another note or session
+      if (location === `/notes/${deletedNoteId}`) {
+        const remainingNotes = notes.filter(n => n.id !== deletedNoteId);
+        if (remainingNotes.length > 0) {
+          navigate(`/notes/${remainingNotes[0].id}`);
+        } else {
+          navigate("/session");
+        }
+      }
+      
       toast({
         title: "Note deleted",
         description: "The note has been permanently removed and will no longer appear in analytics",
@@ -295,14 +307,13 @@ export function AppSidebar() {
                             {dateNotes.map((note) => {
                               const isCurrentNote = location === `/notes/${note.id}`;
                               return (
-                                <DropdownMenuItem
+                                <div
                                   key={note.id}
-                                  className={`cursor-pointer group ${isCurrentNote ? 'bg-accent' : ''}`}
+                                  className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-accent ${isCurrentNote ? 'bg-accent' : ''}`}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     const targetPath = `/notes/${note.id}`;
                                     setScribeMenuOpen(false);
-                                    // Use setTimeout to ensure navigation happens after menu closes
                                     setTimeout(() => {
                                       navigate(targetPath);
                                     }, 10);
@@ -326,12 +337,12 @@ export function AppSidebar() {
                                   </div>
                                   <button
                                     onClick={(e) => handleDeleteClick(e, note)}
-                                    className="shrink-0 p-1 hover:bg-destructive/10 rounded transition-colors ml-2"
+                                    className="shrink-0 p-1.5 hover:bg-destructive/20 rounded transition-colors ml-2"
                                     data-testid={`button-delete-note-${note.id}`}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
                                   </button>
-                                </DropdownMenuItem>
+                                </div>
                               );
                             })}
                           </div>
