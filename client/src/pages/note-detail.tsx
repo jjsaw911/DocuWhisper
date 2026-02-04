@@ -105,10 +105,19 @@ export default function NoteDetail() {
   const initialSoapContent = useMemo(() => {
     if (!note) return "";
     const parts = [];
-    if (note.subjective) parts.push(`SUBJECTIVE:\n${note.subjective}`);
-    if (note.objective) parts.push(`OBJECTIVE:\n${note.objective}`);
-    if (note.assessment) parts.push(`ASSESSMENT:\n${note.assessment}`);
-    if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    
+    // Detect HPI format: subjective has content but objective/assessment are empty
+    const isHpiFormat = note.subjective && !note.objective && !note.assessment;
+    
+    if (isHpiFormat) {
+      parts.push(`HPI:\n${note.subjective}`);
+      if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    } else {
+      if (note.subjective) parts.push(`SUBJECTIVE:\n${note.subjective}`);
+      if (note.objective) parts.push(`OBJECTIVE:\n${note.objective}`);
+      if (note.assessment) parts.push(`ASSESSMENT:\n${note.assessment}`);
+      if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    }
     return parts.join("\n\n");
   }, [note]);
 
@@ -478,10 +487,21 @@ export default function NoteDetail() {
 
   const formatSoapNote = (note: Note) => {
     const parts = [];
-    if (note.subjective) parts.push(`SUBJECTIVE:\n${note.subjective}`);
-    if (note.objective) parts.push(`OBJECTIVE:\n${note.objective}`);
-    if (note.assessment) parts.push(`ASSESSMENT:\n${note.assessment}`);
-    if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    
+    // Detect HPI format: subjective has content but objective/assessment are empty
+    const isHpiFormat = note.subjective && !note.objective && !note.assessment;
+    
+    if (isHpiFormat) {
+      // Display as HPI format
+      parts.push(`HPI:\n${note.subjective}`);
+      if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    } else {
+      // Standard SOAP format
+      if (note.subjective) parts.push(`SUBJECTIVE:\n${note.subjective}`);
+      if (note.objective) parts.push(`OBJECTIVE:\n${note.objective}`);
+      if (note.assessment) parts.push(`ASSESSMENT:\n${note.assessment}`);
+      if (note.plan) parts.push(`PLAN:\n${note.plan}`);
+    }
     return parts.join("\n\n");
   };
 
@@ -493,6 +513,18 @@ export default function NoteDetail() {
       plan: "",
     };
 
+    // Check for HPI format first (HPI + Plan)
+    const hpiMatch = text.match(/HPI:\s*([\s\S]*?)(?=PLAN:|$)/i);
+    if (hpiMatch) {
+      // HPI format: store HPI in subjective field, leave objective/assessment empty
+      sections.subjective = hpiMatch[1].trim();
+      const planMatch = text.match(/PLAN:\s*([\s\S]*?)$/i);
+      if (planMatch) sections.plan = planMatch[1].trim();
+      console.log("[parseSoapNote] HPI format detected, subjective length:", sections.subjective.length);
+      return sections;
+    }
+
+    // Standard SOAP format
     const subjectiveMatch = text.match(/SUBJECTIVE:\s*([\s\S]*?)(?=OBJECTIVE:|ASSESSMENT:|PLAN:|$)/i);
     const objectiveMatch = text.match(/OBJECTIVE:\s*([\s\S]*?)(?=SUBJECTIVE:|ASSESSMENT:|PLAN:|$)/i);
     const assessmentMatch = text.match(/ASSESSMENT:\s*([\s\S]*?)(?=SUBJECTIVE:|OBJECTIVE:|PLAN:|$)/i);
@@ -555,11 +587,22 @@ export default function NoteDetail() {
       return response.json();
     },
     onSuccess: (data) => {
+      console.log("[Regenerate] AI response keys:", Object.keys(data));
+      console.log("[Regenerate] Has HPI:", !!data.hpi, "Has Plan:", !!data.plan);
+      
       const newSoapNote: string[] = [];
-      if (data.subjective) newSoapNote.push(`SUBJECTIVE:\n${data.subjective}`);
-      if (data.objective) newSoapNote.push(`OBJECTIVE:\n${data.objective}`);
-      if (data.assessment) newSoapNote.push(`ASSESSMENT:\n${data.assessment}`);
-      if (data.plan) newSoapNote.push(`PLAN:\n${data.plan}`);
+      
+      // Handle HPI format (template returns hpi + plan instead of SOAP)
+      if (data.hpi) {
+        newSoapNote.push(`HPI:\n${data.hpi}`);
+        if (data.plan) newSoapNote.push(`PLAN:\n${data.plan}`);
+      } else {
+        // Standard SOAP format
+        if (data.subjective) newSoapNote.push(`SUBJECTIVE:\n${data.subjective}`);
+        if (data.objective) newSoapNote.push(`OBJECTIVE:\n${data.objective}`);
+        if (data.assessment) newSoapNote.push(`ASSESSMENT:\n${data.assessment}`);
+        if (data.plan) newSoapNote.push(`PLAN:\n${data.plan}`);
+      }
       
       setFormData(prev => ({
         ...prev,
