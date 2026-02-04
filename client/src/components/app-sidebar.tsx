@@ -337,10 +337,11 @@ export function AppSidebar() {
                                   </div>
                                   <button
                                     onClick={(e) => handleDeleteClick(e, note)}
-                                    className="shrink-0 p-1.5 hover:bg-destructive/20 rounded transition-colors ml-2"
+                                    className="flex items-center justify-center shrink-0 w-7 h-7 hover:bg-destructive/20 rounded transition-colors ml-2"
                                     data-testid={`button-delete-note-${note.id}`}
+                                    title="Delete note"
                                   >
-                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                                    <Trash2 className="h-4 w-4 text-destructive/70 hover:text-destructive" />
                                   </button>
                                 </div>
                               );

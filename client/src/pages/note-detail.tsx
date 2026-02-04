@@ -52,7 +52,8 @@ import {
   ClipboardCopy,
   Mic,
   PanelRightClose,
-  PanelRightOpen
+  PanelRightOpen,
+  Trash2
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
@@ -75,6 +76,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { Note, Task, Template, Practice, SharedNote } from "@shared/schema";
 
 const TASK_CATEGORIES = [
@@ -623,6 +635,27 @@ export default function NoteDetail() {
     onError: () => {
       toast({
         title: "Failed to update note",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteNoteMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/notes/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      toast({
+        title: "Note deleted",
+        description: "The note has been permanently removed",
+      });
+      navigate("/session");
+    },
+    onError: () => {
+      toast({
+        title: "Failed to delete note",
         description: "Please try again",
         variant: "destructive",
       });
@@ -1225,6 +1258,37 @@ export default function NoteDetail() {
             <Button variant="outline" size="icon" onClick={exportToPDF} data-testid="button-export">
               <Download className="h-4 w-4" />
             </Button>
+            
+            {/* Delete button with confirmation dialog */}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" data-testid="button-delete-note">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete Note</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete this note? This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => deleteNoteMutation.mutate()}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    disabled={deleteNoteMutation.isPending}
+                    data-testid="button-confirm-delete"
+                  >
+                    {deleteNoteMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             
             <ThemeToggle />
             
