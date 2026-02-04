@@ -1118,19 +1118,24 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.patch("/api/templates/:id", isAuthenticated, async (req: any, res: Response) => {
     try {
       const templateId = parseInt(req.params.id);
+      console.log("[template-update] Updating template:", templateId, "with data:", JSON.stringify(req.body));
+      
       const template = await storage.getTemplate(templateId);
       
       if (!template) {
+        console.log("[template-update] Template not found:", templateId);
         return res.status(404).json({ error: "Template not found" });
       }
       
       if (template.userId !== req.user.claims.sub) {
+        console.log("[template-update] Unauthorized - owner:", template.userId, "requester:", req.user.claims.sub);
         return res.status(403).json({ error: "Not authorized to update this template" });
       }
       
       const validationResult = updateTemplateSchema.safeParse(req.body);
       
       if (!validationResult.success) {
+        console.log("[template-update] Validation failed:", validationResult.error.flatten().fieldErrors);
         return res.status(400).json({ 
           error: "Validation failed", 
           details: validationResult.error.flatten().fieldErrors 
@@ -1138,6 +1143,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
       
       const updated = await storage.updateTemplate(templateId, validationResult.data);
+      console.log("[template-update] Updated successfully:", updated?.id, "new name:", updated?.name);
       
       if (validationResult.data.isDefault) {
         await storage.setDefaultTemplate(req.user.claims.sub, templateId);
@@ -1145,7 +1151,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       
       res.json(updated);
     } catch (error) {
-      console.error("Error updating template:", error);
+      console.error("[template-update] Error updating template:", error);
       res.status(500).json({ error: "Failed to update template" });
     }
   });
