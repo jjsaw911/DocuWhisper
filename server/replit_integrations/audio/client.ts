@@ -314,6 +314,7 @@ export async function speechToText(
   const response = await openai.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
+    temperature: 0, // Reduce hallucinations on silent/quiet audio
     ...(language && { language }),
     ...(prompt && { prompt }),
   });

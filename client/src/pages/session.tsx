@@ -298,7 +298,7 @@ export default function Session() {
   const transcriptionLanguage = userSettings?.language || "en";
   
   // Get noise threshold from settings (default to 10%)
-  const noiseThreshold = userSettings?.noiseThreshold ?? 10;
+  const noiseThreshold = userSettings?.noiseThreshold ?? 15; // Default 15% to reduce hallucinations on quiet audio
 
   // Set the user's default template when settings are loaded (only on initial load)
   const hasInitializedTemplateRef = useRef(false);

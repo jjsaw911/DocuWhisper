@@ -100,7 +100,7 @@ export default function Settings() {
   const [noteStyle, setNoteStyle] = useState("detailed");
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [showTimestamps, setShowTimestamps] = useState(true);
-  const [noiseThreshold, setNoiseThreshold] = useState(10);
+  const [noiseThreshold, setNoiseThreshold] = useState(15);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
 
@@ -226,7 +226,7 @@ export default function Settings() {
       setNoteStyle(settings.noteStyle || "detailed");
       setAutoSaveEnabled(settings.autoSaveEnabled ?? true);
       setShowTimestamps(settings.showTimestamps ?? true);
-      setNoiseThreshold(settings.noiseThreshold ?? 10);
+      setNoiseThreshold(settings.noiseThreshold ?? 15);
       setEmailNotificationsEnabled(settings.emailNotificationsEnabled ?? false);
       setEmailDigestTime(settings.emailDigestTime || "08:00");
       // EMR Credentials
