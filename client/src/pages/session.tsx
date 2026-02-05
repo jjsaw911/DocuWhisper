@@ -296,14 +296,32 @@ export default function Session() {
   // Set the user's default template when settings are loaded (only on initial load)
   const hasInitializedTemplateRef = useRef(false);
   useEffect(() => {
-    if (userSettings?.defaultTemplateId && !hasInitializedTemplateRef.current) {
-      // Only auto-set the template on initial page load, not after user manually selects
-      if (selectedTemplateId === "default") {
-        setSelectedTemplateId(userSettings.defaultTemplateId.toString());
-      }
-      hasInitializedTemplateRef.current = true;
+    // Only initialize once and only if still on "default"
+    if (hasInitializedTemplateRef.current || selectedTemplateId !== "default") {
+      return;
     }
-  }, [userSettings?.defaultTemplateId, selectedTemplateId]);
+    
+    // First priority: user settings defaultTemplateId
+    if (userSettings?.defaultTemplateId) {
+      // Verify this template still exists
+      const templateExists = templates?.some(t => t.id === userSettings.defaultTemplateId);
+      if (templateExists) {
+        setSelectedTemplateId(userSettings.defaultTemplateId.toString());
+        hasInitializedTemplateRef.current = true;
+        return;
+      }
+    }
+    
+    // Second priority: find template with isDefault = true
+    if (templates && templates.length > 0) {
+      const defaultTemplate = templates.find(t => t.isDefault === true);
+      if (defaultTemplate) {
+        setSelectedTemplateId(defaultTemplate.id.toString());
+        hasInitializedTemplateRef.current = true;
+        return;
+      }
+    }
+  }, [userSettings?.defaultTemplateId, templates, selectedTemplateId]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
