@@ -13,6 +13,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { DrugInteractionAlert } from "@/components/drug-interaction-alert";
 import { useRecording } from "@/contexts/recording-context";
+import { dispatchActivityEvent } from "@/hooks/use-session-timeout";
 import {
   Mic,
   Square,
@@ -132,6 +133,7 @@ export default function Session() {
   const isRecordingRef = useRef<boolean>(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isTranscribingRef = useRef<boolean>(false);
+  const lastActivityDispatchRef = useRef<number>(0); // For throttled session activity
   
   // Chunk tracking with unique IDs to prevent duplicate processing
   type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number };
@@ -357,6 +359,10 @@ export default function Session() {
       formData.append("language", transcriptionLanguage);
 
       console.log(`[transcribeChunk] Starting transcription of ${audioBlob.size} bytes`);
+      
+      // Signal app activity to prevent session timeout during transcription
+      dispatchActivityEvent();
+      
       const response = await fetch("/api/transcribe", {
         method: "POST",
         body: formData,
@@ -373,6 +379,10 @@ export default function Session() {
 
       const data = await response.json();
       console.log(`[transcribeChunk] Completed, got ${data.transcript?.length || 0} chars`);
+      
+      // Signal activity again after transcription completes
+      dispatchActivityEvent();
+      
       return data.transcript || null;
     } catch (error: unknown) {
       clearTimeout(timeoutId);
@@ -543,6 +553,13 @@ export default function Session() {
       }
       setAudioLevel(levels);
       setGlobalAudioLevel(levels);
+      
+      // Dispatch activity event every 30 seconds during recording to prevent session timeout
+      const now = Date.now();
+      if (now - lastActivityDispatchRef.current > 30000) {
+        lastActivityDispatchRef.current = now;
+        dispatchActivityEvent();
+      }
       
       animationRef.current = requestAnimationFrame(updateAudioLevel);
     }

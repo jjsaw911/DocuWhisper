@@ -5,6 +5,14 @@ import { useToast } from '@/hooks/use-toast';
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 const WARNING_BEFORE_TIMEOUT = 5 * 60 * 1000; // 5 minutes warning
 
+// Custom event name for app activity (transcription, recording, etc.)
+export const APP_ACTIVITY_EVENT = 'docuwhisper:activity';
+
+// Helper function to dispatch activity event from anywhere in the app
+export function dispatchActivityEvent() {
+  window.dispatchEvent(new CustomEvent(APP_ACTIVITY_EVENT));
+}
+
 export function useSessionTimeout() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -55,15 +63,20 @@ export function useSessionTimeout() {
   }, [logout, showWarning, toast]);
 
   useEffect(() => {
+    // Standard user interaction events
     const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
     
     const handleActivity = () => {
       resetTimer();
     };
 
+    // Listen for standard DOM events
     events.forEach(event => {
       document.addEventListener(event, handleActivity, { passive: true });
     });
+
+    // Also listen for custom app activity events (transcription, recording, etc.)
+    window.addEventListener(APP_ACTIVITY_EVENT, handleActivity);
 
     resetTimer();
 
@@ -71,6 +84,7 @@ export function useSessionTimeout() {
       events.forEach(event => {
         document.removeEventListener(event, handleActivity);
       });
+      window.removeEventListener(APP_ACTIVITY_EVENT, handleActivity);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
