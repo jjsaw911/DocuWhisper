@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2 } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -99,6 +100,7 @@ export default function Settings() {
   const [noteStyle, setNoteStyle] = useState("detailed");
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [showTimestamps, setShowTimestamps] = useState(true);
+  const [noiseThreshold, setNoiseThreshold] = useState(10);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
 
@@ -224,6 +226,7 @@ export default function Settings() {
       setNoteStyle(settings.noteStyle || "detailed");
       setAutoSaveEnabled(settings.autoSaveEnabled ?? true);
       setShowTimestamps(settings.showTimestamps ?? true);
+      setNoiseThreshold(settings.noiseThreshold ?? 10);
       setEmailNotificationsEnabled(settings.emailNotificationsEnabled ?? false);
       setEmailDigestTime(settings.emailDigestTime || "08:00");
       // EMR Credentials
@@ -253,6 +256,7 @@ export default function Settings() {
         noteStyle,
         autoSaveEnabled,
         showTimestamps,
+        noiseThreshold,
         emailNotificationsEnabled,
         emailDigestTime,
         // EMR Credentials
@@ -542,6 +546,33 @@ export default function Settings() {
                   onCheckedChange={setShowTimestamps}
                   data-testid="switch-timestamps"
                 />
+              </div>
+              
+              <div className="space-y-3 pt-4 border-t">
+                <div className="flex items-center gap-2">
+                  <Mic className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="noiseThreshold">Microphone Sensitivity</Label>
+                </div>
+                <div className="space-y-2">
+                  <Slider
+                    id="noiseThreshold"
+                    min={0}
+                    max={50}
+                    step={5}
+                    value={[noiseThreshold]}
+                    onValueChange={(value) => setNoiseThreshold(value[0])}
+                    data-testid="slider-noise-threshold"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>More Sensitive</span>
+                    <span>Current: {noiseThreshold}%</span>
+                    <span>Less Sensitive</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Higher values filter out more background noise but may miss quiet speech. 
+                    Lower values are more sensitive but may pick up ambient sounds.
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>

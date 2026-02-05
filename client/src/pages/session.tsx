@@ -136,11 +136,12 @@ export default function Session() {
   const lastActivityDispatchRef = useRef<number>(0); // For throttled session activity
   
   // Chunk tracking with unique IDs to prevent duplicate processing
-  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number };
+  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number; peakLevel: number };
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
   const chunkIntervalSec = 5; // 5-second chunks for faster feedback with timestamps
+  const segmentPeakLevelRef = useRef<number>(0); // Track peak audio level for current segment
   
   // Transcript state: committedText (stable) + partialText (interim)
   const committedTextRef = useRef<string>(""); // Finalized transcript
@@ -283,17 +284,21 @@ export default function Session() {
     queryKey: ["/api/templates"],
   });
 
-  // Fetch user settings for language preference
+  // Fetch user settings for language preference and noise threshold
   const { data: userSettings } = useQuery<{
     language?: string;
     autoSaveEnabled?: boolean;
     defaultTemplateId?: number;
+    noiseThreshold?: number;
   }>({
     queryKey: ["/api/settings"],
   });
 
   // Get language from settings (default to English)
   const transcriptionLanguage = userSettings?.language || "en";
+  
+  // Get noise threshold from settings (default to 10%)
+  const noiseThreshold = userSettings?.noiseThreshold ?? 10;
 
   // Set the user's default template when settings are loaded (only on initial load)
   const hasInitializedTemplateRef = useRef(false);
@@ -499,11 +504,24 @@ export default function Session() {
       return;
     }
 
+    // Noise gate: Skip chunks below noise threshold (mostly silence/background noise)
+    if (chunkItem.peakLevel < noiseThreshold) {
+      console.log(`[Chunk ${chunkItem.id}] Skipped - peak level ${chunkItem.peakLevel.toFixed(1)}% below threshold ${noiseThreshold}%`);
+      chunkItem.processed = true;
+      processedChunkIdsRef.current.add(chunkItem.id);
+      // Continue to next chunk
+      const remaining = pendingChunksRef.current.filter(c => !c.processed);
+      if (remaining.length > 0) {
+        processNextChunk();
+      }
+      return;
+    }
+
     // Mark as "in progress" - but NOT processed yet
     isTranscribingRef.current = true;
     processedChunkIdsRef.current.add(chunkItem.id);
     
-    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (independent segment)...`);
+    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (peak: ${chunkItem.peakLevel.toFixed(1)}%)...`);
     
     try {
       // Each chunk is now independent - just the audio from this time segment
@@ -553,6 +571,12 @@ export default function Session() {
       }
       setAudioLevel(levels);
       setGlobalAudioLevel(levels);
+      
+      // Track peak audio level for current segment (as percentage 0-100)
+      const currentMax = Math.max(...levels) * 100;
+      if (currentMax > segmentPeakLevelRef.current) {
+        segmentPeakLevelRef.current = currentMax;
+      }
       
       // Dispatch activity event every 30 seconds during recording to prevent session timeout
       const now = Date.now();
@@ -625,17 +649,22 @@ export default function Session() {
             // Store for final assembly
             chunksRef.current.push(segmentBlob);
             
-            // Queue for transcription
+            // Queue for transcription with peak audio level
             const chunkId = nextChunkIdRef.current++;
             const timestampSec = chunkId * chunkIntervalSec;
+            const peakLevel = segmentPeakLevelRef.current;
             const chunkItem: ChunkItem = { 
               id: chunkId, 
               blob: segmentBlob, 
               processed: false, 
-              timestampSec 
+              timestampSec,
+              peakLevel 
             };
             pendingChunksRef.current.push(chunkItem);
-            console.log(`[Chunk ${chunkId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes)`);
+            console.log(`[Chunk ${chunkId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%)`);
+            
+            // Reset peak level for next segment
+            segmentPeakLevelRef.current = 0;
             
             // Process transcription
             processNextChunk();
@@ -765,14 +794,17 @@ export default function Session() {
             
             const chunkId = nextChunkIdRef.current++;
             const timestampSec = chunkId * chunkIntervalSec;
+            const peakLevel = segmentPeakLevelRef.current;
             const chunkItem: ChunkItem = { 
               id: chunkId, 
               blob: segmentBlob, 
               processed: false, 
-              timestampSec 
+              timestampSec,
+              peakLevel
             };
             pendingChunksRef.current.push(chunkItem);
-            console.log(`[Chunk ${chunkId}] Queued resumed segment (${segmentBlob.size} bytes)`);
+            console.log(`[Chunk ${chunkId}] Queued resumed segment (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%)`);
+            segmentPeakLevelRef.current = 0; // Reset for next segment
             processNextChunk();
           }
           segmentChunks = [];

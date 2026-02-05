@@ -302,40 +302,59 @@ export async function textToSpeechStream(
  * Speech-to-Text: Transcribes audio using dedicated transcription model.
  * Uses gpt-4o-mini-transcribe for accurate transcription.
  * @param language - ISO 639-1 language code (e.g., "en", "es", "fr")
+ * @param prompt - Optional prompt to help the model recognize domain-specific vocabulary
  */
 export async function speechToText(
   audioBuffer: Buffer,
   format: "wav" | "mp3" | "webm" = "wav",
-  language?: string
+  language?: string,
+  prompt?: string
 ): Promise<string> {
   const file = await toFile(audioBuffer, `audio.${format}`);
   const response = await openai.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
     ...(language && { language }),
+    ...(prompt && { prompt }),
   });
   return response.text;
 }
+
+// Medical vocabulary prompt to improve transcription accuracy
+export const MEDICAL_VOCABULARY_PROMPT = `Medical consultation transcription. Common terms: 
+SOAP notes, chief complaint, HPI (history of present illness), ROS (review of systems), 
+vitals, blood pressure, heart rate, respiratory rate, temperature, O2 saturation,
+diagnosis, differential diagnosis, ICD-10, CPT codes, prescription, dosage, mg, mL,
+hypertension, diabetes mellitus, hyperlipidemia, COPD, CHF, CAD, MI, CVA, TIA,
+metformin, lisinopril, atorvastatin, omeprazole, levothyroxine, amlodipine,
+CBC, BMP, CMP, TSH, A1C, lipid panel, urinalysis, EKG, echocardiogram, X-ray, CT, MRI,
+bilateral, unilateral, acute, chronic, benign, malignant, edema, tenderness, erythema,
+prn, bid, tid, qid, qd, hs, ac, pc, po, IV, IM, subq, topical.`;
 
 /**
  * Transcribe long audio files by splitting into chunks.
  * Handles recordings of any length by processing in 10-minute segments.
  * OpenAI has a 25MB file limit, so this ensures large files are processed correctly.
  * @param language - ISO 639-1 language code (e.g., "en", "es", "fr")
+ * @param useMedicalPrompt - Whether to use medical vocabulary prompt (default: true)
  */
 export async function transcribeLongAudio(
   audioBuffer: Buffer,
-  language?: string
+  language?: string,
+  useMedicalPrompt: boolean = true
 ): Promise<string> {
   // First convert to WAV format
   const wavBuffer = await convertToWav(audioBuffer);
+  
+  // Use medical vocabulary prompt to improve accuracy
+  const prompt = useMedicalPrompt ? MEDICAL_VOCABULARY_PROMPT : undefined;
   
   // Check size - if under 20MB, transcribe directly (leave buffer for API limit)
   const MAX_DIRECT_SIZE = 20 * 1024 * 1024; // 20MB
   
   if (wavBuffer.length < MAX_DIRECT_SIZE) {
-    console.log("Audio under 20MB, transcribing directly", language ? `(language: ${language})` : "");
-    return await speechToText(wavBuffer, "wav", language);
+    console.log("Audio under 20MB, transcribing directly", language ? `(language: ${language})` : "", useMedicalPrompt ? "(with medical vocab)" : "");
+    return await speechToText(wavBuffer, "wav", language, prompt);
   }
   
   console.log(`Audio is ${(wavBuffer.length / 1024 / 1024).toFixed(1)}MB, splitting into chunks...`);
@@ -349,7 +368,7 @@ export async function transcribeLongAudio(
   for (let i = 0; i < chunks.length; i++) {
     console.log(`Transcribing chunk ${i + 1}/${chunks.length}...`);
     try {
-      const transcript = await speechToText(chunks[i], "wav", language);
+      const transcript = await speechToText(chunks[i], "wav", language, prompt);
       transcripts.push(transcript);
     } catch (error: any) {
       console.error(`Error transcribing chunk ${i + 1}:`, error?.message);
