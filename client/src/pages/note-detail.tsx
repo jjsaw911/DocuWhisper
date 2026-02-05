@@ -88,7 +88,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { Note, Task, Template, Practice, SharedNote } from "@shared/schema";
+import type { Note, Task, Template, Practice, SharedNote, UserSettings } from "@shared/schema";
 
 const TASK_CATEGORIES = [
   { value: "document", label: "Document", icon: FileText },
@@ -363,6 +363,11 @@ export default function NoteDetail() {
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
+    enabled: !!user,
+  });
+
+  const { data: userSettings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
     enabled: !!user,
   });
 
@@ -702,12 +707,17 @@ export default function NoteDetail() {
       // Save current state to history before regenerating
       pushToHistory(formData.soapNote);
       
+      // Use selected template, or fall back to user's default template from settings
+      const effectiveTemplateId = selectedTemplateId 
+        ? parseInt(selectedTemplateId) 
+        : userSettings?.defaultTemplateId || undefined;
+      
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript: note?.transcript || "",
         patientName: formData.patientName,
         specialty: note?.specialty || "general",
         aiInstructions: aiInstructions,
-        templateId: selectedTemplateId ? parseInt(selectedTemplateId) : undefined,
+        templateId: effectiveTemplateId,
       });
       return response.json();
     },
@@ -768,10 +778,15 @@ export default function NoteDetail() {
           console.error("Failed to generate ICD codes:", e);
         }
         
+        // Use selected template, or fall back to user's default template from settings
+        const effectiveTemplateId = selectedTemplateId 
+          ? parseInt(selectedTemplateId) 
+          : userSettings?.defaultTemplateId || null;
+        
         await apiRequest("PATCH", `/api/notes/${id}`, {
           title: formData.title,
           patientName: formData.patientName,
-          templateId: selectedTemplateId ? parseInt(selectedTemplateId) : null,
+          templateId: effectiveTemplateId,
           ...noteData,
           icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
         });
