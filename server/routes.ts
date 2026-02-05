@@ -50,6 +50,7 @@ const updateNoteSchema = z.object({
   patientContext: z.string().nullable().optional(),
   patientId: z.number().nullable().optional(),
   templateId: z.number().nullable().optional(),
+  icdCodes: z.string().nullable().optional(),
 });
 
 const translateNoteSchema = z.object({

@@ -112,7 +112,11 @@ export default function Session() {
     assessment?: string;
     plan?: string;
     hpi?: string;
-    [key: string]: string | undefined;
+    icdCodes?: {
+      codes?: { code: string; description: string; category: string; confidence: string }[];
+      cptCodes?: { code: string; description: string; rationale: string }[];
+    };
+    [key: string]: string | { codes?: unknown[]; cptCodes?: unknown[] } | undefined;
   } | null>(null);
   
   // New features: Visit mode, Context, AI command
@@ -1237,6 +1241,7 @@ export default function Session() {
         ...noteData,
         transcript,
         patientContext: contextText || null,
+        icdCodes: soapNote?.icdCodes ? JSON.stringify(soapNote.icdCodes) : null,
       });
       return response.json();
     },
@@ -1802,11 +1807,11 @@ ${noteContentSection}
                       { key: "objective", label: "Objective" },
                       { key: "assessment", label: "Assessment" },
                       { key: "plan", label: "Plan" },
-                    ]).filter(({ key }) => soapNote[key]).map(({ key, label }) => (
+                    ]).filter(({ key }) => soapNote[key] && typeof soapNote[key] === 'string').map(({ key, label }) => (
                       <div key={key}>
                         <h3 className="font-medium text-sm mb-1">{label}</h3>
                         <MedicalAutocomplete
-                          value={soapNote[key] || ''}
+                          value={(soapNote[key] as string) || ''}
                           onChange={(value) =>
                             setSoapNote((prev) =>
                               prev ? { ...prev, [key]: value } : null
@@ -1912,6 +1917,65 @@ ${noteContentSection}
                         )}
                       </div>
                     )}
+                    
+                    {/* ICD-10 & CPT Codes Section */}
+                    {soapNote.icdCodes && (soapNote.icdCodes.codes?.length || soapNote.icdCodes.cptCodes?.length) ? (
+                      <div className="mt-6 border-t pt-4">
+                        <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                          <FileText className="h-4 w-4" />
+                          Billing Codes
+                        </h3>
+                        
+                        {/* ICD-10 Codes */}
+                        {soapNote.icdCodes.codes && soapNote.icdCodes.codes.length > 0 && (
+                          <div className="mb-4">
+                            <h4 className="font-medium text-xs text-muted-foreground mb-2">ICD-10 Diagnosis Codes</h4>
+                            <div className="space-y-2">
+                              {soapNote.icdCodes.codes.map((code, i) => (
+                                <div key={i} className="flex items-start gap-3 bg-muted/50 rounded-lg p-3">
+                                  <span className="font-mono text-sm font-bold text-primary whitespace-nowrap">{code.code}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm">{code.description}</p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                        code.category === "primary" ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                                      }`}>
+                                        {code.category}
+                                      </span>
+                                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                        code.confidence === "high" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                        code.confidence === "medium" ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
+                                        "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      }`}>
+                                        {code.confidence} confidence
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* CPT Codes */}
+                        {soapNote.icdCodes.cptCodes && soapNote.icdCodes.cptCodes.length > 0 && (
+                          <div>
+                            <h4 className="font-medium text-xs text-muted-foreground mb-2">CPT E/M Codes</h4>
+                            <div className="space-y-2">
+                              {soapNote.icdCodes.cptCodes.map((cpt, i) => (
+                                <div key={i} className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-sm font-bold text-blue-700 dark:text-blue-400">{cpt.code}</span>
+                                    <span className="text-sm">{cpt.description}</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1">{cpt.rationale}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-[50vh] text-center">

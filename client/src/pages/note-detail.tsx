@@ -600,6 +600,8 @@ export default function NoteDetail() {
     setSoapHistory([]);
     setHistoryIndex(-1);
     setSelectedTemplateId("");
+    setSuggestedCodes(null);
+    setShowCodesPanel(false);
   }, [id]);
   
   // Track whether we've done initial load for this note ID
@@ -624,6 +626,18 @@ export default function NoteDetail() {
       setHistoryIndex(0);
       // Load the saved template selection
       setSelectedTemplateId(note.templateId ? note.templateId.toString() : "");
+      // Load saved ICD codes if available
+      if (note.icdCodes) {
+        try {
+          const parsedCodes = typeof note.icdCodes === 'string' 
+            ? JSON.parse(note.icdCodes) 
+            : note.icdCodes;
+          setSuggestedCodes(parsedCodes);
+          setShowCodesPanel(true);
+        } catch (e) {
+          console.error("Failed to parse saved ICD codes:", e);
+        }
+      }
       setInitialLoadDone(true);
     }
   }, [note, id, initialLoadDone]);
@@ -635,6 +649,7 @@ export default function NoteDetail() {
         title: formData.title,
         patientName: formData.patientName,
         ...parsedSoap,
+        icdCodes: suggestedCodes ? JSON.stringify(suggestedCodes) : null,
       });
       return response.json();
     },
