@@ -1009,6 +1009,28 @@ export default function Session() {
         context: contextText || undefined,
       });
       const soapData = await soapResponse.json();
+      
+      // Step 2: Generate ICD codes for the SOAP note
+      let icdCodesData = null;
+      try {
+        const noteData = soapData.hpi ? {
+          subjective: soapData.hpi,
+          objective: "",
+          assessment: "",
+          plan: soapData.plan || "",
+        } : {
+          subjective: soapData.subjective || "",
+          objective: soapData.objective || "",
+          assessment: soapData.assessment || "",
+          plan: soapData.plan || "",
+        };
+        const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
+        icdCodesData = await codesResponse.json();
+        soapData.icdCodes = icdCodesData;
+      } catch (e) {
+        console.error("Failed to generate ICD codes:", e);
+      }
+      
       setSoapNote(soapData);
 
       addTranscriptEntry("Saving note...");
@@ -1040,13 +1062,14 @@ export default function Session() {
           ...noteData,
           transcript,
           patientContext: contextText || null,
+          icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
         });
         await updateResponse.json();
         savedNoteId = currentResumeNoteData.id;
         
         toast({
           title: "Session updated",
-          description: "Your additional recording has been added.",
+          description: `Your additional recording has been added${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
         });
       } else {
         // Create new note
@@ -1086,13 +1109,14 @@ export default function Session() {
           ...noteData,
           transcript,
           patientContext: contextText || null,
+          icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
         });
         const savedNote = await saveResponse.json();
         savedNoteId = savedNote.id;
         
         toast({
           title: "Session complete",
-          description: "Your note has been saved automatically.",
+          description: `Your note has been saved automatically${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
         });
       }
 
@@ -1180,6 +1204,27 @@ export default function Session() {
       const data = await response.json();
       console.log("[Regenerate] Received response:", data);
       console.log("[Regenerate] Response keys:", Object.keys(data));
+      
+      // Generate ICD codes for the regenerated SOAP note
+      try {
+        const noteData = data.hpi ? {
+          subjective: data.hpi,
+          objective: "",
+          assessment: "",
+          plan: data.plan || "",
+        } : {
+          subjective: data.subjective || "",
+          objective: data.objective || "",
+          assessment: data.assessment || "",
+          plan: data.plan || "",
+        };
+        const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
+        const icdCodesData = await codesResponse.json();
+        data.icdCodes = icdCodesData;
+      } catch (e) {
+        console.error("[Regenerate] Failed to generate ICD codes:", e);
+      }
+      
       return data;
     },
     onSuccess: (data) => {
@@ -1187,6 +1232,12 @@ export default function Session() {
       setSoapNote(data);
       setActiveTab("soap");
       setTranscriptPanelOpen(false); // Collapse transcript panel when SOAP is generated
+      if (data.icdCodes) {
+        toast({
+          title: "SOAP regenerated",
+          description: `Generated ${data.icdCodes.codes?.length || 0} ICD codes`,
+        });
+      }
     },
     onError: () => {
       toast({

@@ -742,7 +742,7 @@ export default function NoteDetail() {
       
       setShowAiInstructions(false);
       
-      // Auto-save the regenerated note
+      // Auto-save the regenerated note and generate ICD codes
       try {
         // Parse the new SOAP text to save to database
         const noteData = data.hpi ? {
@@ -757,19 +757,32 @@ export default function NoteDetail() {
           plan: data.plan || "",
         };
         
+        // Generate ICD codes for the new SOAP note
+        let icdCodesData = null;
+        try {
+          const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
+          icdCodesData = await codesResponse.json();
+          setSuggestedCodes(icdCodesData);
+          setShowCodesPanel(true);
+        } catch (e) {
+          console.error("Failed to generate ICD codes:", e);
+        }
+        
         await apiRequest("PATCH", `/api/notes/${id}`, {
           title: formData.title,
           patientName: formData.patientName,
           templateId: selectedTemplateId ? parseInt(selectedTemplateId) : null,
           ...noteData,
+          icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
         });
         
         queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
         queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
         
+        const codesMsg = icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : "";
         toast({
           title: "Note regenerated & saved",
-          description: "Your changes have been saved automatically",
+          description: `Your changes have been saved automatically${codesMsg}`,
         });
       } catch (error) {
         console.error("Auto-save failed:", error);
@@ -887,13 +900,36 @@ export default function NoteDetail() {
       });
       return response.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setSuggestedCodes(data);
       setShowCodesPanel(true);
-      toast({
-        title: "Codes suggested",
-        description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes`,
-      });
+      
+      // Auto-save codes to the database (guard against undefined id)
+      if (!id) {
+        toast({
+          title: "Codes suggested",
+          description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes`,
+        });
+        return;
+      }
+      
+      try {
+        await apiRequest("PATCH", `/api/notes/${id}`, {
+          icdCodes: JSON.stringify(data),
+        });
+        // Invalidate both detail and list caches
+        queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+        toast({
+          title: "Codes suggested & saved",
+          description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes`,
+        });
+      } catch (e) {
+        toast({
+          title: "Codes suggested",
+          description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes (save failed)`,
+        });
+      }
     },
     onError: () => {
       toast({
