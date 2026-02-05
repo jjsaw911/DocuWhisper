@@ -309,22 +309,36 @@ export function AppSidebar() {
                               return (
                                 <div
                                   key={note.id}
-                                  className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-accent ${isCurrentNote ? 'bg-accent' : ''}`}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    const targetPath = `/notes/${note.id}`;
-                                    setScribeMenuOpen(false);
-                                    setTimeout(() => {
-                                      navigate(targetPath);
-                                    }, 10);
-                                  }}
+                                  className={`flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-accent ${isCurrentNote ? 'bg-accent' : ''}`}
                                   data-testid={`note-item-${note.id}`}
                                 >
-                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteClick(e, note);
+                                    }}
+                                    className="flex items-center justify-center shrink-0 w-6 h-6 rounded bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition-colors"
+                                    data-testid={`button-delete-note-${note.id}`}
+                                    title="Delete note"
+                                  >
+                                    X
+                                  </button>
+                                  <div 
+                                    className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      const targetPath = `/notes/${note.id}`;
+                                      setScribeMenuOpen(false);
+                                      setTimeout(() => {
+                                        navigate(targetPath);
+                                      }, 10);
+                                    }}
+                                  >
                                     {isCurrentNote && (
                                       <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
                                     )}
-                                    <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                    <div className="flex flex-col gap-0.5 min-w-0">
                                       <span className={`truncate text-sm ${isCurrentNote ? 'font-semibold' : 'font-medium'}`}>
                                         {note.title || note.patientName || "Untitled"}
                                       </span>
@@ -335,15 +349,6 @@ export function AppSidebar() {
                                       )}
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => handleDeleteClick(e, note)}
-                                    className="flex items-center justify-center shrink-0 px-2 py-1 rounded border border-red-500 bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition-colors ml-2"
-                                    data-testid={`button-delete-note-${note.id}`}
-                                    title="Delete note"
-                                  >
-                                    X
-                                  </button>
                                 </div>
                               );
                             })}
