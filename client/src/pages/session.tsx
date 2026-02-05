@@ -293,12 +293,17 @@ export default function Session() {
   // Get language from settings (default to English)
   const transcriptionLanguage = userSettings?.language || "en";
 
-  // Set the user's default template when settings are loaded
+  // Set the user's default template when settings are loaded (only on initial load)
+  const hasInitializedTemplateRef = useRef(false);
   useEffect(() => {
-    if (userSettings?.defaultTemplateId && selectedTemplateId === "default") {
-      setSelectedTemplateId(userSettings.defaultTemplateId.toString());
+    if (userSettings?.defaultTemplateId && !hasInitializedTemplateRef.current) {
+      // Only auto-set the template on initial page load, not after user manually selects
+      if (selectedTemplateId === "default") {
+        setSelectedTemplateId(userSettings.defaultTemplateId.toString());
+      }
+      hasInitializedTemplateRef.current = true;
     }
-  }, [userSettings?.defaultTemplateId]);
+  }, [userSettings?.defaultTemplateId, selectedTemplateId]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);

@@ -45,32 +45,112 @@ export function DrugInteractionAlert({ text, className }: DrugInteractionAlertPr
   const [hasCheckedAI, setHasCheckedAI] = useState(false);
   const { toast } = useToast();
   
+  // Track which medication set was last successfully checked
+  const lastCheckedMedsRef = useRef<string>("");
+  const latestMedsRef = useRef<{ key: string; meds: string[] }>({ key: "", meds: [] });
+  const requestIdRef = useRef<number>(0);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
   const analysis = useMemo(() => {
     return analyzeTextForInteractions(text);
   }, [text]);
 
   const { medications, interactions: dbInteractions } = analysis;
-
-  // Track previous medications to detect changes
-  const prevMedicationsRef = useRef<string[]>([]);
   
-  // Reset AI state when medications change
+  // Create a stable medication key for comparison
+  const medicationKey = useMemo(() => [...medications].sort().join(','), [medications]);
+
+  // Always keep latestMedsRef current
   useEffect(() => {
-    const currentMeds = [...medications].sort().join(',');
-    const prevMeds = [...prevMedicationsRef.current].sort().join(',');
-    
-    if (currentMeds !== prevMeds && prevMedicationsRef.current.length > 0) {
+    latestMedsRef.current = { key: medicationKey, meds: [...medications] };
+  }, [medicationKey, medications]);
+
+  // Auto-run AI check when medications change
+  useEffect(() => {
+    // Reset state when medications change from a previously checked set
+    if (lastCheckedMedsRef.current !== "" && medicationKey !== lastCheckedMedsRef.current) {
       setAiInteractions([]);
       setHasCheckedAI(false);
     }
     
-    prevMedicationsRef.current = [...medications];
-  }, [medications]);
+    // Only check if we have 2+ medications and not already checked
+    if (medications.length < 2 || medicationKey === lastCheckedMedsRef.current) {
+      return;
+    }
+    
+    // Clear any existing debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    // Schedule the check
+    debounceTimerRef.current = setTimeout(async () => {
+      // Get the latest meds at time of check (not the ones from when effect ran)
+      const { key: currentKey, meds: currentMeds } = latestMedsRef.current;
+      
+      // Skip if already checked or not enough meds
+      if (currentKey === lastCheckedMedsRef.current || currentMeds.length < 2) {
+        return;
+      }
+      
+      const thisRequestId = ++requestIdRef.current;
+      setIsCheckingAI(true);
+      
+      try {
+        const response = await apiRequest("POST", "/api/ai-drug-interactions", { medications: currentMeds });
+        const data = await response.json();
+        
+        // Ignore stale responses
+        if (thisRequestId !== requestIdRef.current) return;
+        
+        // Filter out interactions where both drugs are the same (with null safety)
+        const validInteractions = (data.interactions || []).filter(
+          (i: DrugInteraction) => {
+            const d1 = (i.drug1 || "").toLowerCase();
+            const d2 = (i.drug2 || "").toLowerCase();
+            return d1 && d2 && d1 !== d2;
+          }
+        );
+        
+        setAiInteractions(validInteractions);
+        setHasCheckedAI(true);
+        lastCheckedMedsRef.current = currentKey;
+        
+        // Check if meds changed during the request
+        const latest = latestMedsRef.current;
+        if (latest.key !== currentKey && latest.meds.length >= 2 && latest.key !== lastCheckedMedsRef.current) {
+          // Trigger a new check for the latest meds
+          requestIdRef.current++;
+          setIsCheckingAI(false);
+          // Effect will re-run due to medications change
+        }
+      } catch (error) {
+        if (thisRequestId !== requestIdRef.current) return;
+        console.error("AI check error:", error);
+        // Don't mark as checked - allow retry on next effect trigger
+      } finally {
+        if (thisRequestId === requestIdRef.current) {
+          setIsCheckingAI(false);
+        }
+      }
+    }, 800);
+    
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [medicationKey, medications]);
 
-  // Combine database and AI interactions
+  // Combine database and AI interactions, filtering out same-drug entries
   const allInteractions = useMemo(() => {
     const combined = [...dbInteractions];
     aiInteractions.forEach(ai => {
+      // Skip if drugs are null or the same
+      const d1 = (ai.drug1 || "").toLowerCase();
+      const d2 = (ai.drug2 || "").toLowerCase();
+      if (!d1 || !d2 || d1 === d2) return;
+      
       const exists = combined.some(
         db => (db.drug1 === ai.drug1 && db.drug2 === ai.drug2) || 
               (db.drug1 === ai.drug2 && db.drug2 === ai.drug1)
@@ -79,7 +159,12 @@ export function DrugInteractionAlert({ text, className }: DrugInteractionAlertPr
         combined.push(ai);
       }
     });
-    return combined;
+    // Filter out any same-drug interactions from the combined list (with null safety)
+    return combined.filter(i => {
+      const d1 = (i.drug1 || "").toLowerCase();
+      const d2 = (i.drug2 || "").toLowerCase();
+      return d1 && d2 && d1 !== d2;
+    });
   }, [dbInteractions, aiInteractions]);
 
   // Sort interactions by severity
@@ -96,39 +181,6 @@ export function DrugInteractionAlert({ text, className }: DrugInteractionAlertPr
 
   const highCount = allInteractions.filter((i) => i.severity === "high").length;
   const moderateCount = allInteractions.filter((i) => i.severity === "moderate").length;
-
-  const checkWithAI = async () => {
-    if (medications.length < 2) return;
-    
-    setIsCheckingAI(true);
-    try {
-      const response = await apiRequest("POST", "/api/ai-drug-interactions", { medications });
-      const data = await response.json();
-      
-      if (data.interactions && data.interactions.length > 0) {
-        setAiInteractions(data.interactions);
-        toast({
-          title: "AI Check Complete",
-          description: `Found ${data.interactions.length} additional interaction(s)`,
-        });
-      } else {
-        toast({
-          title: "AI Check Complete",
-          description: "No additional interactions found",
-        });
-      }
-      setHasCheckedAI(true);
-    } catch (error) {
-      console.error("AI check error:", error);
-      toast({
-        title: "AI Check Failed",
-        description: "Could not complete AI drug interaction check",
-        variant: "destructive",
-      });
-    } finally {
-      setIsCheckingAI(false);
-    }
-  };
 
   if (medications.length === 0) {
     return null;
@@ -152,23 +204,12 @@ export function DrugInteractionAlert({ text, className }: DrugInteractionAlertPr
         ))}
       </div>
 
-      {/* AI Check Button */}
-      {medications.length >= 2 && !hasCheckedAI && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={checkWithAI}
-          disabled={isCheckingAI}
-          className="gap-2"
-          data-testid="button-ai-check-interactions"
-        >
-          {isCheckingAI ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Sparkles className="h-4 w-4" />
-          )}
-          {isCheckingAI ? "Checking with AI..." : "Check with AI"}
-        </Button>
+      {/* AI Check Status */}
+      {medications.length >= 2 && isCheckingAI && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Analyzing interactions...</span>
+        </div>
       )}
 
       {/* Interactions alert */}
@@ -238,9 +279,10 @@ export function DrugInteractionAlert({ text, className }: DrugInteractionAlertPr
           </AlertTitle>
           <AlertDescription className="text-green-600 dark:text-green-500">
             No significant drug interactions detected between the listed medications.
-            {!hasCheckedAI && medications.length >= 2 && (
+            {hasCheckedAI && (
               <span className="block mt-1 text-green-500">
-                Click "Check with AI" above for a more comprehensive analysis.
+                <Sparkles className="h-3 w-3 inline mr-1" />
+                AI-verified analysis complete.
               </span>
             )}
           </AlertDescription>
@@ -318,7 +360,7 @@ export function DrugInteractionDialog({ text, trigger }: DrugInteractionDialogPr
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Pill className="h-5 w-5" />
