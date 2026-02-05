@@ -21,6 +21,7 @@ const generateSoapSchema = z.object({
   aiInstructions: z.string().optional(),
   outputLanguage: z.string().optional(), // ISO 639-1 code (en, es, fr, etc.)
   context: z.string().optional(), // Background patient info (history, meds, allergies)
+  noDefaultTemplate: z.boolean().optional(), // If true, skip default template lookup (use standard SOAP)
 });
 
 const createTemplateSchema = z.object({
@@ -402,22 +403,23 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context } = validationResult.data;
+      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context, noDefaultTemplate } = validationResult.data;
       const userId = req.user.claims.sub;
       
       console.log("SOAP generation request - transcript length:", transcript.length);
       console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
       console.log("SOAP generation request - output language:", outputLanguage || "en");
       console.log("SOAP generation request - context provided:", !!context);
+      console.log("SOAP generation request - noDefaultTemplate:", !!noDefaultTemplate);
 
       let customPrompt = "";
       let effectiveTemplateId = templateId;
       
-      // If no template specified, check for user's default template
-      if (!effectiveTemplateId) {
-        const userSettings = await storage.getUserSettings(userId);
-        if (userSettings?.defaultTemplateId) {
-          effectiveTemplateId = userSettings.defaultTemplateId;
+      // If no template specified and user didn't explicitly request no template,
+      // check for user's default template (from user_settings or templates.isDefault)
+      if (!effectiveTemplateId && !noDefaultTemplate) {
+        effectiveTemplateId = await storage.getDefaultTemplateId(userId);
+        if (effectiveTemplateId) {
           console.log("SOAP generation - using user's default template:", effectiveTemplateId);
         }
       }

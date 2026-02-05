@@ -20,6 +20,7 @@ export interface IStorage {
   updateTemplate(id: number, data: Partial<InsertTemplate>): Promise<Template | undefined>;
   deleteTemplate(id: number): Promise<void>;
   setDefaultTemplate(userId: string, templateId: number): Promise<void>;
+  getDefaultTemplateId(userId: string): Promise<number | undefined>;
   // Admin functions
   getAllSubscriptions(): Promise<Subscription[]>;
   extendSubscription(userId: string, newPeriodEnd: Date): Promise<Subscription | undefined>;
@@ -250,8 +251,35 @@ class DatabaseStorage implements IStorage {
   }
 
   async setDefaultTemplate(userId: string, templateId: number): Promise<void> {
+    // Clear isDefault on all user templates, then set the new one
     await db.update(templates).set({ isDefault: false }).where(eq(templates.userId, userId));
     await db.update(templates).set({ isDefault: true }).where(and(eq(templates.id, templateId), eq(templates.userId, userId)));
+    
+    // Sync with user_settings.defaultTemplateId so both systems stay consistent
+    await db
+      .insert(userSettings)
+      .values({ userId, defaultTemplateId: templateId })
+      .onConflictDoUpdate({
+        target: userSettings.userId,
+        set: { defaultTemplateId: templateId, updatedAt: new Date() },
+      });
+  }
+
+  async getDefaultTemplateId(userId: string): Promise<number | undefined> {
+    // First check user_settings.defaultTemplateId
+    const settings = await this.getUserSettings(userId);
+    if (settings?.defaultTemplateId) {
+      return settings.defaultTemplateId;
+    }
+    
+    // Fallback: check for a template marked as isDefault
+    const [defaultTemplate] = await db
+      .select()
+      .from(templates)
+      .where(and(eq(templates.userId, userId), eq(templates.isDefault, true)))
+      .limit(1);
+    
+    return defaultTemplate?.id;
   }
 
   // Admin functions

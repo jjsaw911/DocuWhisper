@@ -707,10 +707,18 @@ export default function NoteDetail() {
       // Save current state to history before regenerating
       pushToHistory(formData.soapNote);
       
-      // Use selected template, or fall back to user's default template from settings
-      const effectiveTemplateId = selectedTemplateId 
-        ? parseInt(selectedTemplateId) 
-        : userSettings?.defaultTemplateId || undefined;
+      // Handle template selection:
+      // - "none" = explicitly no template (standard SOAP)
+      // - "" (empty/default) = let backend use user's default template
+      // - numeric string = use that specific template
+      let effectiveTemplateId: number | undefined = undefined;
+      if (selectedTemplateId === "none") {
+        // User explicitly chose no template - pass special marker to backend
+        effectiveTemplateId = undefined;
+      } else if (selectedTemplateId && selectedTemplateId !== "") {
+        effectiveTemplateId = parseInt(selectedTemplateId);
+      }
+      // When selectedTemplateId is "" (default), we pass undefined and let backend determine default
       
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript: note?.transcript || "",
@@ -718,6 +726,7 @@ export default function NoteDetail() {
         specialty: note?.specialty || "general",
         aiInstructions: aiInstructions,
         templateId: effectiveTemplateId,
+        noDefaultTemplate: selectedTemplateId === "none", // Signal to skip default template lookup
       });
       return response.json();
     },
@@ -778,10 +787,16 @@ export default function NoteDetail() {
           console.error("Failed to generate ICD codes:", e);
         }
         
-        // Use selected template, or fall back to user's default template from settings
-        const effectiveTemplateId = selectedTemplateId 
-          ? parseInt(selectedTemplateId) 
-          : userSettings?.defaultTemplateId || null;
+        // Determine template ID for saving:
+        // - "none" = explicitly null (no template used)
+        // - numeric string = use that template
+        // - "" = no specific selection (can be null)
+        let effectiveTemplateId: number | null = null;
+        if (selectedTemplateId === "none") {
+          effectiveTemplateId = null;
+        } else if (selectedTemplateId && selectedTemplateId !== "") {
+          effectiveTemplateId = parseInt(selectedTemplateId);
+        }
         
         await apiRequest("PATCH", `/api/notes/${id}`, {
           title: formData.title,
@@ -1509,12 +1524,13 @@ export default function NoteDetail() {
                   </CardTitle>
                   <div className="flex items-center gap-2">
                     {/* Template dropdown */}
-                    <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
+                    <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
                       <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
                         <SelectValue placeholder="Template" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="default">Default</SelectItem>
+                        <SelectItem value="none">No template</SelectItem>
                         {templates.map((template) => (
                           <SelectItem key={template.id} value={template.id.toString()}>
                             {template.name}
@@ -1619,22 +1635,23 @@ Treatment plan..."
                   <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Template</Label>
-                      <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val)}>
+                      <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
                         <SelectTrigger data-testid="select-regenerate-template">
                           <SelectValue placeholder="Use default template" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="default">Default (no template)</SelectItem>
+                          <SelectItem value="default">Default (uses your default template)</SelectItem>
+                          <SelectItem value="none">No template (standard SOAP)</SelectItem>
                           {templates.map((template) => (
                             <SelectItem key={template.id} value={template.id.toString()}>
                               {template.name}
-                              {template.isDefault && " (Default)"}
+                              {template.isDefault && " ★"}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-muted-foreground">
-                        Choose a template to change how the SOAP note is generated
+                        "Default" uses your default template if set in Templates page
                       </p>
                     </div>
                     <Textarea
