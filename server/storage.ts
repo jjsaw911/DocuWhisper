@@ -657,67 +657,42 @@ class DatabaseStorage implements IStorage {
     const startDate = fromDate || new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000);
     const endDate = toDate || new Date();
     
-    // Get assessments from user's notes within the date range
-    const userNotes = await db.select({ assessment: notes.assessment }).from(notes).where(
+    // Get notes with ICD codes within the date range
+    const userNotes = await db.select({ icdCodes: notes.icdCodes }).from(notes).where(
       and(
         eq(notes.userId, userId), 
-        sql`${notes.assessment} IS NOT NULL AND ${notes.assessment} != ''`,
+        sql`${notes.icdCodes} IS NOT NULL AND ${notes.icdCodes} != ''`,
         gte(notes.createdAt, startDate),
         sql`${notes.createdAt} <= ${endDate}`
       )
     );
     
-    // Parse diagnoses from assessments (common patterns: numbered lists, bullet points, sentences, comma-separated)
+    // Count diagnoses from ICD codes
     const diagnosisCounts: Record<string, number> = {};
     
-    // Common phrases to filter out (not actual diagnoses)
-    const filterPhrases = [
-      'no information documented',
-      'no current assessment',
-      'history of',
-      'noted in chart',
-      'prior to visit',
-      'unspecified',
-      'see above',
-      'as above',
-      'continue current',
-    ];
-    
     for (const note of userNotes) {
-      if (!note.assessment) continue;
+      if (!note.icdCodes) continue;
       
-      // First split by newlines
-      const lines = note.assessment.split(/[\n\r]+/).filter(line => line.trim());
-      
-      for (const line of lines) {
-        // Clean up the line (remove numbers, bullets, extra whitespace)
-        let cleaned = line.replace(/^[\d\.\)\-\*\•]+\s*/, '').trim();
-        if (cleaned.length < 3) continue;
+      try {
+        const parsed = typeof note.icdCodes === 'string' ? JSON.parse(note.icdCodes) : note.icdCodes;
+        const codes = parsed?.codes || [];
         
-        // Skip lines with filter phrases
-        const lowerCleaned = cleaned.toLowerCase();
-        if (filterPhrases.some(phrase => lowerCleaned.includes(phrase))) continue;
-        
-        // Split by periods, commas, and semicolons to get individual diagnoses
-        const segments = cleaned.split(/[.,;]+/).map(s => s.trim()).filter(s => s.length >= 3);
-        
-        for (const segment of segments) {
-          // Extract the main diagnosis (first part before : or -)
-          let mainDiagnosis = segment.split(/[:\-–]/)[0].trim();
-          
-          // Remove common prefixes
-          mainDiagnosis = mainDiagnosis.replace(/^(history of|h\/o|diagnosis:|dx:|assessment:)\s*/i, '').trim();
-          
-          if (mainDiagnosis.length < 3 || mainDiagnosis.length > 80) continue;
-          
-          // Skip if it's a common non-diagnosis phrase
-          const lowerDiag = mainDiagnosis.toLowerCase();
-          if (filterPhrases.some(phrase => lowerDiag.includes(phrase))) continue;
-          if (/^(the|a|an|and|or|but|with|for|to|of|in|on)\s/i.test(mainDiagnosis)) continue;
-          
-          // Normalize to lowercase for counting
-          diagnosisCounts[lowerDiag] = (diagnosisCounts[lowerDiag] || 0) + 1;
+        for (const code of codes) {
+          if (code.description) {
+            // Use the ICD code description as the diagnosis
+            // Format: "CODE - Description" for display
+            const diagnosisKey = code.description.toLowerCase().trim();
+            const displayName = `${code.code} - ${code.description}`;
+            
+            if (diagnosisCounts[diagnosisKey]) {
+              diagnosisCounts[diagnosisKey]++;
+            } else {
+              diagnosisCounts[diagnosisKey] = 1;
+            }
+          }
         }
+      } catch (e) {
+        console.error("Failed to parse ICD codes for trending diagnoses:", e);
       }
     }
     
