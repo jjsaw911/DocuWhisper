@@ -565,7 +565,59 @@ Based on the transcript, return ONLY valid JSON with the extracted information:
       console.log("[generate-soap] Has HPI:", !!soapNote.hpi, "Has Plan:", !!soapNote.plan);
       console.log("[generate-soap] HPI length:", soapNote.hpi?.length || 0, "Plan length:", soapNote.plan?.length || 0);
 
-      res.json(soapNote);
+      // Auto-generate ICD-10 and CPT codes based on the SOAP note
+      let icdCodes = null;
+      try {
+        const clinicalContent = `
+SUBJECTIVE: ${soapNote.subjective || soapNote.hpi || ""}
+OBJECTIVE: ${soapNote.objective || ""}
+ASSESSMENT: ${soapNote.assessment || ""}
+PLAN: ${soapNote.plan || ""}
+        `.trim();
+
+        const codesResponse = await openai.chat.completions.create({
+          model: "gpt-5.1",
+          messages: [
+            { 
+              role: "system", 
+              content: `You are a medical coding assistant. Based on the clinical documentation provided, suggest appropriate ICD-10 diagnosis codes and CPT codes.
+
+Return a JSON object with arrays of suggested codes:
+{
+  "codes": [
+    {
+      "code": "ICD-10 code (e.g., J06.9)",
+      "description": "Code description",
+      "category": "primary" or "secondary",
+      "confidence": "high", "medium", or "low"
+    }
+  ],
+  "cptCodes": [
+    {
+      "code": "CPT code (e.g., 99213)",
+      "description": "E/M level description",
+      "rationale": "Brief rationale for this level"
+    }
+  ]
+}
+
+Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.`
+            },
+            { role: "user", content: clinicalContent }
+          ],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 1000,
+        });
+
+        const codesContent = codesResponse.choices[0]?.message?.content || "{}";
+        icdCodes = JSON.parse(codesContent);
+        console.log("[generate-soap] Generated ICD codes:", icdCodes?.codes?.length || 0, "CPT codes:", icdCodes?.cptCodes?.length || 0);
+      } catch (codeError) {
+        console.error("[generate-soap] Error generating ICD codes (non-fatal):", codeError);
+      }
+
+      // Return SOAP note with ICD codes
+      res.json({ ...soapNote, icdCodes });
     } catch (error) {
       console.error("Error generating SOAP note:", error);
       res.status(500).json({ error: "Failed to generate SOAP note" });
