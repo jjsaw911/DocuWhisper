@@ -336,6 +336,7 @@ export function AppSidebar() {
                                     </div>
                                   </div>
                                   <button
+                                    type="button"
                                     onClick={(e) => handleDeleteClick(e, note)}
                                     className="flex items-center justify-center shrink-0 px-2 py-1 rounded border border-red-500 bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition-colors ml-2"
                                     data-testid={`button-delete-note-${note.id}`}
