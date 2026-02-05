@@ -72,6 +72,9 @@ export default function Analytics() {
     queryKey: ["/api/analytics/diagnoses", dateRange.from.toISOString(), dateRange.to.toISOString()],
     queryFn: async () => {
       const response = await fetch(`/api/analytics/diagnoses?from=${dateRange.from.toISOString()}&to=${dateRange.to.toISOString()}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch diagnoses");
+      }
       return response.json();
     },
     enabled: !!user,
