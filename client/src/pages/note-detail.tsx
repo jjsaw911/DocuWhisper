@@ -206,6 +206,10 @@ export default function NoteDetail() {
     cptCodes: { code: string; description: string; rationale: string }[];
   } | null>(null);
   
+  // Ref to hold latest suggestedCodes for mutation closure
+  const suggestedCodesRef = useRef(suggestedCodes);
+  suggestedCodesRef.current = suggestedCodes;
+  
   const [showAiChat, setShowAiChat] = useState(false);
   
   // Team sharing state
@@ -645,11 +649,13 @@ export default function NoteDetail() {
   const updateMutation = useMutation({
     mutationFn: async () => {
       const parsedSoap = parseSoapNote(formData.soapNote);
+      // Use ref to get latest suggestedCodes value (avoid stale closure)
+      const currentCodes = suggestedCodesRef.current;
       const response = await apiRequest("PATCH", `/api/notes/${id}`, {
         title: formData.title,
         patientName: formData.patientName,
         ...parsedSoap,
-        icdCodes: suggestedCodes ? JSON.stringify(suggestedCodes) : null,
+        icdCodes: currentCodes ? JSON.stringify(currentCodes) : null,
       });
       return response.json();
     },
