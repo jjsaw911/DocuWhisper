@@ -318,11 +318,11 @@ export function AppSidebar() {
                                       e.stopPropagation();
                                       handleDeleteClick(e, note);
                                     }}
-                                    className="flex items-center justify-center shrink-0 w-6 h-6 rounded bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition-colors"
+                                    className="flex items-center justify-center shrink-0 w-6 h-6 rounded hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
                                     data-testid={`button-delete-note-${note.id}`}
                                     title="Delete note"
                                   >
-                                    X
+                                    <Trash2 className="h-4 w-4 text-red-500 dark:text-red-400" />
                                   </button>
                                   <div 
                                     className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
