@@ -619,6 +619,58 @@ If the transcript is unclear or empty, use "General Consultation".`
     }
   });
 
+  // AI Differential Diagnosis & Labs Search
+  app.post("/api/ai/differential-search", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { caseDetails } = req.body;
+      
+      if (!caseDetails || typeof caseDetails !== "string") {
+        return res.status(400).json({ error: "Case details are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are an expert clinical decision support assistant helping healthcare providers with difficult cases.
+
+Given the patient case details, provide:
+1. DIFFERENTIAL DIAGNOSES: List the most likely diagnoses ranked by probability, including both common and rare conditions that should be considered
+2. RECOMMENDED LABS/TESTS: Suggest laboratory tests and diagnostic studies that would help narrow down the diagnosis
+3. RED FLAGS: Identify any concerning features that require urgent workup or specialist referral
+4. CLINICAL PEARLS: Brief insights or tips specific to this presentation
+
+Format your response as valid JSON:
+{
+  "differentials": [
+    { "diagnosis": "Condition name", "likelihood": "High/Medium/Low", "rationale": "Brief explanation" }
+  ],
+  "recommendedLabs": [
+    { "test": "Test name", "purpose": "Why this test helps" }
+  ],
+  "redFlags": ["List of concerning features if any"],
+  "clinicalPearls": ["Helpful clinical insights"]
+}
+
+Be thorough but practical. Focus on actionable recommendations.`
+          },
+          { role: "user", content: `Case Details:\n${caseDetails}` }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2000,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"differentials": [], "recommendedLabs": [], "redFlags": [], "clinicalPearls": []}';
+      const result = JSON.parse(content);
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error searching differentials:", error);
+      res.status(500).json({ error: "Failed to search differentials" });
+    }
+  });
+
   // Translate SOAP note to different language
   app.post("/api/translate-note", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -2455,7 +2507,10 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.get("/api/analytics", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const analytics = await storage.getAnalytics(userId);
+      const fromDate = req.query.from ? new Date(req.query.from as string) : undefined;
+      const toDate = req.query.to ? new Date(req.query.to as string) : undefined;
+      
+      const analytics = await storage.getAnalytics(userId, fromDate, toDate);
       res.json(analytics);
     } catch (error) {
       console.error("Error fetching analytics:", error);
@@ -3002,8 +3057,9 @@ Focus only on clinically significant interactions. Do not include minor or theor
     try {
       const userId = req.user.claims.sub;
       const days = parseInt(req.query.days as string) || 30;
+      const fromDate = req.query.from ? new Date(req.query.from as string) : undefined;
       
-      const trends = await storage.getProductivityTrends(userId, Math.min(days, 90)); // Max 90 days
+      const trends = await storage.getProductivityTrends(userId, Math.min(days, 90), fromDate); // Max 90 days
       res.json(trends);
     } catch (error) {
       console.error("Error fetching productivity trends:", error);
@@ -3015,7 +3071,10 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.get("/api/analytics/diagnoses", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const diagnoses = await storage.getTrendingDiagnoses(userId);
+      const fromDate = req.query.from ? new Date(req.query.from as string) : undefined;
+      const toDate = req.query.to ? new Date(req.query.to as string) : undefined;
+      
+      const diagnoses = await storage.getTrendingDiagnoses(userId, fromDate, toDate);
       res.json(diagnoses);
     } catch (error) {
       console.error("Error fetching trending diagnoses:", error);

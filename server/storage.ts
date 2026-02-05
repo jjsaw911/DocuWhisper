@@ -45,7 +45,7 @@ export interface IStorage {
   getPublicTemplates(): Promise<Template[]>;
   getSharedTemplates(userId: string): Promise<Template[]>;
   // Analytics
-  getAnalytics(userId: string): Promise<{
+  getAnalytics(userId: string, fromDate?: Date, toDate?: Date): Promise<{
     totalNotes: number;
     notesThisWeek: number;
     totalTasks: number;
@@ -79,8 +79,8 @@ export interface IStorage {
   getShareById(shareId: number): Promise<SharedNote | undefined>;
   unshareNote(sharedNoteId: number): Promise<void>;
   // Advanced analytics
-  getProductivityTrends(userId: string, days: number): Promise<{ date: string; noteCount: number }[]>;
-  getTrendingDiagnoses(userId: string): Promise<{ diagnosis: string; count: number }[]>;
+  getProductivityTrends(userId: string, days: number, fromDate?: Date): Promise<{ date: string; noteCount: number }[]>;
+  getTrendingDiagnoses(userId: string, fromDate?: Date, toDate?: Date): Promise<{ diagnosis: string; count: number }[]>;
   // EMR - Patient functions
   getPatientsByUser(userId: string): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
@@ -391,7 +391,7 @@ class DatabaseStorage implements IStorage {
   }
 
   // Analytics
-  async getAnalytics(userId: string): Promise<{
+  async getAnalytics(userId: string, fromDate?: Date, toDate?: Date): Promise<{
     totalNotes: number;
     notesThisWeek: number;
     totalTasks: number;
@@ -401,31 +401,63 @@ class DatabaseStorage implements IStorage {
     tasksCompletedThisWeek: number;
   }> {
     const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const endDate = toDate || now;
+    const startDate = fromDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const weekAgo = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    // All analytics are based on rolling 30-day period (only notes/tasks that currently exist)
+    // Analytics based on the provided date range (or default to last 30 days)
     const [totalNotesResult] = await db.select({ count: count() }).from(notes).where(
-      and(eq(notes.userId, userId), gte(notes.createdAt, monthAgo))
+      and(
+        eq(notes.userId, userId), 
+        gte(notes.createdAt, startDate),
+        sql`${notes.createdAt} <= ${endDate}`
+      )
     );
     const [notesThisWeekResult] = await db.select({ count: count() }).from(notes).where(
-      and(eq(notes.userId, userId), gte(notes.createdAt, weekAgo))
+      and(
+        eq(notes.userId, userId), 
+        gte(notes.createdAt, weekAgo),
+        sql`${notes.createdAt} <= ${endDate}`
+      )
     );
     const [notesThisMonthResult] = await db.select({ count: count() }).from(notes).where(
-      and(eq(notes.userId, userId), gte(notes.createdAt, monthAgo))
+      and(
+        eq(notes.userId, userId), 
+        gte(notes.createdAt, startDate),
+        sql`${notes.createdAt} <= ${endDate}`
+      )
     );
-    // Tasks are also limited to rolling 30 days (by creation date)
+    // Tasks within the date range
     const [totalTasksResult] = await db.select({ count: count() }).from(tasks).where(
-      and(eq(tasks.userId, userId), gte(tasks.createdAt, monthAgo))
+      and(
+        eq(tasks.userId, userId), 
+        gte(tasks.createdAt, startDate),
+        sql`${tasks.createdAt} <= ${endDate}`
+      )
     );
     const [tasksCompletedResult] = await db.select({ count: count() }).from(tasks).where(
-      and(eq(tasks.userId, userId), eq(tasks.status, "completed"), gte(tasks.createdAt, monthAgo))
+      and(
+        eq(tasks.userId, userId), 
+        eq(tasks.status, "completed"), 
+        gte(tasks.createdAt, startDate),
+        sql`${tasks.createdAt} <= ${endDate}`
+      )
     );
     const [tasksPendingResult] = await db.select({ count: count() }).from(tasks).where(
-      and(eq(tasks.userId, userId), eq(tasks.status, "todo"), gte(tasks.createdAt, monthAgo))
+      and(
+        eq(tasks.userId, userId), 
+        eq(tasks.status, "todo"), 
+        gte(tasks.createdAt, startDate),
+        sql`${tasks.createdAt} <= ${endDate}`
+      )
     );
     const [tasksCompletedThisWeekResult] = await db.select({ count: count() }).from(tasks).where(
-      and(eq(tasks.userId, userId), eq(tasks.status, "completed"), gte(tasks.completedAt, weekAgo))
+      and(
+        eq(tasks.userId, userId), 
+        eq(tasks.status, "completed"), 
+        gte(tasks.completedAt, weekAgo),
+        sql`${tasks.completedAt} <= ${endDate}`
+      )
     );
 
     return {
@@ -592,15 +624,17 @@ class DatabaseStorage implements IStorage {
   }
 
   // Advanced analytics
-  async getProductivityTrends(userId: string, days: number): Promise<{ date: string; noteCount: number }[]> {
+  async getProductivityTrends(userId: string, days: number, fromDate?: Date): Promise<{ date: string; noteCount: number }[]> {
     const results: { date: string; noteCount: number }[] = [];
-    const now = new Date();
+    const startFrom = fromDate || new Date();
     
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      const startOfDay = new Date(date.setHours(0, 0, 0, 0));
-      const endOfDay = new Date(date.setHours(23, 59, 59, 999));
+    for (let i = 0; i < days; i++) {
+      const date = new Date(startFrom);
+      date.setDate(date.getDate() + i);
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
       
       const [result] = await db.select({ count: count() }).from(notes).where(
         and(
@@ -619,15 +653,17 @@ class DatabaseStorage implements IStorage {
     return results;
   }
 
-  async getTrendingDiagnoses(userId: string): Promise<{ diagnosis: string; count: number }[]> {
-    const monthAgo = new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000);
+  async getTrendingDiagnoses(userId: string, fromDate?: Date, toDate?: Date): Promise<{ diagnosis: string; count: number }[]> {
+    const startDate = fromDate || new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000);
+    const endDate = toDate || new Date();
     
-    // Get assessments from user's notes in the last 30 days only
+    // Get assessments from user's notes within the date range
     const userNotes = await db.select({ assessment: notes.assessment }).from(notes).where(
       and(
         eq(notes.userId, userId), 
         sql`${notes.assessment} IS NOT NULL AND ${notes.assessment} != ''`,
-        gte(notes.createdAt, monthAgo)
+        gte(notes.createdAt, startDate),
+        sql`${notes.createdAt} <= ${endDate}`
       )
     );
     

@@ -33,6 +33,7 @@ import {
   ChevronDown,
   PanelRightClose,
   PanelRightOpen,
+  Plus,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -119,6 +120,15 @@ export default function Session() {
   const [contextText, setContextText] = useState("");
   const [aiCommand, setAiCommand] = useState("");
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  
+  // AI Differential search
+  const [differentialResults, setDifferentialResults] = useState<{
+    differentials: { diagnosis: string; likelihood: string; rationale: string }[];
+    recommendedLabs: { test: string; purpose: string }[];
+    redFlags: string[];
+    clinicalPearls: string[];
+  } | null>(null);
+  const [isDifferentialSearching, setIsDifferentialSearching] = useState(false);
 
   // Microphone selection
   const [availableMicrophones, setAvailableMicrophones] = useState<MediaDeviceInfo[]>([]);
@@ -1248,6 +1258,42 @@ export default function Session() {
     },
   });
 
+  // Search differentials and labs for difficult cases
+  const searchDifferentials = async () => {
+    if (!soapNote) return;
+    
+    setIsDifferentialSearching(true);
+    setDifferentialResults(null);
+    
+    try {
+      // Build case details from available information
+      const caseDetails = [
+        soapNote.subjective && `Subjective: ${soapNote.subjective}`,
+        soapNote.objective && `Objective: ${soapNote.objective}`,
+        soapNote.assessment && `Assessment: ${soapNote.assessment}`,
+        soapNote.hpi && `HPI: ${soapNote.hpi}`,
+        contextText && `Background: ${contextText}`,
+      ].filter(Boolean).join("\n\n");
+      
+      const response = await apiRequest("POST", "/api/ai/differential-search", { caseDetails });
+      const data = await response.json();
+      setDifferentialResults(data);
+      
+      toast({
+        title: "Differential search complete",
+        description: `Found ${data.differentials?.length || 0} potential diagnoses`,
+      });
+    } catch (error) {
+      toast({
+        title: "Search failed",
+        description: "Could not search differentials",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDifferentialSearching(false);
+    }
+  };
+
   const handleStopAndTranscribe = async () => {
     const audioBlob = await stopRecording();
     
@@ -1677,11 +1723,52 @@ ${noteContentSection}
                           <p className="italic text-xs">{entry.text} {entry.timestamp}</p>
                         ) : (
                           <div className="bg-muted/30 rounded-lg p-4">
-                            <p className="whitespace-pre-wrap text-base leading-relaxed">{entry.text}</p>
+                            <Textarea
+                              value={entry.text}
+                              onChange={(e) => {
+                                const newText = e.target.value;
+                                setTranscriptEntries((prev) => {
+                                  const updated = prev.map((ent, i) => i === index ? { ...ent, text: newText } : ent);
+                                  // Update committed text for SOAP generation using the updated entries
+                                  committedTextRef.current = updated
+                                    .filter((e) => e.type === "content")
+                                    .map((e) => e.text)
+                                    .join(" ");
+                                  // Save backup
+                                  saveBackup(committedTextRef.current, patientName, "general");
+                                  return updated;
+                                });
+                              }}
+                              className="w-full min-h-[60px] resize-none border-0 bg-transparent p-0 text-base leading-relaxed focus-visible:ring-0"
+                              placeholder="Edit transcript..."
+                              data-testid={`textarea-transcript-${index}`}
+                            />
                           </div>
                         )}
                       </div>
                     ))}
+                    
+                    {/* Add text button */}
+                    {recordingState === "idle" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const newEntry: TranscriptEntry = {
+                            timestamp: new Date().toLocaleTimeString(),
+                            text: "",
+                            type: "content"
+                          };
+                          setTranscriptEntries((prev) => [...prev, newEntry]);
+                        }}
+                        className="w-full"
+                        data-testid="button-add-transcript-text"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add text
+                      </Button>
+                    )}
+                    
                     {recordingState === "recording" && (
                       <div className="flex items-center gap-2 text-muted-foreground text-sm">
                         <span className="h-2 w-2 bg-red-500 rounded-full animate-pulse" />
@@ -1731,6 +1818,100 @@ ${noteContentSection}
                         />
                       </div>
                     ))}
+                    
+                    {/* AI Differential Search Button */}
+                    <Button
+                      variant="outline"
+                      onClick={searchDifferentials}
+                      disabled={isDifferentialSearching}
+                      className="w-full"
+                      data-testid="button-differential-search"
+                    >
+                      {isDifferentialSearching ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Searching...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          Search Differentials & Labs
+                        </>
+                      )}
+                    </Button>
+                    
+                    {/* Differential Results */}
+                    {differentialResults && (
+                      <div className="space-y-4 pt-4 border-t">
+                        <h3 className="font-semibold text-base flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-primary" />
+                          AI Clinical Decision Support
+                        </h3>
+                        
+                        {/* Differentials */}
+                        {differentialResults.differentials?.length > 0 && (
+                          <div>
+                            <h4 className="font-medium text-sm mb-2">Differential Diagnoses</h4>
+                            <div className="space-y-2">
+                              {differentialResults.differentials.map((d, i) => (
+                                <div key={i} className="bg-muted/50 rounded-lg p-3">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-medium">{d.diagnosis}</span>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                      d.likelihood === "High" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
+                                      d.likelihood === "Medium" ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
+                                      "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                                    }`}>
+                                      {d.likelihood}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-muted-foreground">{d.rationale}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Labs */}
+                        {differentialResults.recommendedLabs?.length > 0 && (
+                          <div>
+                            <h4 className="font-medium text-sm mb-2">Recommended Labs & Tests</h4>
+                            <div className="space-y-2">
+                              {differentialResults.recommendedLabs.map((lab, i) => (
+                                <div key={i} className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+                                  <span className="font-medium text-blue-700 dark:text-blue-400">{lab.test}</span>
+                                  <p className="text-sm text-muted-foreground mt-1">{lab.purpose}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Red Flags */}
+                        {differentialResults.redFlags?.length > 0 && (
+                          <div>
+                            <h4 className="font-medium text-sm mb-2 text-red-600 dark:text-red-400">Red Flags</h4>
+                            <ul className="list-disc list-inside text-sm space-y-1">
+                              {differentialResults.redFlags.map((flag, i) => (
+                                <li key={i} className="text-red-600 dark:text-red-400">{flag}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        
+                        {/* Clinical Pearls */}
+                        {differentialResults.clinicalPearls?.length > 0 && (
+                          <div>
+                            <h4 className="font-medium text-sm mb-2">Clinical Pearls</h4>
+                            <ul className="list-disc list-inside text-sm space-y-1 text-muted-foreground">
+                              {differentialResults.clinicalPearls.map((pearl, i) => (
+                                <li key={i}>{pearl}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-[50vh] text-center">

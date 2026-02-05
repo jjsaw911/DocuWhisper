@@ -1,9 +1,14 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from "recharts";
-import { TrendingUp, Activity, FileText, Clock, Target, Zap } from "lucide-react";
+import { TrendingUp, Activity, FileText, Clock, Target, Zap, CalendarIcon } from "lucide-react";
+import { format, subDays, differenceInDays } from "date-fns";
 
 type Analytics = {
   totalNotes: number;
@@ -35,19 +40,40 @@ const CHART_COLORS = [
 
 export default function Analytics() {
   const { user } = useAuth();
+  
+  // Date range state - default to last 30 days
+  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
+    from: subDays(new Date(), 30),
+    to: new Date(),
+  });
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  
+  const days = differenceInDays(dateRange.to, dateRange.from) + 1;
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery<Analytics>({
-    queryKey: ["/api/analytics"],
+    queryKey: ["/api/analytics", dateRange.from.toISOString(), dateRange.to.toISOString()],
+    queryFn: async () => {
+      const response = await fetch(`/api/analytics?from=${dateRange.from.toISOString()}&to=${dateRange.to.toISOString()}`);
+      return response.json();
+    },
     enabled: !!user,
   });
 
   const { data: productivityTrends = [], isLoading: trendsLoading } = useQuery<ProductivityTrend[]>({
-    queryKey: ["/api/analytics/productivity"],
+    queryKey: ["/api/analytics/productivity", days, dateRange.from.toISOString()],
+    queryFn: async () => {
+      const response = await fetch(`/api/analytics/productivity?days=${days}&from=${dateRange.from.toISOString()}`);
+      return response.json();
+    },
     enabled: !!user,
   });
 
   const { data: diagnoses = [], isLoading: diagnosesLoading } = useQuery<Diagnosis[]>({
-    queryKey: ["/api/analytics/diagnoses"],
+    queryKey: ["/api/analytics/diagnoses", dateRange.from.toISOString(), dateRange.to.toISOString()],
+    queryFn: async () => {
+      const response = await fetch(`/api/analytics/diagnoses?from=${dateRange.from.toISOString()}&to=${dateRange.to.toISOString()}`);
+      return response.json();
+    },
     enabled: !!user,
   });
 
@@ -65,11 +91,75 @@ export default function Analytics() {
   return (
     <div className="flex flex-col h-full">
       <header className="border-b bg-background/95 backdrop-blur px-6 py-4">
-        <div className="flex items-center gap-3">
-          <TrendingUp className="h-6 w-6 text-primary" />
-          <div>
-            <h1 className="text-2xl font-semibold">Analytics</h1>
-            <p className="text-muted-foreground">Track your productivity and insights</p>
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <TrendingUp className="h-6 w-6 text-primary" />
+            <div>
+              <h1 className="text-2xl font-semibold">Analytics</h1>
+              <p className="text-muted-foreground">Track your productivity and insights</p>
+            </div>
+          </div>
+          
+          {/* Date Range Picker */}
+          <div className="flex items-center gap-2">
+            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="justify-start text-left font-normal" data-testid="button-date-range">
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {format(dateRange.from, "MMM d, yyyy")} - {format(dateRange.to, "MMM d, yyyy")}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <div className="p-3 border-b">
+                  <div className="flex gap-2 flex-wrap">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setDateRange({ from: subDays(new Date(), 7), to: new Date() });
+                        setDatePickerOpen(false);
+                      }}
+                    >
+                      Last 7 days
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setDateRange({ from: subDays(new Date(), 30), to: new Date() });
+                        setDatePickerOpen(false);
+                      }}
+                    >
+                      Last 30 days
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setDateRange({ from: subDays(new Date(), 90), to: new Date() });
+                        setDatePickerOpen(false);
+                      }}
+                    >
+                      Last 90 days
+                    </Button>
+                  </div>
+                </div>
+                <Calendar
+                  mode="range"
+                  selected={{ from: dateRange.from, to: dateRange.to }}
+                  onSelect={(range) => {
+                    if (range?.from && range?.to) {
+                      setDateRange({ from: range.from, to: range.to });
+                      setDatePickerOpen(false);
+                    } else if (range?.from) {
+                      setDateRange({ from: range.from, to: range.from });
+                    }
+                  }}
+                  numberOfMonths={2}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       </header>
