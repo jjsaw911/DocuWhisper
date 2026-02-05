@@ -667,27 +667,57 @@ class DatabaseStorage implements IStorage {
       )
     );
     
-    // Parse diagnoses from assessments (common patterns: numbered lists, bullet points, or sentences)
+    // Parse diagnoses from assessments (common patterns: numbered lists, bullet points, sentences, comma-separated)
     const diagnosisCounts: Record<string, number> = {};
+    
+    // Common phrases to filter out (not actual diagnoses)
+    const filterPhrases = [
+      'no information documented',
+      'no current assessment',
+      'history of',
+      'noted in chart',
+      'prior to visit',
+      'unspecified',
+      'see above',
+      'as above',
+      'continue current',
+    ];
     
     for (const note of userNotes) {
       if (!note.assessment) continue;
       
-      // Split by common delimiters (newlines, numbered items, bullet points)
+      // First split by newlines
       const lines = note.assessment.split(/[\n\r]+/).filter(line => line.trim());
       
       for (const line of lines) {
         // Clean up the line (remove numbers, bullets, extra whitespace)
         let cleaned = line.replace(/^[\d\.\)\-\*\•]+\s*/, '').trim();
-        if (cleaned.length < 3 || cleaned.length > 100) continue;
+        if (cleaned.length < 3) continue;
         
-        // Extract the main diagnosis (first part before : or -)
-        const mainDiagnosis = cleaned.split(/[:\-–]/)[0].trim();
-        if (mainDiagnosis.length < 3) continue;
+        // Skip lines with filter phrases
+        const lowerCleaned = cleaned.toLowerCase();
+        if (filterPhrases.some(phrase => lowerCleaned.includes(phrase))) continue;
         
-        // Normalize to lowercase for counting
-        const normalized = mainDiagnosis.toLowerCase();
-        diagnosisCounts[normalized] = (diagnosisCounts[normalized] || 0) + 1;
+        // Split by periods, commas, and semicolons to get individual diagnoses
+        const segments = cleaned.split(/[.,;]+/).map(s => s.trim()).filter(s => s.length >= 3);
+        
+        for (const segment of segments) {
+          // Extract the main diagnosis (first part before : or -)
+          let mainDiagnosis = segment.split(/[:\-–]/)[0].trim();
+          
+          // Remove common prefixes
+          mainDiagnosis = mainDiagnosis.replace(/^(history of|h\/o|diagnosis:|dx:|assessment:)\s*/i, '').trim();
+          
+          if (mainDiagnosis.length < 3 || mainDiagnosis.length > 80) continue;
+          
+          // Skip if it's a common non-diagnosis phrase
+          const lowerDiag = mainDiagnosis.toLowerCase();
+          if (filterPhrases.some(phrase => lowerDiag.includes(phrase))) continue;
+          if (/^(the|a|an|and|or|but|with|for|to|of|in|on)\s/i.test(mainDiagnosis)) continue;
+          
+          // Normalize to lowercase for counting
+          diagnosisCounts[lowerDiag] = (diagnosisCounts[lowerDiag] || 0) + 1;
+        }
       }
     }
     
