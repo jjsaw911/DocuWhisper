@@ -1099,6 +1099,30 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  // Public templates - MUST be before /api/templates/:id to avoid matching "public" as an id
+  app.get("/api/templates/public", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const templates = await storage.getPublicTemplates();
+      console.log("[public-templates] Found", templates.length, "public templates:", templates.map(t => ({ id: t.id, name: t.name, isPublic: t.isPublic })));
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching public templates:", error);
+      res.status(500).json({ error: "Failed to fetch public templates" });
+    }
+  });
+
+  // Shared templates (templates shared with current user) - MUST be before /api/templates/:id
+  app.get("/api/templates/shared", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const templates = await storage.getSharedTemplates(userId);
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching shared templates:", error);
+      res.status(500).json({ error: "Failed to fetch shared templates" });
+    }
+  });
+
   app.get("/api/templates/:id", isAuthenticated, async (req: any, res: Response) => {
     try {
       const templateId = parseInt(req.params.id);
@@ -2436,29 +2460,6 @@ Focus only on clinically significant interactions. Do not include minor or theor
     } catch (error) {
       console.error("Error fetching analytics:", error);
       res.status(500).json({ error: "Failed to fetch analytics" });
-    }
-  });
-
-  // Public templates
-  app.get("/api/templates/public", isAuthenticated, async (req: any, res: Response) => {
-    try {
-      const templates = await storage.getPublicTemplates();
-      res.json(templates);
-    } catch (error) {
-      console.error("Error fetching public templates:", error);
-      res.status(500).json({ error: "Failed to fetch public templates" });
-    }
-  });
-
-  // Shared templates (templates shared with current user)
-  app.get("/api/templates/shared", isAuthenticated, async (req: any, res: Response) => {
-    try {
-      const userId = req.user.claims.sub;
-      const templates = await storage.getSharedTemplates(userId);
-      res.json(templates);
-    } catch (error) {
-      console.error("Error fetching shared templates:", error);
-      res.status(500).json({ error: "Failed to fetch shared templates" });
     }
   });
 
