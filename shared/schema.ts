@@ -114,6 +114,7 @@ export const userSettings = pgTable("user_settings", {
   sidebarCollapsed: boolean("sidebar_collapsed").default(false), // Remember sidebar state
   autoSaveEnabled: boolean("auto_save_enabled").default(true),
   showTimestamps: boolean("show_timestamps").default(true), // Show timestamps in transcript
+  transcriptionMode: text("transcription_mode").default("smart"), // 'smart' (Heidi-style) or 'live'
   noiseThreshold: integer("noise_threshold").default(10), // 0-100, audio level below this is considered silence
   emailNotificationsEnabled: boolean("email_notifications_enabled").default(false), // Daily task digest
   emailDigestTime: text("email_digest_time").default("08:00"), // Time to send digest (HH:mm)

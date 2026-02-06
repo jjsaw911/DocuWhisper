@@ -31,6 +31,12 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import type { Template, UserSettings, Practice, PracticeMember, PersonalApiKey } from "@shared/schema";
 import { EMR_ROLES, type EmrRoleType, PERSONAL_API_SCOPES } from "@shared/schema";
+import {
+  DEFAULT_TRANSCRIPTION_MODE,
+  TRANSCRIPTION_MODES,
+  getTranscriptionConfig,
+  type TranscriptionMode,
+} from "@/lib/transcription";
 import { Key, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -103,6 +109,7 @@ export default function Settings() {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [noiseThreshold, setNoiseThreshold] = useState(15);
+  const [transcriptionMode, setTranscriptionMode] = useState<TranscriptionMode>(DEFAULT_TRANSCRIPTION_MODE);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
 
@@ -304,6 +311,11 @@ export default function Settings() {
       setAutoSaveEnabled(settings.autoSaveEnabled ?? true);
       setShowTimestamps(settings.showTimestamps ?? true);
       setNoiseThreshold(settings.noiseThreshold ?? 15);
+      const resolvedMode =
+        settings.transcriptionMode && settings.transcriptionMode in TRANSCRIPTION_MODES
+          ? (settings.transcriptionMode as TranscriptionMode)
+          : DEFAULT_TRANSCRIPTION_MODE;
+      setTranscriptionMode(resolvedMode);
       setEmailNotificationsEnabled(settings.emailNotificationsEnabled ?? false);
       setEmailDigestTime(settings.emailDigestTime || "08:00");
       // EMR Credentials
@@ -333,6 +345,7 @@ export default function Settings() {
         noteStyle,
         autoSaveEnabled,
         showTimestamps,
+        transcriptionMode,
         noiseThreshold,
         emailNotificationsEnabled,
         emailDigestTime,
@@ -365,6 +378,8 @@ export default function Settings() {
       });
     },
   });
+
+  const currentTranscriptionConfig = getTranscriptionConfig(transcriptionMode);
 
   if (settingsLoading) {
     return (
@@ -624,6 +639,32 @@ export default function Settings() {
                   data-testid="switch-timestamps"
                 />
               </div>
+
+              <div className="space-y-2 pt-2">
+                <Label htmlFor="transcriptionMode">Transcription Style</Label>
+                <Select
+                  value={transcriptionMode}
+                  onValueChange={(value) => setTranscriptionMode(value as TranscriptionMode)}
+                >
+                  <SelectTrigger id="transcriptionMode" data-testid="select-transcription-mode">
+                    <SelectValue placeholder="Select style" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(TRANSCRIPTION_MODES).map(([value, config]) => (
+                      <SelectItem key={value} value={value}>
+                        {config.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {currentTranscriptionConfig.description}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Chunks: {currentTranscriptionConfig.minSec}–{currentTranscriptionConfig.maxSec}s ·
+                  Silence flush: ~{currentTranscriptionConfig.silenceSec}s
+                </p>
+              </div>
               
               <div className="space-y-3 pt-4 border-t">
                 <div className="flex items-center gap-2">
@@ -651,6 +692,25 @@ export default function Settings() {
                   </p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Mic className="h-5 w-5 text-primary" />
+                <CardTitle>Live Transcription FAQ</CardTitle>
+              </div>
+              <CardDescription>How audio is chunked and why delays happen</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="list-disc pl-5 space-y-2 text-sm text-muted-foreground">
+                <li>Audio is buffered and sent in blobs, not streamed continuously.</li>
+                <li>A blob is sent when it hits a size/time limit, silence is detected, or you pause/stop.</li>
+                <li>Short delays are normal, and you may see a burst of text after a sentence finishes.</li>
+                <li>If audio is very quiet or the mic drops, a blob may not send until silence flushes.</li>
+                <li>Switching tabs or audio devices can interrupt delivery; keep the mic active.</li>
+              </ul>
             </CardContent>
           </Card>
 

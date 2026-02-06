@@ -14,6 +14,7 @@ import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { DrugInteractionAlert } from "@/components/drug-interaction-alert";
 import { useRecording } from "@/contexts/recording-context";
 import { dispatchActivityEvent } from "@/hooks/use-session-timeout";
+import { getTranscriptionConfig } from "@/lib/transcription";
 import {
   Mic,
   Square,
@@ -154,8 +155,19 @@ export default function Session() {
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
-  const chunkIntervalSec = 5; // 5-second chunks for faster feedback with timestamps
-  const segmentPeakLevelRef = useRef<number>(0); // Track peak audio level for current segment
+  const recordingStartMsRef = useRef<number>(0);
+  const recordingElapsedMsRef = useRef<number>(0);
+  const segmentStartMsRef = useRef<number>(0);
+  const lastVoiceMsRef = useRef<number>(0);
+  const segmentMaxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const segmentCyclingRef = useRef<boolean>(false);
+  const silenceFlushPendingRef = useRef<boolean>(false);
+  const lastSilenceNoticeMsRef = useRef<number>(0);
+  const lastBufferNoticeMsRef = useRef<number>(0);
+  const currentSegmentIdRef = useRef<number>(-1);
+  const segmentPeakLevelsRef = useRef<Map<number, number>>(new Map());
+  const segmentTimestampRef = useRef<Map<number, number>>(new Map());
+  const segmentControlRef = useRef<{ flush: (reason: "max" | "silence") => void } | null>(null);
   
   // Transcript state: committedText (stable) + partialText (interim)
   const committedTextRef = useRef<string>(""); // Finalized transcript
@@ -313,6 +325,10 @@ export default function Session() {
   
   // Get noise threshold from settings (default to 10%)
   const noiseThreshold = userSettings?.noiseThreshold ?? 15; // Default 15% to reduce hallucinations on quiet audio
+  const transcriptionConfig = getTranscriptionConfig(userSettings?.transcriptionMode);
+  const minSegmentMs = transcriptionConfig.minSec * 1000;
+  const maxSegmentMs = transcriptionConfig.maxSec * 1000;
+  const silenceFlushMs = transcriptionConfig.silenceSec * 1000;
 
   // Set the user's default template when settings are loaded (only on initial load)
   const hasInitializedTemplateRef = useRef(false);
@@ -494,6 +510,12 @@ export default function Session() {
     return false;
   };
 
+  const getRecordingTimestampSec = (segmentStartMs: number) => {
+    const activeStart = recordingStartMsRef.current || segmentStartMs;
+    const elapsedMs = recordingElapsedMsRef.current + Math.max(0, segmentStartMs - activeStart);
+    return Math.max(0, Math.floor(elapsedMs / 1000));
+  };
+
   const processNextChunk = async () => {
     // Find next unprocessed chunk
     const chunkItem = pendingChunksRef.current.find(c => !c.processed);
@@ -571,6 +593,34 @@ export default function Session() {
     }
   };
 
+  const queueChunkForTranscription = (segmentBlob: Blob, segmentId: number, segmentStartMs: number) => {
+    const timestampSec =
+      segmentTimestampRef.current.get(segmentId) ?? getRecordingTimestampSec(segmentStartMs);
+    segmentTimestampRef.current.delete(segmentId);
+    const peakLevel = segmentPeakLevelsRef.current.get(segmentId) ?? 0;
+    segmentPeakLevelsRef.current.delete(segmentId);
+
+    const chunkItem: ChunkItem = {
+      id: segmentId,
+      blob: segmentBlob,
+      processed: false,
+      timestampSec,
+      peakLevel,
+    };
+
+    pendingChunksRef.current.push(chunkItem);
+    console.log(`[Chunk ${segmentId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%)`);
+
+    const pendingUnprocessed = pendingChunksRef.current.filter(c => !c.processed).length;
+    const now = Date.now();
+    if (pendingUnprocessed > 2 && now - lastBufferNoticeMsRef.current > 8000) {
+      addTranscriptEntry("Buffering audio... transcription will catch up");
+      lastBufferNoticeMsRef.current = now;
+    }
+
+    processNextChunk();
+  };
+
   const updateAudioLevel = useCallback(() => {
     if (analyserRef.current && isRecordingRef.current) {
       const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
@@ -588,12 +638,34 @@ export default function Session() {
       
       // Track peak audio level for current segment (as percentage 0-100)
       const currentMax = Math.max(...levels) * 100;
-      if (currentMax > segmentPeakLevelRef.current) {
-        segmentPeakLevelRef.current = currentMax;
+      const currentSegmentId = currentSegmentIdRef.current;
+      if (currentSegmentId >= 0) {
+        const prevPeak = segmentPeakLevelsRef.current.get(currentSegmentId) ?? 0;
+        if (currentMax > prevPeak) {
+          segmentPeakLevelsRef.current.set(currentSegmentId, currentMax);
+        }
+      }
+
+      // Silence detection -> flush segment early once minimum duration is met
+      const now = Date.now();
+      if (currentMax > noiseThreshold) {
+        lastVoiceMsRef.current = now;
+        silenceFlushPendingRef.current = false;
+      } else if (
+        segmentStartMsRef.current > 0 &&
+        now - segmentStartMsRef.current >= minSegmentMs &&
+        now - lastVoiceMsRef.current >= silenceFlushMs &&
+        !silenceFlushPendingRef.current
+      ) {
+        silenceFlushPendingRef.current = true;
+        if (now - lastSilenceNoticeMsRef.current > 5000) {
+          addTranscriptEntry("Silence detected — sending buffered audio...");
+          lastSilenceNoticeMsRef.current = now;
+        }
+        segmentControlRef.current?.flush("silence");
       }
       
       // Dispatch activity event every 30 seconds during recording to prevent session timeout
-      const now = Date.now();
       if (now - lastActivityDispatchRef.current > 30000) {
         lastActivityDispatchRef.current = now;
         dispatchActivityEvent();
@@ -601,7 +673,7 @@ export default function Session() {
       
       animationRef.current = requestAnimationFrame(updateAudioLevel);
     }
-  }, [setGlobalAudioLevel]);
+  }, [addTranscriptEntry, minSegmentMs, noiseThreshold, setAudioLevel, setGlobalAudioLevel, silenceFlushMs]);
 
   const startRecording = async () => {
     try {
@@ -633,97 +705,107 @@ export default function Session() {
       partialTextRef.current = "";
       recentLinesRef.current = [];
       lastCumulativeTranscriptRef.current = "";
+      segmentPeakLevelsRef.current.clear();
+      segmentTimestampRef.current.clear();
+      segmentControlRef.current = null;
+      segmentStartMsRef.current = 0;
+      lastSilenceNoticeMsRef.current = 0;
+      lastBufferNoticeMsRef.current = 0;
+
+      recordingElapsedMsRef.current = 0;
+      recordingStartMsRef.current = Date.now();
+      lastVoiceMsRef.current = recordingStartMsRef.current;
       
       // SEGMENTED RECORDING APPROACH:
       // Instead of relying on timeslice mode (which has browser quirks),
       // we use a segmented approach where we create independent recorder sessions
-      // every 20 seconds. Each segment is a complete, valid audio file.
-      
-      let segmentChunks: Blob[] = [];
-      let segmentInterval: NodeJS.Timeout | null = null;
+      // with smart chunking and silence-based flushing.
+
       let currentRecorder: MediaRecorder | null = null;
-      
-      const createSegmentRecorder = () => {
+
+      const createSegmentRecorder = (segmentId: number, segmentStartMs: number) => {
+        const segmentChunks: Blob[] = [];
         const recorder = new MediaRecorder(stream);
-        
+
         recorder.ondataavailable = (e) => {
           console.log(`[Segment] ondataavailable, size: ${e.data.size}`);
           if (e.data.size > 0) {
             segmentChunks.push(e.data);
           }
         };
-        
+
         recorder.onstop = () => {
           console.log(`[Segment] Recorder stopped, chunks collected: ${segmentChunks.length}`);
-          
+
           if (segmentChunks.length > 0) {
-            // Create complete audio blob from this segment
-            const segmentBlob = new Blob(segmentChunks, { type: recorder.mimeType || 'audio/webm' });
-            
-            // Store for final assembly
+            const segmentBlob = new Blob(segmentChunks, { type: recorder.mimeType || "audio/webm" });
             chunksRef.current.push(segmentBlob);
-            
-            // Queue for transcription with peak audio level
-            const chunkId = nextChunkIdRef.current++;
-            const timestampSec = chunkId * chunkIntervalSec;
-            const peakLevel = segmentPeakLevelRef.current;
-            const chunkItem: ChunkItem = { 
-              id: chunkId, 
-              blob: segmentBlob, 
-              processed: false, 
-              timestampSec,
-              peakLevel 
-            };
-            pendingChunksRef.current.push(chunkItem);
-            console.log(`[Chunk ${chunkId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%)`);
-            
-            // Reset peak level for next segment
-            segmentPeakLevelRef.current = 0;
-            
-            // Process transcription
-            processNextChunk();
+            queueChunkForTranscription(segmentBlob, segmentId, segmentStartMs);
+          } else {
+            segmentPeakLevelsRef.current.delete(segmentId);
+            segmentTimestampRef.current.delete(segmentId);
           }
-          
-          // Reset for next segment
-          segmentChunks = [];
         };
-        
+
         recorder.onerror = (event) => {
           console.error("[Segment] Recorder error:", event);
         };
-        
+
         return recorder;
       };
-      
-      // Function to cycle to next segment (stop current, start new)
-      const cycleSegment = () => {
-        console.log("[Segment] Cycling to next segment...");
-        
-        if (currentRecorder && currentRecorder.state === "recording") {
-          // Stop current recorder - this triggers onstop handler
-          currentRecorder.stop();
+
+      const startNewSegment = (reason: "max" | "silence" | "manual" = "manual") => {
+        if (!isRecordingRef.current) {
+          return;
         }
-        
-        // Create and start new recorder
-        currentRecorder = createSegmentRecorder();
+
+        const segmentId = nextChunkIdRef.current++;
+        const segmentStartMs = Date.now();
+        segmentStartMsRef.current = segmentStartMs;
+        currentSegmentIdRef.current = segmentId;
+        segmentPeakLevelsRef.current.set(segmentId, 0);
+        segmentTimestampRef.current.set(segmentId, getRecordingTimestampSec(segmentStartMs));
+        lastVoiceMsRef.current = segmentStartMs;
+        silenceFlushPendingRef.current = false;
+
+        if (segmentMaxTimerRef.current) {
+          clearTimeout(segmentMaxTimerRef.current);
+        }
+        segmentMaxTimerRef.current = setTimeout(() => {
+          segmentControlRef.current?.flush("max");
+        }, maxSegmentMs);
+
+        currentRecorder = createSegmentRecorder(segmentId, segmentStartMs);
         currentRecorder.start();
         mediaRecorderRef.current = currentRecorder;
-        console.log("[Segment] New segment started, state:", currentRecorder.state);
+        console.log(`[Segment ${segmentId}] Started (${reason})`);
       };
-      
-      // Start first segment
-      currentRecorder = createSegmentRecorder();
-      currentRecorder.start();
-      mediaRecorderRef.current = currentRecorder;
-      console.log("[Segment] First segment started");
-      
-      // Cycle to new segment every 20 seconds
-      segmentInterval = setInterval(cycleSegment, chunkIntervalSec * 1000);
-      
-      // Store interval ref for cleanup
-      (streamRef.current as any)._segmentInterval = segmentInterval;
-      
+
+      const flushSegment = (reason: "max" | "silence") => {
+        if (!isRecordingRef.current || segmentCyclingRef.current) {
+          return;
+        }
+        segmentCyclingRef.current = true;
+
+        if (segmentMaxTimerRef.current) {
+          clearTimeout(segmentMaxTimerRef.current);
+          segmentMaxTimerRef.current = null;
+        }
+
+        if (currentRecorder && currentRecorder.state === "recording") {
+          currentRecorder.stop();
+        }
+
+        startNewSegment(reason);
+        segmentCyclingRef.current = false;
+      };
+
+      segmentControlRef.current = { flush: flushSegment };
       isRecordingRef.current = true;
+
+      // Start first segment
+      startNewSegment("manual");
+      
       setRecordingState("recording");
       setGlobalRecording(true);
       setDuration(0);
@@ -751,11 +833,16 @@ export default function Session() {
     if (mediaRecorderRef.current && recordingState === "recording") {
       const recorder = mediaRecorderRef.current;
       
-      // Stop the segment interval when pausing
-      if (streamRef.current && (streamRef.current as any)._segmentInterval) {
-        clearInterval((streamRef.current as any)._segmentInterval);
-        (streamRef.current as any)._segmentInterval = null;
-        console.log("[Pause] Segment interval paused");
+      // Stop max segment timer when pausing
+      if (segmentMaxTimerRef.current) {
+        clearTimeout(segmentMaxTimerRef.current);
+        segmentMaxTimerRef.current = null;
+      }
+      segmentControlRef.current = null;
+      segmentCyclingRef.current = false;
+      if (recordingStartMsRef.current) {
+        recordingElapsedMsRef.current += Date.now() - recordingStartMsRef.current;
+        recordingStartMsRef.current = 0;
       }
       
       // Stop current recorder to capture any pending audio
@@ -784,71 +871,93 @@ export default function Session() {
 
   const resumeRecording = () => {
     if (streamRef.current && recordingState === "paused") {
-      // Create a new segment recorder to resume
       const stream = streamRef.current;
-      
-      let segmentChunks: Blob[] = [];
-      
-      const createSegmentRecorder = () => {
+
+      recordingStartMsRef.current = Date.now();
+      lastVoiceMsRef.current = recordingStartMsRef.current;
+      lastSilenceNoticeMsRef.current = 0;
+      lastBufferNoticeMsRef.current = 0;
+
+      let currentRecorder: MediaRecorder | null = null;
+
+      const createSegmentRecorder = (segmentId: number, segmentStartMs: number) => {
+        const segmentChunks: Blob[] = [];
         const recorder = new MediaRecorder(stream);
-        
+
         recorder.ondataavailable = (e) => {
           console.log(`[Segment Resume] ondataavailable, size: ${e.data.size}`);
           if (e.data.size > 0) {
             segmentChunks.push(e.data);
           }
         };
-        
+
         recorder.onstop = () => {
           console.log(`[Segment Resume] Recorder stopped, chunks: ${segmentChunks.length}`);
-          
+
           if (segmentChunks.length > 0) {
-            const segmentBlob = new Blob(segmentChunks, { type: recorder.mimeType || 'audio/webm' });
+            const segmentBlob = new Blob(segmentChunks, { type: recorder.mimeType || "audio/webm" });
             chunksRef.current.push(segmentBlob);
-            
-            const chunkId = nextChunkIdRef.current++;
-            const timestampSec = chunkId * chunkIntervalSec;
-            const peakLevel = segmentPeakLevelRef.current;
-            const chunkItem: ChunkItem = { 
-              id: chunkId, 
-              blob: segmentBlob, 
-              processed: false, 
-              timestampSec,
-              peakLevel
-            };
-            pendingChunksRef.current.push(chunkItem);
-            console.log(`[Chunk ${chunkId}] Queued resumed segment (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%)`);
-            segmentPeakLevelRef.current = 0; // Reset for next segment
-            processNextChunk();
+            queueChunkForTranscription(segmentBlob, segmentId, segmentStartMs);
+          } else {
+            segmentPeakLevelsRef.current.delete(segmentId);
+            segmentTimestampRef.current.delete(segmentId);
           }
-          segmentChunks = [];
         };
-        
+
         return recorder;
       };
-      
-      let currentRecorder = createSegmentRecorder();
-      
-      const cycleSegment = () => {
-        console.log("[Segment Resume] Cycling segment...");
+
+      const startNewSegment = (reason: "max" | "silence" | "manual" = "manual") => {
+        if (!isRecordingRef.current) {
+          return;
+        }
+
+        const segmentId = nextChunkIdRef.current++;
+        const segmentStartMs = Date.now();
+        segmentStartMsRef.current = segmentStartMs;
+        currentSegmentIdRef.current = segmentId;
+        segmentPeakLevelsRef.current.set(segmentId, 0);
+        segmentTimestampRef.current.set(segmentId, getRecordingTimestampSec(segmentStartMs));
+        lastVoiceMsRef.current = segmentStartMs;
+        silenceFlushPendingRef.current = false;
+
+        if (segmentMaxTimerRef.current) {
+          clearTimeout(segmentMaxTimerRef.current);
+        }
+        segmentMaxTimerRef.current = setTimeout(() => {
+          segmentControlRef.current?.flush("max");
+        }, maxSegmentMs);
+
+        currentRecorder = createSegmentRecorder(segmentId, segmentStartMs);
+        currentRecorder.start();
+        mediaRecorderRef.current = currentRecorder;
+        console.log(`[Segment Resume ${segmentId}] Started (${reason})`);
+      };
+
+      const flushSegment = (reason: "max" | "silence") => {
+        if (!isRecordingRef.current || segmentCyclingRef.current) {
+          return;
+        }
+        segmentCyclingRef.current = true;
+
+        if (segmentMaxTimerRef.current) {
+          clearTimeout(segmentMaxTimerRef.current);
+          segmentMaxTimerRef.current = null;
+        }
+
         if (currentRecorder && currentRecorder.state === "recording") {
           currentRecorder.stop();
         }
-        currentRecorder = createSegmentRecorder();
-        currentRecorder.start();
-        mediaRecorderRef.current = currentRecorder;
+
+        startNewSegment(reason);
+        segmentCyclingRef.current = false;
       };
-      
-      // Start new segment
-      currentRecorder.start();
-      mediaRecorderRef.current = currentRecorder;
-      console.log("[Resume] New segment started");
-      
-      // Restart segment cycling
-      const segmentInterval = setInterval(cycleSegment, chunkIntervalSec * 1000);
-      (streamRef.current as any)._segmentInterval = segmentInterval;
-      
+
+      segmentControlRef.current = { flush: flushSegment };
       isRecordingRef.current = true;
+
+      startNewSegment("manual");
+
       setRecordingState("recording");
       setGlobalRecording(true);
       addTranscriptEntry("Transcript resumed");
@@ -863,11 +972,16 @@ export default function Session() {
 
   const stopRecording = () => {
     return new Promise<Blob>((resolve) => {
-      // Clean up segment interval
-      if (streamRef.current && (streamRef.current as any)._segmentInterval) {
-        clearInterval((streamRef.current as any)._segmentInterval);
-        (streamRef.current as any)._segmentInterval = null;
-        console.log("[Stop] Segment interval cleared");
+      // Clean up max segment timer
+      if (segmentMaxTimerRef.current) {
+        clearTimeout(segmentMaxTimerRef.current);
+        segmentMaxTimerRef.current = null;
+      }
+      segmentControlRef.current = null;
+      segmentCyclingRef.current = false;
+      if (recordingStartMsRef.current) {
+        recordingElapsedMsRef.current += Date.now() - recordingStartMsRef.current;
+        recordingStartMsRef.current = 0;
       }
       
       isRecordingRef.current = false;

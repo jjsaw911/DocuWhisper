@@ -424,6 +424,12 @@ export async function registerRoutes(
         effectiveTemplateId = await storage.getDefaultTemplateId(userId);
         if (effectiveTemplateId) {
           console.log("SOAP generation - using user's default template:", effectiveTemplateId);
+        } else {
+          const defaultTemplate = await storage.getDefaultTemplateForUser(userId);
+          if (defaultTemplate) {
+            effectiveTemplateId = defaultTemplate.id;
+            console.log("SOAP generation - using template marked as default:", effectiveTemplateId);
+          }
         }
       }
       
@@ -1362,6 +1368,8 @@ Focus only on clinically significant interactions. Do not include minor or theor
           noteStyle: "detailed",
           autoSaveEnabled: true,
           showTimestamps: true,
+          transcriptionMode: "smart",
+          noiseThreshold: 15,
         });
       }
       
