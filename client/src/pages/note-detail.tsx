@@ -110,6 +110,19 @@ export default function NoteDetail() {
     enabled: !!user && !!id,
   });
 
+  useEffect(() => {
+    if (!note) return;
+    if (note.patientInstructions) {
+      setSummaryCache(prev => ({
+        ...prev,
+        patient_instructions: note.patientInstructions || "",
+      }));
+      if (summaryType === "patient_instructions") {
+        setGeneratedSummary(note.patientInstructions || "");
+      }
+    }
+  }, [note, summaryType]);
+
   // Handle remote updates from collaborators
   const handleRemoteUpdate = useCallback((field: string, value: string) => {
     if (field === "soapNote") {
@@ -326,6 +339,18 @@ export default function NoteDetail() {
   const [showSummaryPanel, setShowSummaryPanel] = useState(false);
   const [summaryType, setSummaryType] = useState("brief");
   const [generatedSummary, setGeneratedSummary] = useState("");
+  const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const cached = summaryCache[summaryType];
+    if (cached) {
+      setGeneratedSummary(cached);
+    } else if (summaryType === "patient_instructions" && note?.patientInstructions) {
+      setGeneratedSummary(note.patientInstructions);
+    } else {
+      setGeneratedSummary("");
+    }
+  }, [note?.patientInstructions, summaryCache, summaryType]);
   const [showAiToolsPanel, setShowAiToolsPanel] = useState(false);
   
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -1008,11 +1033,43 @@ export default function NoteDetail() {
       return response.json();
     },
     onSuccess: (data) => {
-      setGeneratedSummary(data.summary);
-      toast({
-        title: "Summary generated",
-        description: "Patient summary is ready",
-      });
+      const summaryText = (data.summary || "").trim();
+      if (!summaryText) {
+        toast({
+          title: "Summary empty",
+          description: "The model returned an empty summary. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setSummaryCache(prev => ({ ...prev, [summaryType]: summaryText }));
+      setGeneratedSummary(summaryText);
+      setShowSummaryPanel(true);
+
+      if (summaryType === "patient_instructions" && id) {
+        apiRequest("PATCH", `/api/notes/${id}`, {
+          patientInstructions: summaryText,
+        })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
+            toast({
+              title: "Summary saved",
+              description: "Patient instructions saved to the note.",
+            });
+          })
+          .catch(() => {
+            toast({
+              title: "Summary generated",
+              description: "Generated but failed to save. You can still print.",
+            });
+          });
+      } else {
+        toast({
+          title: "Summary generated",
+          description: "Patient summary is ready",
+        });
+      }
     },
     onError: () => {
       toast({

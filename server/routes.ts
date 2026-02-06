@@ -51,6 +51,7 @@ const updateNoteSchema = z.object({
   plan: z.string().nullable().optional(),
   transcript: z.string().nullable().optional(),
   patientContext: z.string().nullable().optional(),
+  patientInstructions: z.string().nullable().optional(),
   patientId: z.number().nullable().optional(),
   templateId: z.number().nullable().optional(),
   icdCodes: z.string().nullable().optional(),
