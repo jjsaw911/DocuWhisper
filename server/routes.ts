@@ -195,7 +195,7 @@ const generateSummarySchema = z.object({
   objective: z.string().optional(),
   assessment: z.string().optional(),
   plan: z.string().optional(),
-  summaryType: z.enum(["brief", "detailed", "handover", "discharge"]).optional(),
+  summaryType: z.enum(["brief", "detailed", "handover", "discharge", "patient_instructions"]).optional(),
 });
 
 const createTaskSchema = z.object({
@@ -1087,7 +1087,8 @@ PLAN: ${plan || "Not provided"}
         brief: "Generate a brief 2-3 sentence summary suitable for a quick handover.",
         detailed: "Generate a detailed summary paragraph covering all key clinical points.",
         handover: "Generate a structured handover summary with key concerns, active issues, and pending actions.",
-        discharge: "Generate discharge summary instructions for the patient including diagnosis, treatment, and follow-up."
+        discharge: "Generate discharge summary instructions for the patient including diagnosis, treatment, and follow-up.",
+        patient_instructions: "Write patient-facing after-visit instructions in plain language. Include: visit reason, what the patient reported, assessment/diagnosis (if available), medication changes (start/stop/continue if mentioned), home care instructions, follow-up plan, and return precautions. Use short paragraphs or bullet points and avoid medical jargon."
       };
 
       const instruction = typeInstructions[summaryType || "brief"] || typeInstructions.brief;

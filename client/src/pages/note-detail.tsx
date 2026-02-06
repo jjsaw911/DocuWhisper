@@ -54,7 +54,8 @@ import {
   Mic,
   PanelRightClose,
   PanelRightOpen,
-  Trash2
+  Trash2,
+  Printer
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
@@ -1046,6 +1047,63 @@ export default function NoteDetail() {
     }
   };
 
+  const printPatientInstructions = (summaryText: string) => {
+    if (!summaryText || !summaryText.trim()) {
+      toast({
+        title: "No summary to print",
+        description: "Generate a summary first, then try printing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const summaryTitle = summaryType === "patient_instructions" ? "Patient Instructions" : "Patient Summary";
+    const patientLabel = formData.patientName ? `<p style="margin: 4px 0;">Patient: ${formData.patientName}</p>` : "";
+    const dateLabel = `<p style="margin: 4px 0;">Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>`;
+    const formattedSummary = summaryText.replace(/\n/g, "<br>");
+
+    const rawHtml = `
+      <html>
+        <head>
+          <title>${summaryTitle}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 32px; color: #111827; }
+            h1 { margin: 0 0 8px; color: #0d9488; }
+            .meta { color: #6b7280; margin-bottom: 20px; }
+            .content { white-space: normal; line-height: 1.6; font-size: 14px; }
+          </style>
+        </head>
+        <body>
+          <h1>${summaryTitle}</h1>
+          <div class="meta">
+            ${patientLabel}
+            ${dateLabel}
+          </div>
+          <div class="content">${formattedSummary}</div>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank", "width=900,height=700");
+    if (!printWindow) {
+      toast({
+        title: "Popup blocked",
+        description: "Allow popups to print the summary.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(DOMPurify.sanitize(rawHtml));
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
   const exportToPDF = () => {
     const confirmedTasksHtml = noteTasks && noteTasks.length > 0 ? `
       <div class="section">
@@ -1937,6 +1995,7 @@ Treatment plan..."
                         <SelectItem value="detailed">Detailed</SelectItem>
                         <SelectItem value="handover">Handover</SelectItem>
                         <SelectItem value="discharge">Discharge</SelectItem>
+                        <SelectItem value="patient_instructions">Patient Instructions</SelectItem>
                       </SelectContent>
                     </Select>
                     <Button size="sm" onClick={() => summaryMutation.mutate()} disabled={summaryMutation.isPending}>
@@ -1946,9 +2005,17 @@ Treatment plan..."
                   
                   {generatedSummary && (
                     <div className="p-2 bg-background rounded border">
-                      <div className="flex justify-end mb-1">
+                      <div className="flex justify-end gap-1 mb-1">
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(generatedSummary)}>
                           <Copy className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => printPatientInstructions(generatedSummary)}
+                        >
+                          <Printer className="h-3 w-3" />
                         </Button>
                       </div>
                       <p className="text-xs whitespace-pre-wrap">{generatedSummary}</p>
