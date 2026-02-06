@@ -1089,7 +1089,7 @@ PLAN: ${plan || "Not provided"}
         detailed: "Generate a detailed summary paragraph covering all key clinical points.",
         handover: "Generate a structured handover summary with key concerns, active issues, and pending actions.",
         discharge: "Generate discharge summary instructions for the patient including diagnosis, treatment, and follow-up.",
-        patient_instructions: "Write patient-facing after-visit instructions in plain language. Include: visit reason, what the patient reported, assessment/diagnosis (if available), medication changes (start/stop/continue if mentioned), home care instructions, follow-up plan, and return precautions. Use short paragraphs or bullet points and avoid medical jargon."
+        patient_instructions: "Write patient-facing after-visit instructions in plain language. Include: visit reason, what the patient reported, assessment/diagnosis (if available), medication changes (start/stop/continue if mentioned), home care instructions, follow-up plan, and return precautions. Use short paragraphs or bullet points and avoid medical jargon. If details are missing, state 'Not specified' rather than leaving sections blank, and still include general follow-up and return precautions."
       };
 
       const instruction = typeInstructions[summaryType || "brief"] || typeInstructions.brief;
@@ -1106,7 +1106,21 @@ PLAN: ${plan || "Not provided"}
         max_completion_tokens: 800,
       });
 
-      const summary = response.choices[0]?.message?.content || "";
+      let summary = response.choices[0]?.message?.content || "";
+      summary = summary.trim();
+
+      if (!summary && summaryType === "patient_instructions") {
+        const fallbackLines: string[] = [];
+        fallbackLines.push("Today we saw you for a visit.");
+        if (subjective) fallbackLines.push(`You reported: ${subjective}`);
+        if (assessment) fallbackLines.push(`Assessment/Diagnosis: ${assessment}`);
+        if (plan) fallbackLines.push(`Plan/Instructions: ${plan}`);
+        if (objective) fallbackLines.push(`Exam/Tests: ${objective}`);
+        fallbackLines.push("Follow-up: Not specified.");
+        fallbackLines.push("Return precautions: If symptoms worsen or you have concerns, seek medical care.");
+        summary = fallbackLines.join("\n");
+      }
+
       res.json({ summary });
     } catch (error) {
       console.error("Error generating summary:", error);
