@@ -29,8 +29,10 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import type { Template, UserSettings, Practice, PracticeMember } from "@shared/schema";
-import { EMR_ROLES, type EmrRoleType } from "@shared/schema";
+import type { Template, UserSettings, Practice, PracticeMember, PersonalApiKey } from "@shared/schema";
+import { EMR_ROLES, type EmrRoleType, PERSONAL_API_SCOPES } from "@shared/schema";
+import { Key, Eye, EyeOff, RotateCcw } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const US_STATES = [
   "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -124,6 +126,13 @@ export default function Settings() {
   const [selectedPractice, setSelectedPractice] = useState<{ practice: Practice; role: string } | null>(null);
   const [newMemberUserId, setNewMemberUserId] = useState("");
 
+  // API Key management state
+  const [createKeyOpen, setCreateKeyOpen] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(Object.keys(PERSONAL_API_SCOPES));
+  const [createdRawKey, setCreatedRawKey] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
+
   const { data: settings, isLoading: settingsLoading } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
   });
@@ -135,6 +144,11 @@ export default function Settings() {
   // Practices query
   const { data: practices = [], isLoading: practicesLoading } = useQuery<{ practice: Practice; role: string }[]>({
     queryKey: ["/api/practices"],
+  });
+
+  // Personal API keys query
+  const { data: apiKeys = [], isLoading: apiKeysLoading } = useQuery<any[]>({
+    queryKey: ["/api/personal-api-keys"],
   });
 
   // Create practice mutation
@@ -182,6 +196,69 @@ export default function Settings() {
         title: "Error",
         description: "Failed to delete practice",
         variant: "destructive",
+      });
+    },
+  });
+
+  // Create API key mutation
+  const createApiKeyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/personal-api-keys", {
+        name: newKeyName,
+        scopes: newKeyScopes,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/personal-api-keys"] });
+      setCreatedRawKey(data.rawKey);
+      setShowKey(true);
+      setNewKeyName("");
+      setNewKeyScopes(Object.keys(PERSONAL_API_SCOPES));
+      toast({
+        title: "API key created",
+        description: "Copy your key now - it won't be shown again",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Revoke API key mutation
+  const revokeApiKeyMutation = useMutation({
+    mutationFn: async (keyId: number) => {
+      await apiRequest("POST", `/api/personal-api-keys/${keyId}/revoke`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/personal-api-keys"] });
+      toast({
+        title: "API key revoked",
+        description: "The key can no longer be used",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to revoke API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete API key mutation
+  const deleteApiKeyMutation = useMutation({
+    mutationFn: async (keyId: number) => {
+      await apiRequest("DELETE", `/api/personal-api-keys/${keyId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/personal-api-keys"] });
+      toast({
+        title: "API key deleted",
       });
     },
   });
@@ -945,6 +1022,210 @@ export default function Settings() {
                               }
                             }}
                             data-testid={`button-delete-practice-${practice.id}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* API Keys Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Key className="h-5 w-5" />
+                API Keys
+              </CardTitle>
+              <CardDescription>
+                Generate API keys to connect mobile apps or other integrations to your account
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm text-muted-foreground">
+                  Base URL: <code className="text-xs bg-muted px-1 py-0.5 rounded">/api/mobile</code>
+                </p>
+                <Dialog open={createKeyOpen} onOpenChange={(open) => {
+                  setCreateKeyOpen(open);
+                  if (!open) {
+                    setCreatedRawKey(null);
+                    setShowKey(false);
+                  }
+                }}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" data-testid="button-create-api-key">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create API Key
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>{createdRawKey ? "API Key Created" : "Create API Key"}</DialogTitle>
+                      <DialogDescription>
+                        {createdRawKey 
+                          ? "Copy your key now. It won't be shown again."
+                          : "Create a new API key for your mobile app or integration"}
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    {createdRawKey ? (
+                      <div className="space-y-4 py-4">
+                        <div className="p-3 bg-muted rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <code className="text-xs flex-1 break-all font-mono" data-testid="text-raw-api-key">
+                              {showKey ? createdRawKey : createdRawKey.substring(0, 12) + "•".repeat(40)}
+                            </code>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => setShowKey(!showKey)}
+                              data-testid="button-toggle-key-visibility"
+                            >
+                              {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => {
+                                navigator.clipboard.writeText(createdRawKey);
+                                toast({ title: "Copied to clipboard" });
+                              }}
+                              data-testid="button-copy-api-key"
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-destructive font-medium">
+                          Store this key securely. You won't be able to see it again after closing this dialog.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="keyName">Key Name</Label>
+                          <Input
+                            id="keyName"
+                            value={newKeyName}
+                            onChange={(e) => setNewKeyName(e.target.value)}
+                            placeholder="e.g., iPhone App, iPad Pro"
+                            data-testid="input-api-key-name"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Permissions</Label>
+                          <div className="grid grid-cols-1 gap-2">
+                            {Object.entries(PERSONAL_API_SCOPES).map(([scope, description]) => (
+                              <label key={scope} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <Checkbox
+                                  checked={newKeyScopes.includes(scope)}
+                                  onCheckedChange={(checked) => {
+                                    if (checked) {
+                                      setNewKeyScopes([...newKeyScopes, scope]);
+                                    } else {
+                                      setNewKeyScopes(newKeyScopes.filter(s => s !== scope));
+                                    }
+                                  }}
+                                  data-testid={`checkbox-scope-${scope}`}
+                                />
+                                <span className="font-mono text-xs text-muted-foreground">{scope}</span>
+                                <span>{description}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <DialogFooter>
+                      {createdRawKey ? (
+                        <Button onClick={() => {
+                          setCreateKeyOpen(false);
+                          setCreatedRawKey(null);
+                          setShowKey(false);
+                        }} data-testid="button-done-api-key">
+                          Done
+                        </Button>
+                      ) : (
+                        <>
+                          <Button variant="outline" onClick={() => setCreateKeyOpen(false)}>
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={() => createApiKeyMutation.mutate()}
+                            disabled={!newKeyName.trim() || newKeyScopes.length === 0 || createApiKeyMutation.isPending}
+                            data-testid="button-confirm-create-key"
+                          >
+                            {createApiKeyMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                            Create Key
+                          </Button>
+                        </>
+                      )}
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+
+              {apiKeysLoading ? (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : apiKeys.length === 0 ? (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Key className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No API keys yet</p>
+                  <p className="text-xs">Create one to connect your mobile app</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {apiKeys.map((key: any) => (
+                    <div
+                      key={key.id}
+                      className="flex items-center justify-between gap-2 p-3 border rounded-lg flex-wrap"
+                      data-testid={`api-key-item-${key.id}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-sm">{key.name}</p>
+                          <Badge variant={key.status === "active" ? "default" : "secondary"}>
+                            {key.status}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1 flex-wrap">
+                          <span className="font-mono">{key.keyPrefix}•••</span>
+                          <span>Created {new Date(key.createdAt).toLocaleDateString()}</span>
+                          {key.lastUsedAt && (
+                            <span>Last used {new Date(key.lastUsedAt).toLocaleDateString()}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {key.status === "active" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              if (confirm("Revoke this API key? Any app using it will stop working.")) {
+                                revokeApiKeyMutation.mutate(key.id);
+                              }
+                            }}
+                            data-testid={`button-revoke-key-${key.id}`}
+                          >
+                            <RotateCcw className="h-4 w-4 mr-1" />
+                            Revoke
+                          </Button>
+                        )}
+                        {key.status === "revoked" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteApiKeyMutation.mutate(key.id)}
+                            data-testid={`button-delete-key-${key.id}`}
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>

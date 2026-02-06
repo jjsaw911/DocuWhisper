@@ -10,6 +10,8 @@ import OpenAI from "openai";
 import multer from "multer";
 import { Resend } from "resend";
 import externalApiRoutes from "./externalApiRoutes";
+import mobileApiRoutes from "./mobileApiRoutes";
+import { PERSONAL_API_SCOPES } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
 
@@ -222,6 +224,7 @@ export async function registerRoutes(
   
   // Register external API routes (for third-party integrations like urgent care)
   app.use("/api/external/v1", externalApiRoutes);
+  app.use("/api/mobile", mobileApiRoutes);
   
   app.get("/api/notes", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -1389,6 +1392,115 @@ Focus only on clinically significant interactions. Do not include minor or theor
       console.error("Error saving settings:", error);
       res.status(500).json({ error: "Failed to save settings" });
     }
+  });
+
+  // ===== Personal API Key Management =====
+  app.get("/api/personal-api-keys", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const keys = await storage.getPersonalApiKeysByUser(userId);
+      res.json(keys.map(k => ({
+        id: k.id,
+        name: k.name,
+        keyPrefix: k.keyPrefix,
+        scopes: k.scopes,
+        status: k.status,
+        lastUsedAt: k.lastUsedAt,
+        createdAt: k.createdAt,
+        revokedAt: k.revokedAt,
+      })));
+    } catch (error) {
+      console.error("Error fetching personal API keys:", error);
+      res.status(500).json({ error: "Failed to fetch API keys" });
+    }
+  });
+
+  app.post("/api/personal-api-keys", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { name, scopes } = z.object({
+        name: z.string().min(1, "Key name is required"),
+        scopes: z.array(z.string()).min(1, "At least one scope is required"),
+      }).parse(req.body);
+
+      // Validate scopes
+      const validScopes = Object.keys(PERSONAL_API_SCOPES);
+      const invalidScopes = scopes.filter(s => !validScopes.includes(s));
+      if (invalidScopes.length > 0) {
+        return res.status(400).json({ error: `Invalid scopes: ${invalidScopes.join(", ")}` });
+      }
+
+      // Limit to 5 active keys per user
+      const existingKeys = await storage.getPersonalApiKeysByUser(userId);
+      const activeKeys = existingKeys.filter(k => k.status === "active");
+      if (activeKeys.length >= 5) {
+        return res.status(400).json({ error: "Maximum of 5 active API keys allowed. Revoke an existing key first." });
+      }
+
+      const { apiKey, rawKey } = await storage.createPersonalApiKey({
+        userId,
+        name,
+        scopes,
+      });
+
+      res.status(201).json({
+        id: apiKey.id,
+        name: apiKey.name,
+        keyPrefix: apiKey.keyPrefix,
+        scopes: apiKey.scopes,
+        status: apiKey.status,
+        createdAt: apiKey.createdAt,
+        rawKey, // Only returned once at creation
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      console.error("Error creating personal API key:", error);
+      res.status(500).json({ error: "Failed to create API key" });
+    }
+  });
+
+  app.post("/api/personal-api-keys/:id/revoke", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const keyId = parseInt(req.params.id);
+      
+      const keys = await storage.getPersonalApiKeysByUser(userId);
+      const key = keys.find(k => k.id === keyId);
+      if (!key) {
+        return res.status(404).json({ error: "API key not found" });
+      }
+      
+      const revoked = await storage.revokePersonalApiKey(keyId);
+      res.json(revoked);
+    } catch (error) {
+      console.error("Error revoking personal API key:", error);
+      res.status(500).json({ error: "Failed to revoke API key" });
+    }
+  });
+
+  app.delete("/api/personal-api-keys/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const keyId = parseInt(req.params.id);
+      
+      const keys = await storage.getPersonalApiKeysByUser(userId);
+      const key = keys.find(k => k.id === keyId);
+      if (!key) {
+        return res.status(404).json({ error: "API key not found" });
+      }
+      
+      await storage.deletePersonalApiKey(keyId);
+      res.json({ message: "API key deleted" });
+    } catch (error) {
+      console.error("Error deleting personal API key:", error);
+      res.status(500).json({ error: "Failed to delete API key" });
+    }
+  });
+
+  app.get("/api/personal-api-keys/scopes", isAuthenticated, async (req: any, res: Response) => {
+    res.json(PERSONAL_API_SCOPES);
   });
 
   app.get("/api/subscription", isAuthenticated, async (req: any, res: Response) => {

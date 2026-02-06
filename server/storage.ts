@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, personalApiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey, type PersonalApiKey, type InsertPersonalApiKey } from "@shared/schema";
 import crypto from "crypto";
 import { db } from "./db";
 import { eq, desc, and, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
@@ -149,6 +149,13 @@ export interface IStorage {
   revokeApiKey(id: number, revokedBy: string): Promise<ApiKey | undefined>;
   updateApiKeyLastUsed(id: number): Promise<void>;
   deleteApiKey(id: number): Promise<void>;
+  // Personal API Keys (mobile/personal integrations)
+  createPersonalApiKey(data: { userId: string; name: string; scopes: string[] }): Promise<{ apiKey: PersonalApiKey; rawKey: string }>;
+  getPersonalApiKeyByHash(keyHash: string): Promise<PersonalApiKey | undefined>;
+  getPersonalApiKeysByUser(userId: string): Promise<PersonalApiKey[]>;
+  revokePersonalApiKey(id: number): Promise<PersonalApiKey | undefined>;
+  updatePersonalApiKeyLastUsed(id: number): Promise<void>;
+  deletePersonalApiKey(id: number): Promise<void>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -1214,6 +1221,54 @@ class DatabaseStorage implements IStorage {
 
   async deleteApiKey(id: number): Promise<void> {
     await db.delete(apiKeys).where(eq(apiKeys.id, id));
+  }
+
+  // Personal API Key management (mobile/personal integrations)
+  async createPersonalApiKey(data: { userId: string; name: string; scopes: string[] }): Promise<{ apiKey: PersonalApiKey; rawKey: string }> {
+    const rawKey = `dw_pk_${crypto.randomBytes(32).toString('hex')}`;
+    const keyPrefix = rawKey.substring(0, 12);
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    
+    const [created] = await db.insert(personalApiKeys).values({
+      userId: data.userId,
+      name: data.name,
+      keyPrefix,
+      keyHash,
+      scopes: data.scopes,
+      status: "active",
+      rateLimitPerMinute: 30,
+    }).returning();
+    
+    return { apiKey: created, rawKey };
+  }
+
+  async getPersonalApiKeyByHash(keyHash: string): Promise<PersonalApiKey | undefined> {
+    const [key] = await db.select().from(personalApiKeys).where(eq(personalApiKeys.keyHash, keyHash));
+    return key;
+  }
+
+  async getPersonalApiKeysByUser(userId: string): Promise<PersonalApiKey[]> {
+    return db.select().from(personalApiKeys)
+      .where(eq(personalApiKeys.userId, userId))
+      .orderBy(desc(personalApiKeys.createdAt));
+  }
+
+  async revokePersonalApiKey(id: number): Promise<PersonalApiKey | undefined> {
+    const [revoked] = await db.update(personalApiKeys).set({
+      status: "revoked",
+      revokedAt: new Date(),
+    }).where(eq(personalApiKeys.id, id)).returning();
+    return revoked;
+  }
+
+  async updatePersonalApiKeyLastUsed(id: number): Promise<void> {
+    await db.update(personalApiKeys).set({
+      lastUsedAt: new Date(),
+    }).where(eq(personalApiKeys.id, id));
+  }
+
+  async deletePersonalApiKey(id: number): Promise<void> {
+    await db.delete(personalApiKeys).where(eq(personalApiKeys.id, id));
   }
 }
 

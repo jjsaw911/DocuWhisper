@@ -621,3 +621,44 @@ export const API_KEY_SCOPES = {
 } as const;
 
 export type ApiKeyScope = keyof typeof API_KEY_SCOPES;
+
+// Personal API Keys - for mobile apps and personal integrations
+export const personalApiKeys = pgTable("personal_api_keys", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  keyPrefix: varchar("key_prefix", { length: 12 }).notNull(),
+  keyHash: text("key_hash").notNull(),
+  scopes: text("scopes").array().notNull(),
+  status: text("status").notNull().default("active"),
+  rateLimitPerMinute: integer("rate_limit_per_minute").default(30),
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  revokedAt: timestamp("revoked_at"),
+});
+
+export const insertPersonalApiKeySchema = createInsertSchema(personalApiKeys).omit({
+  id: true,
+  createdAt: true,
+  lastUsedAt: true,
+  revokedAt: true,
+});
+
+export type PersonalApiKey = typeof personalApiKeys.$inferSelect;
+export type InsertPersonalApiKey = z.infer<typeof insertPersonalApiKeySchema>;
+
+export const PERSONAL_API_SCOPES = {
+  'notes:read': 'View your notes',
+  'notes:write': 'Create and edit notes',
+  'templates:read': 'View your templates',
+  'templates:write': 'Create and edit templates',
+  'tasks:read': 'View your tasks',
+  'tasks:write': 'Create and edit tasks',
+  'transcribe': 'Transcribe audio recordings',
+  'generate': 'Generate SOAP notes and AI content',
+  'settings:read': 'View your settings',
+  'settings:write': 'Update your settings',
+} as const;
+
+export type PersonalApiScope = keyof typeof PERSONAL_API_SCOPES;
