@@ -110,19 +110,6 @@ export default function NoteDetail() {
     enabled: !!user && !!id,
   });
 
-  useEffect(() => {
-    if (!note) return;
-    if (note.patientInstructions) {
-      setSummaryCache(prev => ({
-        ...prev,
-        patient_instructions: note.patientInstructions || "",
-      }));
-      if (summaryType === "patient_instructions") {
-        setGeneratedSummary(note.patientInstructions || "");
-      }
-    }
-  }, [note, summaryType]);
-
   // Handle remote updates from collaborators
   const handleRemoteUpdate = useCallback((field: string, value: string) => {
     if (field === "soapNote") {
@@ -342,15 +329,22 @@ export default function NoteDetail() {
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    if (note?.patientInstructions) {
+      setSummaryCache(prev => ({
+        ...prev,
+        patient_instructions: note.patientInstructions || "",
+      }));
+    }
+  }, [note]);
+
+  useEffect(() => {
     const cached = summaryCache[summaryType];
     if (cached) {
       setGeneratedSummary(cached);
-    } else if (summaryType === "patient_instructions" && note?.patientInstructions) {
-      setGeneratedSummary(note.patientInstructions);
     } else {
       setGeneratedSummary("");
     }
-  }, [note?.patientInstructions, summaryCache, summaryType]);
+  }, [summaryCache, summaryType]);
   const [showAiToolsPanel, setShowAiToolsPanel] = useState(false);
   
   const [showTaskModal, setShowTaskModal] = useState(false);
