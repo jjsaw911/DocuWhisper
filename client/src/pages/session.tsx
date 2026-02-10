@@ -169,6 +169,11 @@ export default function Session() {
   const segmentTimestampRef = useRef<Map<number, number>>(new Map());
   const segmentControlRef = useRef<{ flush: (reason: "max" | "silence") => void } | null>(null);
   
+  const updateAudioLevelRef = useRef<(() => void) | null>(null);
+  const backgroundIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const pageHiddenRef = useRef<boolean>(document.hidden);
+  
   // Transcript state: committedText (stable) + partialText (interim)
   const committedTextRef = useRef<string>(""); // Finalized transcript
   const partialTextRef = useRef<string>(""); // Current interim fragment (not yet finalized)
@@ -383,51 +388,58 @@ export default function Session() {
     setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
   };
 
-  const transcribeChunk = async (audioBlob: Blob): Promise<string | null> => {
-    // Add timeout to prevent hanging
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
-    
-    try {
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "chunk.webm");
-      formData.append("language", transcriptionLanguage);
+  type TranscribeResult = { ok: true; transcript: string } | { ok: false; error: "api_error" | "timeout" | "network" } | { ok: true; transcript: "" };
+  
+  const transcribeChunk = async (audioBlob: Blob, maxRetries: number = 2): Promise<TranscribeResult> => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      
+      try {
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "chunk.webm");
+        formData.append("language", transcriptionLanguage);
 
-      console.log(`[transcribeChunk] Starting transcription of ${audioBlob.size} bytes`);
-      
-      // Signal app activity to prevent session timeout during transcription
-      dispatchActivityEvent();
-      
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-        signal: controller.signal,
-      });
+        console.log(`[transcribeChunk] Attempt ${attempt + 1}/${maxRetries + 1}, ${audioBlob.size} bytes`);
+        
+        dispatchActivityEvent();
+        
+        const response = await fetch("/api/transcribe", {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+          signal: controller.signal,
+        });
 
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        console.error("Chunk transcription failed with status:", response.status);
-        return null;
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          console.error(`[transcribeChunk] Failed with status ${response.status} (attempt ${attempt + 1})`);
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            continue;
+          }
+          return { ok: false, error: "api_error" };
+        }
+
+        const data = await response.json();
+        console.log(`[transcribeChunk] Completed, got ${data.transcript?.length || 0} chars`);
+        
+        dispatchActivityEvent();
+        
+        return { ok: true, transcript: data.transcript || "" };
+      } catch (error: unknown) {
+        clearTimeout(timeoutId);
+        const isTimeout = error instanceof Error && error.name === 'AbortError';
+        console.error(`[transcribeChunk] ${isTimeout ? 'Timeout' : 'Error'} (attempt ${attempt + 1}):`, isTimeout ? '' : error);
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+        return { ok: false, error: isTimeout ? "timeout" : "network" };
       }
-
-      const data = await response.json();
-      console.log(`[transcribeChunk] Completed, got ${data.transcript?.length || 0} chars`);
-      
-      // Signal activity again after transcription completes
-      dispatchActivityEvent();
-      
-      return data.transcript || null;
-    } catch (error: unknown) {
-      clearTimeout(timeoutId);
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.error("Chunk transcription timed out after 60 seconds");
-      } else {
-        console.error("Chunk transcription error:", error);
-      }
-      return null;
     }
+    return { ok: false, error: "network" };
   };
 
   // Normalize text: lowercase, collapse whitespace, remove punctuation for comparison
@@ -560,25 +572,27 @@ export default function Session() {
     console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (peak: ${chunkItem.peakLevel.toFixed(1)}%)...`);
     
     try {
-      // Each chunk is now independent - just the audio from this time segment
-      const transcriptText = await transcribeChunk(chunkItem.blob);
+      const result = await transcribeChunk(chunkItem.blob);
       
-      if (transcriptText && transcriptText.trim()) {
-        const cleanedText = transcriptText.trim();
+      if (result.ok && result.transcript.trim()) {
+        const cleanedText = result.transcript.trim();
         
-        // Add the transcript directly - it's independent audio, not cumulative
         const added = addTranscriptContent(cleanedText, chunkItem.timestampSec);
         console.log(`[Chunk ${chunkItem.id}] Transcribed ${cleanedText.length} chars: ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
         
         if (added) {
-          // Auto-backup after each successful chunk
           saveBackup(committedTextRef.current, patientName, "general");
         }
+      } else if (!result.ok) {
+        const errorMsg = result.error === "timeout" ? "timed out" : result.error === "api_error" ? "server error" : "network error";
+        console.error(`[Chunk ${chunkItem.id}] Transcription failed: ${errorMsg}`);
+        addTranscriptEntry(`[Audio at ${formatTime(chunkItem.timestampSec)} could not be transcribed (${errorMsg}) - this section may be missing from the final note]`);
       } else {
-        console.log(`[Chunk ${chunkItem.id}] No transcript returned (empty audio segment)`);
+        console.log(`[Chunk ${chunkItem.id}] No speech detected in segment (silence)`);
       }
     } catch (err) {
       console.error(`[Chunk ${chunkItem.id}] Transcription error:`, err);
+      addTranscriptEntry(`[Audio at ${formatTime(chunkItem.timestampSec)} failed to transcribe - this section may be missing from the final note]`);
     }
 
     // NOW mark as processed (after transcription completes)
@@ -636,7 +650,6 @@ export default function Session() {
       setAudioLevel(levels);
       setGlobalAudioLevel(levels);
       
-      // Track peak audio level for current segment (as percentage 0-100)
       const currentMax = Math.max(...levels) * 100;
       const currentSegmentId = currentSegmentIdRef.current;
       if (currentSegmentId >= 0) {
@@ -646,7 +659,6 @@ export default function Session() {
         }
       }
 
-      // Silence detection -> flush segment early once minimum duration is met
       const now = Date.now();
       if (currentMax > noiseThreshold) {
         lastVoiceMsRef.current = now;
@@ -665,15 +677,76 @@ export default function Session() {
         segmentControlRef.current?.flush("silence");
       }
       
-      // Dispatch activity event every 30 seconds during recording to prevent session timeout
       if (now - lastActivityDispatchRef.current > 30000) {
         lastActivityDispatchRef.current = now;
         dispatchActivityEvent();
       }
       
-      animationRef.current = requestAnimationFrame(updateAudioLevel);
+      if (!pageHiddenRef.current) {
+        animationRef.current = requestAnimationFrame(() => {
+          updateAudioLevelRef.current?.();
+        });
+      }
     }
   }, [addTranscriptEntry, minSegmentMs, noiseThreshold, setAudioLevel, setGlobalAudioLevel, silenceFlushMs]);
+  
+  updateAudioLevelRef.current = updateAudioLevel;
+
+  const startBackgroundInterval = useCallback(() => {
+    if (backgroundIntervalRef.current) return;
+    backgroundIntervalRef.current = setInterval(() => {
+      if (!isRecordingRef.current) return;
+      const ctx = audioContextRef.current;
+      if (ctx && ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+      updateAudioLevelRef.current?.();
+    }, 500);
+    console.log("[Background] Started background audio monitoring interval");
+  }, []);
+
+  const stopBackgroundInterval = useCallback(() => {
+    if (backgroundIntervalRef.current) {
+      clearInterval(backgroundIntervalRef.current);
+      backgroundIntervalRef.current = null;
+      console.log("[Background] Stopped background audio monitoring interval");
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const isHidden = document.hidden;
+      pageHiddenRef.current = isHidden;
+
+      if (!isRecordingRef.current) return;
+
+      if (isHidden) {
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+          animationRef.current = null;
+        }
+        startBackgroundInterval();
+        console.log("[Background] Tab hidden - switched to background interval for audio monitoring");
+      } else {
+        stopBackgroundInterval();
+        if (audioContextRef.current?.state === "suspended") {
+          audioContextRef.current.resume().then(() => {
+            console.log("[Background] AudioContext resumed after tab visible");
+          }).catch(() => {});
+        }
+        animationRef.current = requestAnimationFrame(() => {
+          updateAudioLevelRef.current?.();
+        });
+        console.log("[Background] Tab visible - switched back to requestAnimationFrame");
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      stopBackgroundInterval();
+    };
+  }, [startBackgroundInterval, stopBackgroundInterval]);
 
   const startRecording = async () => {
     try {
@@ -685,6 +758,7 @@ export default function Session() {
       streamRef.current = stream;
 
       const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
@@ -802,6 +876,7 @@ export default function Session() {
 
       segmentControlRef.current = { flush: flushSegment };
       isRecordingRef.current = true;
+      pageHiddenRef.current = document.hidden;
 
       // Start first segment
       startNewSegment("manual");
@@ -815,7 +890,11 @@ export default function Session() {
         setDuration((d) => d + 1);
       }, 1000);
 
-      animationRef.current = requestAnimationFrame(updateAudioLevel);
+      if (pageHiddenRef.current) {
+        startBackgroundInterval();
+      } else {
+        animationRef.current = requestAnimationFrame(updateAudioLevel);
+      }
 
     } catch (error) {
       toast({
@@ -863,6 +942,10 @@ export default function Session() {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
+      }
+      if (backgroundIntervalRef.current) {
+        clearInterval(backgroundIntervalRef.current);
+        backgroundIntervalRef.current = null;
       }
       setAudioLevel([0, 0, 0, 0, 0]);
       setGlobalAudioLevel([0, 0, 0, 0, 0]);
@@ -966,7 +1049,12 @@ export default function Session() {
         setDuration((d) => d + 1);
       }, 1000);
       
-      animationRef.current = requestAnimationFrame(updateAudioLevel);
+      pageHiddenRef.current = document.hidden;
+      if (pageHiddenRef.current) {
+        startBackgroundInterval();
+      } else {
+        animationRef.current = requestAnimationFrame(updateAudioLevel);
+      }
     }
   };
 
@@ -1044,6 +1132,10 @@ export default function Session() {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
+      if (backgroundIntervalRef.current) {
+        clearInterval(backgroundIntervalRef.current);
+        backgroundIntervalRef.current = null;
+      }
 
       setAudioLevel([0, 0, 0, 0, 0]);
       addTranscriptEntry("Transcript stopped");
@@ -1064,11 +1156,10 @@ export default function Session() {
     try {
       processNextChunk();
       
-      // Wait for all chunks to be processed
       const hasUnprocessedChunks = () => pendingChunksRef.current.some(c => !c.processed);
       
       let waitCount = 0;
-      const maxWait = 120;
+      const maxWait = 360;
       while ((isTranscribingRef.current || hasUnprocessedChunks()) && waitCount < maxWait) {
         await new Promise(resolve => setTimeout(resolve, 500));
         waitCount++;
@@ -1078,7 +1169,11 @@ export default function Session() {
       }
       
       if (waitCount >= maxWait) {
-        console.warn("Transcription timeout - using available chunks");
+        console.warn("Transcription timeout after 3 minutes - using available chunks");
+        const remaining = pendingChunksRef.current.filter(c => !c.processed);
+        if (remaining.length > 0) {
+          addTranscriptEntry(`${remaining.length} audio segment(s) still processing - transcript may be incomplete`);
+        }
       }
 
       // Finalize any pending partial text
@@ -1560,6 +1655,7 @@ ${noteContentSection}
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (backgroundIntervalRef.current) clearInterval(backgroundIntervalRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
