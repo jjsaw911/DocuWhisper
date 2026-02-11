@@ -104,7 +104,14 @@ router.get("/auth/start", (req: Request, res: Response) => {
     });
   }
 
-  (req.session as any).mobileAuthRedirect = redirectUri;
+  const isProduction = process.env.NODE_ENV === "production";
+  res.cookie("mobile_auth_redirect", redirectUri, {
+    httpOnly: true,
+    secure: isProduction,
+    maxAge: 10 * 60 * 1000,
+    sameSite: "lax",
+  });
+
   (req.session as any).returnTo = "/api/mobile/auth/callback";
 
   const user = req.user as any;
@@ -112,7 +119,9 @@ router.get("/auth/start", (req: Request, res: Response) => {
     return res.redirect(`/api/mobile/auth/callback`);
   }
 
-  res.redirect(`/api/login`);
+  req.session.save(() => {
+    res.redirect(`/api/login`);
+  });
 });
 
 router.get("/auth/callback", isAuthenticated, async (req: Request, res: Response) => {
@@ -125,7 +134,8 @@ router.get("/auth/callback", isAuthenticated, async (req: Request, res: Response
       return res.status(401).json({ error: "unauthorized", message: "Not authenticated" });
     }
 
-    const redirectUri = (req.session as any).mobileAuthRedirect;
+    const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect;
+    res.clearCookie("mobile_auth_redirect");
     delete (req.session as any).mobileAuthRedirect;
 
     if (!redirectUri || !isRedirectAllowed(redirectUri)) {
@@ -173,7 +183,8 @@ router.get("/auth/callback", isAuthenticated, async (req: Request, res: Response
     res.redirect(callbackUrl);
   } catch (error: any) {
     console.error("Mobile auth callback error:", error);
-    const redirectUri = (req.session as any).mobileAuthRedirect;
+    const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect;
+    res.clearCookie("mobile_auth_redirect");
     if (redirectUri && isRedirectAllowed(redirectUri)) {
       const separator = redirectUri.includes("?") ? "&" : "?";
       return res.redirect(`${redirectUri}${separator}error=auth_failed&message=${encodeURIComponent("Failed to complete authentication")}`);

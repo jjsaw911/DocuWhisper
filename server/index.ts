@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -74,8 +75,23 @@ async function initStripe() {
 (async () => {
   await initStripe();
 
+  app.use(cookieParser());
+
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (
+      req.cookies?.mobile_auth_redirect &&
+      (req as any).isAuthenticated?.() &&
+      !req.path.startsWith("/api/mobile/auth/") &&
+      !req.path.startsWith("/api/login") &&
+      !req.path.startsWith("/api/callback")
+    ) {
+      return res.redirect("/api/mobile/auth/callback");
+    }
+    next();
+  });
 
   app.post(
     "/api/stripe/webhook",
