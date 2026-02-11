@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
+import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -7,6 +8,22 @@ import multer from "multer";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+const DEFAULT_MOBILE_SCOPES = [
+  "notes:read", "notes:write", "templates:read", "templates:write",
+  "tasks:read", "tasks:write", "transcribe", "generate",
+  "settings:read", "settings:write",
+];
+
+function getAllowedRedirectUris(): string[] {
+  const raw = process.env.MOBILE_AUTH_REDIRECT_ALLOWLIST || "";
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
+}
+
+function isRedirectAllowed(uri: string): boolean {
+  const allowed = getAllowedRedirectUris();
+  return allowed.some(pattern => uri.startsWith(pattern));
+}
 
 // Docs endpoint is public (no auth needed)
 router.get("/docs", async (_req: Request, res: Response) => {
@@ -18,6 +35,10 @@ router.get("/docs", async (_req: Request, res: Response) => {
     keyPrefix: "dw_pk_",
     rateLimit: "30 requests/minute",
     endpoints: {
+      auth: {
+        "GET /auth/start?redirect_uri=<uri>": "Start web-based sign-in (ASWebAuthenticationSession). Redirects through login, then back to redirect_uri with api_key param.",
+        "GET /auth/callback": "Internal callback after login completes. Auto-generates API key and redirects to app.",
+      },
       user: { "GET /me": "Get user info, settings, and subscription status" },
       notes: {
         "GET /notes": "List notes (query: limit, offset)",
@@ -62,6 +83,103 @@ router.get("/docs", async (_req: Request, res: Response) => {
       "settings:write": "Update settings",
     },
   });
+});
+
+// ===== MOBILE WEB AUTH (for ASWebAuthenticationSession) =====
+
+router.get("/auth/start", (req: Request, res: Response) => {
+  const redirectUri = req.query.redirect_uri as string;
+
+  if (!redirectUri) {
+    return res.status(400).json({
+      error: "missing_redirect_uri",
+      message: "redirect_uri query parameter is required",
+    });
+  }
+
+  if (!isRedirectAllowed(redirectUri)) {
+    return res.status(403).json({
+      error: "redirect_not_allowed",
+      message: "The provided redirect_uri is not in the allowlist. Set MOBILE_AUTH_REDIRECT_ALLOWLIST env var.",
+    });
+  }
+
+  (req.session as any).mobileAuthRedirect = redirectUri;
+  (req.session as any).returnTo = "/api/mobile/auth/callback";
+
+  const user = req.user as any;
+  if (req.isAuthenticated?.() && user?.claims?.sub) {
+    return res.redirect(`/api/mobile/auth/callback`);
+  }
+
+  res.redirect(`/api/login`);
+});
+
+router.get("/auth/callback", isAuthenticated, async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    const userId = user?.claims?.sub;
+    const userEmail = user?.claims?.email || "";
+
+    if (!userId) {
+      return res.status(401).json({ error: "unauthorized", message: "Not authenticated" });
+    }
+
+    const redirectUri = (req.session as any).mobileAuthRedirect;
+    delete (req.session as any).mobileAuthRedirect;
+
+    if (!redirectUri || !isRedirectAllowed(redirectUri)) {
+      return res.status(400).json({
+        error: "invalid_session",
+        message: "No valid mobile redirect URI in session. Start the flow from /api/mobile/auth/start",
+      });
+    }
+
+    const existingKeys = await storage.getPersonalApiKeysByUser(userId);
+    const mobileKey = existingKeys.find(
+      k => k.status === "active" && k.name === "DocuWhisper iOS App"
+    );
+
+    let rawKey: string;
+
+    if (mobileKey) {
+      await storage.revokePersonalApiKey(mobileKey.id);
+      const result = await storage.createPersonalApiKey({
+        userId,
+        name: "DocuWhisper iOS App",
+        scopes: DEFAULT_MOBILE_SCOPES,
+      });
+      rawKey = result.rawKey;
+    } else {
+      const activeKeys = existingKeys.filter(k => k.status === "active");
+      if (activeKeys.length >= 5) {
+        const oldest = activeKeys.sort(
+          (a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime()
+        )[0];
+        await storage.revokePersonalApiKey(oldest.id);
+      }
+
+      const result = await storage.createPersonalApiKey({
+        userId,
+        name: "DocuWhisper iOS App",
+        scopes: DEFAULT_MOBILE_SCOPES,
+      });
+      rawKey = result.rawKey;
+    }
+
+    const separator = redirectUri.includes("?") ? "&" : "?";
+    const callbackUrl = `${redirectUri}${separator}api_key=${encodeURIComponent(rawKey)}&user_id=${encodeURIComponent(userId)}&email=${encodeURIComponent(userEmail)}`;
+
+    res.redirect(callbackUrl);
+  } catch (error: any) {
+    console.error("Mobile auth callback error:", error);
+    const redirectUri = (req.session as any).mobileAuthRedirect;
+    if (redirectUri && isRedirectAllowed(redirectUri)) {
+      const separator = redirectUri.includes("?") ? "&" : "?";
+      return res.redirect(`${redirectUri}${separator}error=auth_failed&message=${encodeURIComponent("Failed to complete authentication")}`);
+    }
+    res.status(500).json({ error: "internal_error", message: "Authentication callback failed" });
+  }
 });
 
 // All other routes require API key auth

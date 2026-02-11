@@ -46,3 +46,4 @@ integrations = ["javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.
 
 [userenv.shared]
 OWNER_EMAIL = "f675jwvksc@privaterelay.appleid.com"
+MOBILE_AUTH_REDIRECT_ALLOWLIST = "docuwhisper://auth/callback"
