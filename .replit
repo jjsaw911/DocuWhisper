@@ -47,3 +47,6 @@ integrations = ["javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.
 [userenv.shared]
 OWNER_EMAIL = "f675jwvksc@privaterelay.appleid.com"
 MOBILE_AUTH_REDIRECT_ALLOWLIST = "docuwhisper://auth/callback"
+
+[objectStorage]
+defaultBucketID = "replit-objstore-175404aa-0a4d-4215-9b3f-5a977b2eb8b4"
