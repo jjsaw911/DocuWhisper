@@ -1339,27 +1339,7 @@ export default function Session() {
         speakerSegments: segments,
       });
       const soapData = await soapResponse.json();
-      
-      // Step 2: Generate ICD codes for the SOAP note
-      let icdCodesData = null;
-      try {
-        const noteData = soapData.hpi ? {
-          subjective: soapData.hpi,
-          objective: "",
-          assessment: "",
-          plan: soapData.plan || "",
-        } : {
-          subjective: soapData.subjective || "",
-          objective: soapData.objective || "",
-          assessment: soapData.assessment || "",
-          plan: soapData.plan || "",
-        };
-        const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
-        icdCodesData = await codesResponse.json();
-        soapData.icdCodes = icdCodesData;
-      } catch (e) {
-        console.error("Failed to generate ICD codes:", e);
-      }
+      const icdCodesData = soapData.icdCodes || null;
       
       setSoapNote(soapData);
 
@@ -1536,26 +1516,6 @@ export default function Session() {
       const data = await response.json();
       console.log("[Regenerate] Received response:", data);
       console.log("[Regenerate] Response keys:", Object.keys(data));
-      
-      // Generate ICD codes for the regenerated SOAP note
-      try {
-        const noteData = data.hpi ? {
-          subjective: data.hpi,
-          objective: "",
-          assessment: "",
-          plan: data.plan || "",
-        } : {
-          subjective: data.subjective || "",
-          objective: data.objective || "",
-          assessment: data.assessment || "",
-          plan: data.plan || "",
-        };
-        const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
-        const icdCodesData = await codesResponse.json();
-        data.icdCodes = icdCodesData;
-      } catch (e) {
-        console.error("[Regenerate] Failed to generate ICD codes:", e);
-      }
       
       return data;
     },
