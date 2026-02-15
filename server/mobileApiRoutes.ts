@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
+import { isSelfHostedSttEnabled, transcribeSelfHosted } from "./sttClient";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
@@ -368,18 +369,27 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
       return res.status(400).json({ error: "validation_error", message: "Audio file is required" });
     }
 
-    const openai = new OpenAI();
-    const audioFile = new File([req.file.buffer], req.file.originalname || "audio.m4a", {
-      type: req.file.mimetype || "audio/m4a",
-    });
+    const language = req.body?.language;
+    const useSelfHosted = isSelfHostedSttEnabled();
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: "gpt-4o-mini-transcribe",
-      response_format: "text",
-    });
+    let transcript: string;
 
-    res.json({ success: true, data: { transcript: transcription } });
+    if (useSelfHosted) {
+      transcript = await transcribeSelfHosted(req.file.buffer, language);
+    } else {
+      const openai = new OpenAI();
+      const audioFile = new File([req.file.buffer], req.file.originalname || "audio.m4a", {
+        type: req.file.mimetype || "audio/m4a",
+      });
+      const transcription = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: "gpt-4o-mini-transcribe",
+        response_format: "text",
+      });
+      transcript = typeof transcription === "string" ? transcription : (transcription as any).text || "";
+    }
+
+    res.json({ success: true, data: { transcript } });
   } catch (error: any) {
     console.error("Mobile API transcription error:", error);
     res.status(500).json({ error: "internal_error", message: "Transcription failed" });

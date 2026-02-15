@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
+import { isSelfHostedSttEnabled, transcribeSelfHosted } from "./sttClient";
 import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -375,9 +376,12 @@ export async function registerRoutes(
       });
 
       const audioBuffer = req.file.buffer;
-      console.log("Processing audio for transcription...");
+      const useSelfHosted = isSelfHostedSttEnabled();
+      console.log(`Processing audio for transcription via ${useSelfHosted ? "self-hosted faster-whisper" : "OpenAI"}...`);
       
-      const transcript = await transcribeLongAudio(audioBuffer, language);
+      const transcript = useSelfHosted
+        ? await transcribeSelfHosted(audioBuffer, language)
+        : await transcribeLongAudio(audioBuffer, language);
       console.log("Transcription successful, length:", transcript.length);
 
       res.json({ transcript });
