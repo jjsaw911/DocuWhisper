@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
-import { isSelfHostedSttEnabled, transcribeSelfHosted } from "./sttClient";
+import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
 import { z } from "zod";
 import OpenAI from "openai";
 import multer from "multer";
@@ -370,12 +370,12 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
     }
 
     const language = req.body?.language;
-    const useSelfHosted = isSelfHostedSttEnabled();
+    const useLocal = isLocalSttEnabled();
 
     let transcript: string;
 
-    if (useSelfHosted) {
-      transcript = await transcribeSelfHosted(req.file.buffer, language);
+    if (useLocal) {
+      transcript = await transcribeLocal(req.file.buffer, language);
     } else {
       const openai = new OpenAI();
       const audioFile = new File([req.file.buffer], req.file.originalname || "audio.m4a", {

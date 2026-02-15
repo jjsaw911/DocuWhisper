@@ -37,7 +37,7 @@ I do not want changes to the `shared/schema.ts` file without explicit approval.
 
 **Technical Implementations:**
 - **Real-time Streaming Transcription:** Audio is processed in 15-second chunks, providing live transcript display.
-- **AI Integration:** Utilizes OpenAI's gpt-5.1 for SOAP note generation and gpt-4o-mini-transcribe for high-accuracy speech-to-text. Supports self-hosted faster-whisper STT via `STT_SERVER_URL` env var (OpenAI-compatible API).
+- **AI Integration:** Utilizes OpenAI's gpt-5.1 for SOAP note generation and gpt-4o-mini-transcribe for high-accuracy speech-to-text. Supports self-hosted faster-whisper STT via `TRANSCRIPTION_PROVIDER=local` + `LOCAL_STT_URL` env vars (OpenAI-compatible API), with `LOCAL_STT_API_KEY` for auth.
 - **Customizable AI Prompts:** Users can define custom SOAP templates to personalize AI output.
 - **Dynamic AI Interaction:** Features AI Instructions for tailoring note generation and a persistent AI command bar for quick queries.
 - **Contextual AI:** Background patient information can be added to inform AI generation.

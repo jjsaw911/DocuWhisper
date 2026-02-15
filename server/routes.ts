@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
-import { isSelfHostedSttEnabled, transcribeSelfHosted } from "./sttClient";
+import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
 import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -359,8 +359,36 @@ export async function registerRoutes(
     }
   });
 
+  const transcribeRateLimit = new Map<string, number[]>();
+  const TRANSCRIBE_WINDOW_MS = 10_000;
+  const TRANSCRIBE_MAX_REQUESTS = 5;
+
+  function checkTranscribeRateLimit(userId: string): boolean {
+    const now = Date.now();
+    const timestamps = transcribeRateLimit.get(userId) || [];
+    const recent = timestamps.filter((t) => now - t < TRANSCRIBE_WINDOW_MS);
+    if (recent.length >= TRANSCRIBE_MAX_REQUESTS) return false;
+    recent.push(now);
+    transcribeRateLimit.set(userId, recent);
+    return true;
+  }
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [userId, timestamps] of transcribeRateLimit.entries()) {
+      const recent = timestamps.filter((t) => now - t < TRANSCRIBE_WINDOW_MS);
+      if (recent.length === 0) transcribeRateLimit.delete(userId);
+      else transcribeRateLimit.set(userId, recent);
+    }
+  }, 60_000);
+
   app.post("/api/transcribe", isAuthenticated, upload.single("audio"), async (req: any, res: Response) => {
     try {
+      const userId = req.user?.claims?.sub || req.user?.id || req.sessionID || "unknown";
+      if (!checkTranscribeRateLimit(String(userId))) {
+        return res.status(429).json({ error: "Too many transcription requests. Please wait a few seconds." });
+      }
+
       if (!req.file) {
         return res.status(400).json({ error: "No audio file provided" });
       }
@@ -376,11 +404,11 @@ export async function registerRoutes(
       });
 
       const audioBuffer = req.file.buffer;
-      const useSelfHosted = isSelfHostedSttEnabled();
-      console.log(`Processing audio for transcription via ${useSelfHosted ? "self-hosted faster-whisper" : "OpenAI"}...`);
+      const useLocal = isLocalSttEnabled();
+      console.log(`Processing audio for transcription via ${useLocal ? "local faster-whisper" : "OpenAI"}...`);
       
-      const transcript = useSelfHosted
-        ? await transcribeSelfHosted(audioBuffer, language)
+      const transcript = useLocal
+        ? await transcribeLocal(audioBuffer, language)
         : await transcribeLongAudio(audioBuffer, language);
       console.log("Transcription successful, length:", transcript.length);
 
