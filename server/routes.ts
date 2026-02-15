@@ -16,15 +16,23 @@ import { PERSONAL_API_SCOPES } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
 
+const speakerSegmentSchema = z.object({
+  speaker: z.enum(["clinician", "patient"]),
+  text: z.string(),
+  chunk_id: z.number(),
+  timestamp: z.number(),
+});
+
 const generateSoapSchema = z.object({
   transcript: z.string().min(1, "Transcript is required"),
   patientName: z.string().optional(),
   specialty: z.string().optional(),
   templateId: z.number().optional(),
   aiInstructions: z.string().optional(),
-  outputLanguage: z.string().optional(), // ISO 639-1 code (en, es, fr, etc.)
-  context: z.string().optional(), // Background patient info (history, meds, allergies)
-  noDefaultTemplate: z.boolean().optional(), // If true, skip default template lookup (use standard SOAP)
+  outputLanguage: z.string().optional(),
+  context: z.string().optional(),
+  noDefaultTemplate: z.boolean().optional(),
+  speakerSegments: z.array(speakerSegmentSchema).optional(),
 });
 
 const createTemplateSchema = z.object({
@@ -442,7 +450,7 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context, noDefaultTemplate } = validationResult.data;
+      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context, noDefaultTemplate, speakerSegments } = validationResult.data;
       const userId = req.user.claims.sub;
       
       console.log("SOAP generation request - transcript length:", transcript.length);
@@ -600,7 +608,9 @@ Based on the transcript, return ONLY valid JSON with the extracted information:
         model: "gpt-5.1",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Transcript:\n${transcript}` }
+          { role: "user", content: speakerSegments && speakerSegments.length > 0
+            ? `Speaker-Tagged Transcript:\n${speakerSegments.map(s => `[${s.speaker === "clinician" ? "Clinician" : "Patient"}] ${s.text}`).join("\n")}\n\nFull Transcript:\n${transcript}`
+            : `Transcript:\n${transcript}` }
         ],
         response_format: { type: "json_object" },
         max_completion_tokens: 2048,

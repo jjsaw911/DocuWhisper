@@ -35,6 +35,8 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  Stethoscope,
+  UserRound,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -150,15 +152,29 @@ export default function Session() {
   const isTranscribingRef = useRef<boolean>(false);
   const lastActivityDispatchRef = useRef<number>(0); // For throttled session activity
   
-  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number; peakLevel: number };
+  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number; peakLevel: number; rmsMax: number; speechFrames: number; speaker: "clinician" | "patient" };
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
   const recordingSessionIdRef = useRef<string>("");
-  type OrderedChunkEntry = { text: string; timestampSec: number };
+  type OrderedChunkEntry = { text: string; timestampSec: number; speaker: "clinician" | "patient" };
   const orderedChunksRef = useRef<Map<number, OrderedChunkEntry>>(new Map());
   const nextExpectedChunkIdRef = useRef<number>(1);
   const droppedChunksRef = useRef<Set<number>>(new Set());
+
+  const VAD_RMS_THRESHOLD = 0.02;
+  const MIN_SPEECH_FRAMES = 10;
+  const segmentRmsMaxRef = useRef<Map<number, number>>(new Map());
+  const segmentSpeechFramesRef = useRef<Map<number, number>>(new Map());
+  const [vadStats, setVadStats] = useState({ uploaded: 0, dropped: 0, lastRms: 0 });
+  const [showVadDebug, setShowVadDebug] = useState(false);
+
+  type Speaker = "clinician" | "patient";
+  const [currentSpeaker, setCurrentSpeaker] = useState<Speaker>("clinician");
+  const currentSpeakerRef = useRef<Speaker>("clinician");
+  useEffect(() => { currentSpeakerRef.current = currentSpeaker; }, [currentSpeaker]);
+  type StructuredSegment = { speaker: Speaker; text: string; chunk_id: number; timestamp: number };
+  const structuredSegmentsRef = useRef<StructuredSegment[]>([]);
   const recordingStartMsRef = useRef<number>(0);
   const recordingElapsedMsRef = useRef<number>(0);
   const segmentStartMsRef = useRef<number>(0);
@@ -548,9 +564,15 @@ export default function Session() {
       const entry = ordered.get(nextId)!;
       if (entry.text.trim()) {
         const added = addTranscriptContent(entry.text, entry.timestampSec);
-        console.log(`[OrderedAssembly] chunk_id=${nextId} flushed (${entry.text.length} chars): ${added ? 'ADDED' : 'DEDUPED'}`);
+        console.log(`[OrderedAssembly] chunk_id=${nextId} flushed [${entry.speaker}] (${entry.text.length} chars): ${added ? 'ADDED' : 'DEDUPED'}`);
         if (added) {
           flushedAny = true;
+          structuredSegmentsRef.current.push({
+            speaker: entry.speaker,
+            text: entry.text.trim(),
+            chunk_id: nextId,
+            timestamp: entry.timestampSec,
+          });
         }
       } else {
         console.log(`[OrderedAssembly] chunk_id=${nextId} flushed (silence)`);
@@ -591,7 +613,7 @@ export default function Session() {
       console.log(`[Chunk ${chunkItem.id}] Skipped - peak level ${chunkItem.peakLevel.toFixed(1)}% below threshold ${noiseThreshold}%`);
       chunkItem.processed = true;
       processedChunkIdsRef.current.add(chunkItem.id);
-      orderedChunksRef.current.set(chunkItem.id, { text: "", timestampSec: chunkItem.timestampSec });
+      orderedChunksRef.current.set(chunkItem.id, { text: "", timestampSec: chunkItem.timestampSec, speaker: chunkItem.speaker });
       flushOrderedChunks();
       const remaining = pendingChunksRef.current.filter(c => !c.processed);
       if (remaining.length > 0) {
@@ -603,7 +625,7 @@ export default function Session() {
     isTranscribingRef.current = true;
     processedChunkIdsRef.current.add(chunkItem.id);
     
-    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (peak: ${chunkItem.peakLevel.toFixed(1)}%)...`);
+    console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (peak: ${chunkItem.peakLevel.toFixed(1)}%, rms: ${chunkItem.rmsMax.toFixed(4)}, speaker: ${chunkItem.speaker})...`);
     
     try {
       const result = await transcribeChunk(chunkItem.blob, chunkItem.id);
@@ -612,7 +634,7 @@ export default function Session() {
         if (orderedChunksRef.current.has(result.chunk_id)) {
           console.log(`[Chunk ${result.chunk_id}] Duplicate response ignored`);
         } else {
-          orderedChunksRef.current.set(result.chunk_id, { text: result.transcript.trim(), timestampSec: chunkItem.timestampSec });
+          orderedChunksRef.current.set(result.chunk_id, { text: result.transcript.trim(), timestampSec: chunkItem.timestampSec, speaker: chunkItem.speaker });
           console.log(`[Chunk ${result.chunk_id}] Stored in ordered map, next expected: ${nextExpectedChunkIdRef.current}`);
           flushOrderedChunks();
         }
@@ -646,6 +668,24 @@ export default function Session() {
     segmentTimestampRef.current.delete(segmentId);
     const peakLevel = segmentPeakLevelsRef.current.get(segmentId) ?? 0;
     segmentPeakLevelsRef.current.delete(segmentId);
+    const rmsMax = segmentRmsMaxRef.current.get(segmentId) ?? 0;
+    segmentRmsMaxRef.current.delete(segmentId);
+    const speechFrames = segmentSpeechFramesRef.current.get(segmentId) ?? 0;
+    segmentSpeechFramesRef.current.delete(segmentId);
+    const speaker = currentSpeakerRef.current;
+
+    const passesVad = rmsMax >= VAD_RMS_THRESHOLD && speechFrames >= MIN_SPEECH_FRAMES;
+
+    if (!passesVad) {
+      console.log(`[VAD] Chunk ${segmentId} DROPPED — rmsMax=${rmsMax.toFixed(4)}, speechFrames=${speechFrames} (threshold: rms>=${VAD_RMS_THRESHOLD}, frames>=${MIN_SPEECH_FRAMES})`);
+      orderedChunksRef.current.set(segmentId, { text: "", timestampSec, speaker });
+      flushOrderedChunks();
+      setVadStats(prev => ({ ...prev, dropped: prev.dropped + 1, lastRms: rmsMax }));
+      return;
+    }
+
+    console.log(`[VAD] Chunk ${segmentId} PASSED — rmsMax=${rmsMax.toFixed(4)}, speechFrames=${speechFrames}`);
+    setVadStats(prev => ({ ...prev, uploaded: prev.uploaded + 1, lastRms: rmsMax }));
 
     const chunkItem: ChunkItem = {
       id: segmentId,
@@ -653,10 +693,13 @@ export default function Session() {
       processed: false,
       timestampSec,
       peakLevel,
+      rmsMax,
+      speechFrames,
+      speaker,
     };
 
     pendingChunksRef.current.push(chunkItem);
-    console.log(`[Chunk ${segmentId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%)`);
+    console.log(`[Chunk ${segmentId}] Queued segment at ${formatTime(timestampSec)} (${segmentBlob.size} bytes, peak: ${peakLevel.toFixed(1)}%, rms: ${rmsMax.toFixed(4)}, speaker: ${speaker})`);
 
     const pendingUnprocessed = pendingChunksRef.current.filter(c => !c.processed).length;
     const now = Date.now();
@@ -689,6 +732,26 @@ export default function Session() {
         const prevPeak = segmentPeakLevelsRef.current.get(currentSegmentId) ?? 0;
         if (currentMax > prevPeak) {
           segmentPeakLevelsRef.current.set(currentSegmentId, currentMax);
+        }
+      }
+
+      const timeDomain = new Uint8Array(analyserRef.current.fftSize);
+      analyserRef.current.getByteTimeDomainData(timeDomain);
+      let sumSq = 0;
+      for (let i = 0; i < timeDomain.length; i++) {
+        const sample = (timeDomain[i] - 128) / 128;
+        sumSq += sample * sample;
+      }
+      const rms = Math.sqrt(sumSq / timeDomain.length);
+
+      if (currentSegmentId >= 0) {
+        const prevRms = segmentRmsMaxRef.current.get(currentSegmentId) ?? 0;
+        if (rms > prevRms) {
+          segmentRmsMaxRef.current.set(currentSegmentId, rms);
+        }
+        if (rms >= VAD_RMS_THRESHOLD) {
+          const prev = segmentSpeechFramesRef.current.get(currentSegmentId) ?? 0;
+          segmentSpeechFramesRef.current.set(currentSegmentId, prev + 1);
         }
       }
 
@@ -781,6 +844,17 @@ export default function Session() {
     };
   }, [startBackgroundInterval, stopBackgroundInterval]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === "S") {
+        e.preventDefault();
+        setCurrentSpeaker(prev => prev === "clinician" ? "patient" : "clinician");
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const startRecording = async () => {
     try {
       // Use selected microphone if available
@@ -806,6 +880,10 @@ export default function Session() {
       orderedChunksRef.current.clear();
       nextExpectedChunkIdRef.current = 1;
       droppedChunksRef.current.clear();
+      segmentRmsMaxRef.current.clear();
+      segmentSpeechFramesRef.current.clear();
+      structuredSegmentsRef.current = [];
+      setVadStats({ uploaded: 0, dropped: 0, lastRms: 0 });
       
       // Reset transcript state - but PRESERVE existing transcript in resume mode
       // Use refs to avoid stale closure issues
@@ -875,6 +953,8 @@ export default function Session() {
         segmentStartMsRef.current = segmentStartMs;
         currentSegmentIdRef.current = segmentId;
         segmentPeakLevelsRef.current.set(segmentId, 0);
+        segmentRmsMaxRef.current.set(segmentId, 0);
+        segmentSpeechFramesRef.current.set(segmentId, 0);
         segmentTimestampRef.current.set(segmentId, getRecordingTimestampSec(segmentStartMs));
         lastVoiceMsRef.current = segmentStartMs;
         silenceFlushPendingRef.current = false;
@@ -1037,6 +1117,8 @@ export default function Session() {
         segmentStartMsRef.current = segmentStartMs;
         currentSegmentIdRef.current = segmentId;
         segmentPeakLevelsRef.current.set(segmentId, 0);
+        segmentRmsMaxRef.current.set(segmentId, 0);
+        segmentSpeechFramesRef.current.set(segmentId, 0);
         segmentTimestampRef.current.set(segmentId, getRecordingTimestampSec(segmentStartMs));
         lastVoiceMsRef.current = segmentStartMs;
         silenceFlushPendingRef.current = false;
@@ -1246,6 +1328,7 @@ export default function Session() {
   const autoGenerateAndSave = async (transcript: string) => {
     try {
       // Step 1: Generate SOAP note
+      const segments = structuredSegmentsRef.current.length > 0 ? structuredSegmentsRef.current : undefined;
       const soapResponse = await apiRequest("POST", "/api/generate-soap", {
         transcript,
         patientName,
@@ -1253,6 +1336,7 @@ export default function Session() {
         templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
         outputLanguage: transcriptionLanguage,
         context: contextText || undefined,
+        speakerSegments: segments,
       });
       const soapData = await soapResponse.json();
       
@@ -1439,6 +1523,7 @@ export default function Session() {
         .join("\n");
 
       console.log("[Regenerate] Sending request with templateId:", selectedTemplateId);
+      const segments = structuredSegmentsRef.current.length > 0 ? structuredSegmentsRef.current : undefined;
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript,
         patientName,
@@ -1446,6 +1531,7 @@ export default function Session() {
         templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
         outputLanguage: transcriptionLanguage,
         context: contextText || undefined,
+        speakerSegments: segments,
       });
       const data = await response.json();
       console.log("[Regenerate] Received response:", data);
@@ -1841,6 +1927,24 @@ ${noteContentSection}
               </Button>
             )}
             
+            {(recordingState === "recording" || recordingState === "paused") && (
+              <Button
+                size="sm"
+                variant={currentSpeaker === "clinician" ? "default" : "outline"}
+                onClick={() => setCurrentSpeaker(prev => prev === "clinician" ? "patient" : "clinician")}
+                className="h-8 gap-1 text-xs"
+                data-testid="button-speaker-toggle"
+                title="Toggle speaker (Ctrl+Shift+S)"
+              >
+                {currentSpeaker === "clinician" ? (
+                  <Stethoscope className="h-3.5 w-3.5" />
+                ) : (
+                  <UserRound className="h-3.5 w-3.5" />
+                )}
+                {currentSpeaker === "clinician" ? "Clinician" : "Patient"}
+              </Button>
+            )}
+
             {/* Microphone selection dropdown with audio-responsive icon */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
