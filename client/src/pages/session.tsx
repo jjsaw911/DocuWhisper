@@ -150,11 +150,15 @@ export default function Session() {
   const isTranscribingRef = useRef<boolean>(false);
   const lastActivityDispatchRef = useRef<number>(0); // For throttled session activity
   
-  // Chunk tracking with unique IDs to prevent duplicate processing
   type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number; peakLevel: number };
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
+  const recordingSessionIdRef = useRef<string>("");
+  type OrderedChunkEntry = { text: string; timestampSec: number };
+  const orderedChunksRef = useRef<Map<number, OrderedChunkEntry>>(new Map());
+  const nextExpectedChunkIdRef = useRef<number>(1);
+  const droppedChunksRef = useRef<Set<number>>(new Set());
   const recordingStartMsRef = useRef<number>(0);
   const recordingElapsedMsRef = useRef<number>(0);
   const segmentStartMsRef = useRef<number>(0);
@@ -388,9 +392,10 @@ export default function Session() {
     setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
   };
 
-  type TranscribeResult = { ok: true; transcript: string } | { ok: false; error: "api_error" | "timeout" | "network" } | { ok: true; transcript: "" };
+  type TranscribeResult = { ok: true; transcript: string; chunk_id: number; session_id: string } | { ok: false; error: "api_error" | "timeout" | "network" };
   
-  const transcribeChunk = async (audioBlob: Blob, maxRetries: number = 2): Promise<TranscribeResult> => {
+  const transcribeChunk = async (audioBlob: Blob, chunkId: number, maxRetries: number = 2): Promise<TranscribeResult> => {
+    const sessionId = recordingSessionIdRef.current;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -399,8 +404,10 @@ export default function Session() {
         const formData = new FormData();
         formData.append("audio", audioBlob, "chunk.webm");
         formData.append("language", transcriptionLanguage);
+        formData.append("chunk_id", String(chunkId));
+        formData.append("session_id", sessionId);
 
-        console.log(`[transcribeChunk] Attempt ${attempt + 1}/${maxRetries + 1}, ${audioBlob.size} bytes`);
+        console.log(`[transcribeChunk] chunk_id=${chunkId} session=${sessionId.slice(0,8)} attempt ${attempt + 1}/${maxRetries + 1}, ${audioBlob.size} bytes`);
         
         dispatchActivityEvent();
         
@@ -423,11 +430,11 @@ export default function Session() {
         }
 
         const data = await response.json();
-        console.log(`[transcribeChunk] Completed, got ${data.transcript?.length || 0} chars`);
+        console.log(`[transcribeChunk] chunk_id=${data.chunk_id} completed, got ${data.text?.length || data.transcript?.length || 0} chars`);
         
         dispatchActivityEvent();
         
-        return { ok: true, transcript: data.transcript || "" };
+        return { ok: true, transcript: data.text || data.transcript || "", chunk_id: data.chunk_id ?? chunkId, session_id: data.session_id ?? sessionId };
       } catch (error: unknown) {
         clearTimeout(timeoutId);
         const isTimeout = error instanceof Error && error.name === 'AbortError';
@@ -528,8 +535,37 @@ export default function Session() {
     return Math.max(0, Math.floor(elapsedMs / 1000));
   };
 
+  const flushOrderedChunks = () => {
+    const ordered = orderedChunksRef.current;
+    let nextId = nextExpectedChunkIdRef.current;
+    let flushedAny = false;
+
+    while (ordered.has(nextId) || droppedChunksRef.current.has(nextId)) {
+      if (droppedChunksRef.current.has(nextId)) {
+        nextId++;
+        continue;
+      }
+      const entry = ordered.get(nextId)!;
+      if (entry.text.trim()) {
+        const added = addTranscriptContent(entry.text, entry.timestampSec);
+        console.log(`[OrderedAssembly] chunk_id=${nextId} flushed (${entry.text.length} chars): ${added ? 'ADDED' : 'DEDUPED'}`);
+        if (added) {
+          flushedAny = true;
+        }
+      } else {
+        console.log(`[OrderedAssembly] chunk_id=${nextId} flushed (silence)`);
+      }
+      ordered.delete(nextId);
+      nextId++;
+    }
+
+    nextExpectedChunkIdRef.current = nextId;
+    if (flushedAny) {
+      saveBackup(committedTextRef.current, patientName, "general");
+    }
+  };
+
   const processNextChunk = async () => {
-    // Find next unprocessed chunk
     const chunkItem = pendingChunksRef.current.find(c => !c.processed);
     const pendingCount = pendingChunksRef.current.length;
     const unprocessedCount = pendingChunksRef.current.filter(c => !c.processed).length;
@@ -544,20 +580,19 @@ export default function Session() {
       return;
     }
     
-    // Check if already processed (belt + suspenders)
     if (processedChunkIdsRef.current.has(chunkItem.id)) {
-      console.log(`[Chunk ${chunkItem.id}] Already in processed set, skipping`);
+      console.log(`[Chunk ${chunkItem.id}] Already in processed set, skipping (dedup)`);
       chunkItem.processed = true;
       processNextChunk();
       return;
     }
 
-    // Noise gate: Skip chunks below noise threshold (mostly silence/background noise)
     if (chunkItem.peakLevel < noiseThreshold) {
       console.log(`[Chunk ${chunkItem.id}] Skipped - peak level ${chunkItem.peakLevel.toFixed(1)}% below threshold ${noiseThreshold}%`);
       chunkItem.processed = true;
       processedChunkIdsRef.current.add(chunkItem.id);
-      // Continue to next chunk
+      orderedChunksRef.current.set(chunkItem.id, { text: "", timestampSec: chunkItem.timestampSec });
+      flushOrderedChunks();
       const remaining = pendingChunksRef.current.filter(c => !c.processed);
       if (remaining.length > 0) {
         processNextChunk();
@@ -565,41 +600,39 @@ export default function Session() {
       return;
     }
 
-    // Mark as "in progress" - but NOT processed yet
     isTranscribingRef.current = true;
     processedChunkIdsRef.current.add(chunkItem.id);
     
     console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (peak: ${chunkItem.peakLevel.toFixed(1)}%)...`);
     
     try {
-      const result = await transcribeChunk(chunkItem.blob);
+      const result = await transcribeChunk(chunkItem.blob, chunkItem.id);
       
-      if (result.ok && result.transcript.trim()) {
-        const cleanedText = result.transcript.trim();
-        
-        const added = addTranscriptContent(cleanedText, chunkItem.timestampSec);
-        console.log(`[Chunk ${chunkItem.id}] Transcribed ${cleanedText.length} chars: ${added ? 'ADDED' : 'DROPPED as duplicate'}`);
-        
-        if (added) {
-          saveBackup(committedTextRef.current, patientName, "general");
+      if (result.ok) {
+        if (orderedChunksRef.current.has(result.chunk_id)) {
+          console.log(`[Chunk ${result.chunk_id}] Duplicate response ignored`);
+        } else {
+          orderedChunksRef.current.set(result.chunk_id, { text: result.transcript.trim(), timestampSec: chunkItem.timestampSec });
+          console.log(`[Chunk ${result.chunk_id}] Stored in ordered map, next expected: ${nextExpectedChunkIdRef.current}`);
+          flushOrderedChunks();
         }
-      } else if (!result.ok) {
+      } else {
         const errorMsg = result.error === "timeout" ? "timed out" : result.error === "api_error" ? "server error" : "network error";
         console.error(`[Chunk ${chunkItem.id}] Transcription failed: ${errorMsg}`);
-        addTranscriptEntry(`[Audio at ${formatTime(chunkItem.timestampSec)} could not be transcribed (${errorMsg}) - this section may be missing from the final note]`);
-      } else {
-        console.log(`[Chunk ${chunkItem.id}] No speech detected in segment (silence)`);
+        droppedChunksRef.current.add(chunkItem.id);
+        addTranscriptEntry(`[Chunk ${chunkItem.id} dropped — ${errorMsg}]`);
+        flushOrderedChunks();
       }
     } catch (err) {
       console.error(`[Chunk ${chunkItem.id}] Transcription error:`, err);
-      addTranscriptEntry(`[Audio at ${formatTime(chunkItem.timestampSec)} failed to transcribe - this section may be missing from the final note]`);
+      droppedChunksRef.current.add(chunkItem.id);
+      addTranscriptEntry(`[Chunk ${chunkItem.id} dropped]`);
+      flushOrderedChunks();
     }
 
-    // NOW mark as processed (after transcription completes)
     chunkItem.processed = true;
     isTranscribingRef.current = false;
     
-    // Process next if any remain
     const remaining = pendingChunksRef.current.filter(c => !c.processed);
     console.log(`[Chunk] ${remaining.length} chunks remaining to process`);
     if (remaining.length > 0) {
@@ -767,8 +800,12 @@ export default function Session() {
 
       chunksRef.current = [];
       pendingChunksRef.current = [];
-      nextChunkIdRef.current = 0;
+      nextChunkIdRef.current = 1;
       processedChunkIdsRef.current.clear();
+      recordingSessionIdRef.current = crypto.randomUUID();
+      orderedChunksRef.current.clear();
+      nextExpectedChunkIdRef.current = 1;
+      droppedChunksRef.current.clear();
       
       // Reset transcript state - but PRESERVE existing transcript in resume mode
       // Use refs to avoid stale closure issues

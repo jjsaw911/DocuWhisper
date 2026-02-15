@@ -393,14 +393,17 @@ export async function registerRoutes(
         return res.status(400).json({ error: "No audio file provided" });
       }
 
-      // Get language from request body or user settings
       const language = req.body?.language;
+      const chunkId = req.body?.chunk_id ? parseInt(req.body.chunk_id, 10) : undefined;
+      const sessionId = req.body?.session_id || undefined;
 
       console.log("Transcription request received:", {
         fileName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
         language: language || "auto-detect",
+        chunk_id: chunkId,
+        session_id: sessionId ? sessionId.slice(0, 8) + "..." : undefined,
       });
 
       const audioBuffer = req.file.buffer;
@@ -412,7 +415,7 @@ export async function registerRoutes(
         : await transcribeLongAudio(audioBuffer, language);
       console.log("Transcription successful, length:", transcript.length);
 
-      res.json({ transcript });
+      res.json({ text: transcript, transcript, chunk_id: chunkId, session_id: sessionId });
     } catch (error: any) {
       console.error("Error transcribing audio:", error);
       console.error("Error details:", {
