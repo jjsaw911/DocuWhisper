@@ -77,20 +77,81 @@ async function initStripe() {
 
   app.use(cookieParser());
 
+  const pendingMobileAuths = new Map<string, { redirectUri: string; createdAt: number }>();
+
+  setInterval(() => {
+    const now = Date.now();
+    pendingMobileAuths.forEach((val, key) => {
+      if (now - val.createdAt > 10 * 60 * 1000) pendingMobileAuths.delete(key);
+    });
+  }, 60 * 1000);
+
+  app.use("/api/callback", (req: Request, _res: Response, next: NextFunction) => {
+    const mobileRedirect = req.cookies?.mobile_auth_redirect;
+    const sid = req.cookies?.["connect.sid"];
+    if (mobileRedirect && sid) {
+      console.log("[mobile-auth] Preserving redirect URI before OAuth callback, sid prefix:", sid.substring(0, 12));
+      pendingMobileAuths.set(sid, { redirectUri: decodeURIComponent(mobileRedirect), createdAt: Date.now() });
+    }
+    next();
+  });
+
   await setupAuth(app);
   registerAuthRoutes(app);
 
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (
-      req.cookies?.mobile_auth_redirect &&
-      (req as any).isAuthenticated?.() &&
-      !req.path.startsWith("/api/mobile/auth/") &&
-      !req.path.startsWith("/api/login") &&
-      !req.path.startsWith("/api/callback")
-    ) {
+    const mobileRedirect = req.cookies?.mobile_auth_redirect;
+    const isAuthed = (req as any).isAuthenticated?.();
+    const isExcluded = req.path.startsWith("/api/mobile/auth/") ||
+      req.path.startsWith("/api/login") ||
+      req.path.startsWith("/api/callback");
+
+    if (mobileRedirect && isAuthed && !isExcluded) {
       console.log("[mobile-auth] Middleware intercepting authenticated request at", req.path, "→ redirecting to /api/mobile/auth/callback");
       return res.redirect("/api/mobile/auth/callback");
     }
+
+    if (!mobileRedirect && isAuthed && !isExcluded) {
+      const sid = req.cookies?.["connect.sid"];
+      if (sid) {
+        const pending = pendingMobileAuths.get(sid);
+        if (pending) {
+          console.log("[mobile-auth] Recovered redirect from pre-auth capture for sid prefix:", sid.substring(0, 12));
+          res.cookie("mobile_auth_redirect", pending.redirectUri, {
+            httpOnly: true,
+            secure: true,
+            maxAge: 5 * 60 * 1000,
+            sameSite: "none",
+          });
+          pendingMobileAuths.delete(sid);
+          return res.redirect("/api/mobile/auth/callback");
+        }
+      }
+
+      const userId = (req.user as any)?.claims?.sub;
+      if (userId) {
+        let foundKey: string | null = null;
+        let foundVal: { redirectUri: string; createdAt: number } | null = null;
+        pendingMobileAuths.forEach((val, key) => {
+          if (!foundKey && Date.now() - val.createdAt < 60 * 1000) {
+            foundKey = key;
+            foundVal = val;
+          }
+        });
+        if (foundKey && foundVal) {
+          console.log("[mobile-auth] Recovered redirect from recent pending auth for user:", userId);
+          res.cookie("mobile_auth_redirect", (foundVal as any).redirectUri, {
+            httpOnly: true,
+            secure: true,
+            maxAge: 5 * 60 * 1000,
+            sameSite: "none",
+          });
+          pendingMobileAuths.delete(foundKey);
+          return res.redirect("/api/mobile/auth/callback");
+        }
+      }
+    }
+
     next();
   });
 

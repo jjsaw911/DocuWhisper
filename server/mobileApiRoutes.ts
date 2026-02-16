@@ -104,12 +104,11 @@ router.get("/auth/start", (req: Request, res: Response) => {
     });
   }
 
-  const isProduction = process.env.NODE_ENV === "production";
   res.cookie("mobile_auth_redirect", redirectUri, {
     httpOnly: true,
-    secure: isProduction,
+    secure: true,
     maxAge: 10 * 60 * 1000,
-    sameSite: "lax",
+    sameSite: "none",
   });
 
   (req.session as any).returnTo = "/api/mobile/auth/callback";
