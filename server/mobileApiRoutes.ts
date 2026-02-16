@@ -1,6 +1,5 @@
 import { Router, Request, Response } from "express";
 import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
-import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
 import { z } from "zod";
@@ -125,17 +124,25 @@ router.get("/auth/start", (req: Request, res: Response) => {
   });
 });
 
-router.get("/auth/callback", isAuthenticated, async (req: Request, res: Response) => {
+router.get("/auth/callback", async (req: Request, res: Response) => {
   try {
     const user = req.user as any;
     const userId = user?.claims?.sub;
     const userEmail = user?.claims?.email || "";
 
+    const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect;
+
     if (!userId) {
-      return res.status(401).json({ error: "unauthorized", message: "Not authenticated" });
+      console.log("[mobile-auth] Callback hit without authenticated user, redirecting to login");
+      if (redirectUri) {
+        (req.session as any).returnTo = "/api/mobile/auth/callback";
+        return req.session.save(() => {
+          res.redirect("/api/login");
+        });
+      }
+      return res.status(401).json({ error: "unauthorized", message: "Not authenticated. Start the flow from /api/mobile/auth/start" });
     }
 
-    const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect;
     res.clearCookie("mobile_auth_redirect");
     delete (req.session as any).mobileAuthRedirect;
 
@@ -178,6 +185,7 @@ router.get("/auth/callback", isAuthenticated, async (req: Request, res: Response
       rawKey = result.rawKey;
     }
 
+    console.log("[mobile-auth] API key generated for user:", userId);
     const separator = redirectUri.includes("?") ? "&" : "?";
     const callbackUrl = `${redirectUri}${separator}api_key=${encodeURIComponent(rawKey)}&user_id=${encodeURIComponent(userId)}&email=${encodeURIComponent(userEmail)}`;
 

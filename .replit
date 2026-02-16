@@ -46,3 +46,7 @@ MOBILE_AUTH_REDIRECT_ALLOWLIST = "docuwhisper://auth/callback"
 
 [objectStorage]
 defaultBucketID = "replit-objstore-175404aa-0a4d-4215-9b3f-5a977b2eb8b4"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
