@@ -113,10 +113,13 @@ router.get("/auth/start", (req: Request, res: Response) => {
   });
 
   (req.session as any).returnTo = "/api/mobile/auth/callback";
+  (req.session as any).mobileAuthRedirect = redirectUri;
 
   const user = req.user as any;
   if (req.isAuthenticated?.() && user?.claims?.sub) {
-    return res.redirect(`/api/mobile/auth/callback`);
+    return req.session.save(() => {
+      res.redirect(`/api/mobile/auth/callback`);
+    });
   }
 
   req.session.save(() => {
@@ -130,12 +133,23 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
     const userId = user?.claims?.sub;
     const userEmail = user?.claims?.email || "";
 
-    const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect;
+    const cookieRedirect = (req as any).cookies?.mobile_auth_redirect;
+    const sessionRedirect = (req.session as any).mobileAuthRedirect;
+    const redirectUri = cookieRedirect || sessionRedirect;
+
+    console.log("[mobile-auth] Callback:", {
+      authenticated: !!userId,
+      hasCookieRedirect: !!cookieRedirect,
+      hasSessionRedirect: !!sessionRedirect,
+      redirectUri: redirectUri || "(none)",
+      sessionId: req.sessionID?.substring(0, 8),
+    });
 
     if (!userId) {
-      console.log("[mobile-auth] Callback hit without authenticated user, redirecting to login");
+      console.log("[mobile-auth] Callback hit without authenticated user");
       if (redirectUri) {
         (req.session as any).returnTo = "/api/mobile/auth/callback";
+        (req.session as any).mobileAuthRedirect = redirectUri;
         return req.session.save(() => {
           res.redirect("/api/login");
         });
@@ -147,6 +161,7 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
     delete (req.session as any).mobileAuthRedirect;
 
     if (!redirectUri || !isRedirectAllowed(redirectUri)) {
+      console.log("[mobile-auth] No valid redirect URI found, returning 400");
       return res.status(400).json({
         error: "invalid_session",
         message: "No valid mobile redirect URI in session. Start the flow from /api/mobile/auth/start",
@@ -185,13 +200,13 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
       rawKey = result.rawKey;
     }
 
-    console.log("[mobile-auth] API key generated for user:", userId);
+    console.log("[mobile-auth] API key generated for user:", userId, "redirecting to app");
     const separator = redirectUri.includes("?") ? "&" : "?";
     const callbackUrl = `${redirectUri}${separator}api_key=${encodeURIComponent(rawKey)}&user_id=${encodeURIComponent(userId)}&email=${encodeURIComponent(userEmail)}`;
 
     res.redirect(callbackUrl);
   } catch (error: any) {
-    console.error("Mobile auth callback error:", error);
+    console.error("[mobile-auth] Callback error:", error);
     const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect;
     res.clearCookie("mobile_auth_redirect");
     if (redirectUri && isRedirectAllowed(redirectUri)) {

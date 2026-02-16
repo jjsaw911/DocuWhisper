@@ -88,6 +88,7 @@ async function initStripe() {
       !req.path.startsWith("/api/login") &&
       !req.path.startsWith("/api/callback")
     ) {
+      console.log("[mobile-auth] Middleware intercepting authenticated request at", req.path, "→ redirecting to /api/mobile/auth/callback");
       return res.redirect("/api/mobile/auth/callback");
     }
     next();
