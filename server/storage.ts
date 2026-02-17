@@ -60,6 +60,7 @@ export interface IStorage {
   // Admin - get all users
   getAllUserSettings(): Promise<UserSettings[]>;
   getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
+  deleteUserAndData(userId: string): Promise<void>;
   // Practice/Team functions
   createPractice(practice: InsertPractice): Promise<Practice>;
   getPractice(id: number): Promise<Practice | undefined>;
@@ -523,6 +524,30 @@ class DatabaseStorage implements IStorage {
       lastName: users.lastName,
       createdAt: users.createdAt,
     }).from(users).orderBy(desc(users.createdAt));
+  }
+
+  async deleteUserAndData(userId: string): Promise<void> {
+    try {
+      await db.transaction(async (tx) => {
+        await tx.delete(sharedNotes).where(or(eq(sharedNotes.sharedBy, userId), eq(sharedNotes.sharedWithUserId, userId)));
+        await tx.delete(patientDocuments).where(eq(patientDocuments.userId, userId));
+        await tx.delete(patientVitals).where(eq(patientVitals.recordedBy, userId));
+        await tx.delete(patientEncounters).where(eq(patientEncounters.providerId, userId));
+        await tx.delete(appointments).where(eq(appointments.userId, userId));
+        await tx.delete(patients).where(eq(patients.userId, userId));
+        await tx.delete(tasks).where(eq(tasks.userId, userId));
+        await tx.delete(notes).where(eq(notes.userId, userId));
+        await tx.delete(practiceMembers).where(eq(practiceMembers.userId, userId));
+        await tx.delete(personalApiKeys).where(eq(personalApiKeys.userId, userId));
+        await tx.delete(subscriptions).where(eq(subscriptions.userId, userId));
+        await tx.delete(templates).where(eq(templates.userId, userId));
+        await tx.delete(userSettings).where(eq(userSettings.userId, userId));
+        await tx.delete(users).where(eq(users.id, userId));
+      });
+    } catch (error) {
+      console.error("Error deleting user and data:", error);
+      throw error;
+    }
   }
 
   // Practice/Team functions

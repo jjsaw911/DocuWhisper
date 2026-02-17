@@ -177,6 +177,9 @@ export default function Admin() {
   const [newMemberUserId, setNewMemberUserId] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("member");
   
+  // User deletion state
+  const [deletingUser, setDeletingUser] = useState<UserInfo | null>(null);
+  
   // User settings management state
   const [editingUser, setEditingUser] = useState<UserInfo | null>(null);
   const [editUserEmrRole, setEditUserEmrRole] = useState("none");
@@ -575,6 +578,25 @@ export default function Admin() {
     },
   });
 
+  const deleteUserMutation = useMutation({
+    mutationFn: async ({ userId }: { userId: string }) => {
+      await apiRequest("DELETE", `/api/admin/users/${userId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/subscribers"] });
+      setDeletingUser(null);
+      toast({ title: "User Deleted", description: "All user data has been permanently removed." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to delete user",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const fetchOrgMembers = async (orgId: number) => {
     try {
       const response = await apiRequest("GET", `/api/admin/organizations/${orgId}/members`);
@@ -651,6 +673,23 @@ export default function Admin() {
     if (!periodEnd) return false;
     const date = typeof periodEnd === 'string' ? new Date(periodEnd) : periodEnd;
     return date.getFullYear() > new Date().getFullYear() + 50;
+  };
+
+  const isTrial = (sub?: Subscription | null) => {
+    if (!sub) return false;
+    if (isLifetime(sub.currentPeriodEnd)) return false;
+    return !sub.stripeSubscriptionId && !sub.stripeCustomerId;
+  };
+
+  const formatDateCST = (dateStr?: string | Date | null) => {
+    if (!dateStr) return "-";
+    const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
+    return date.toLocaleDateString("en-US", {
+      timeZone: "America/Chicago",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
   };
 
   if (adminLoading) {
@@ -761,7 +800,13 @@ export default function Admin() {
                               {userInfo.email || userInfo.userId}
                             </TableCell>
                             <TableCell>
-                              {userInfo.preferredName || `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || "-"}
+                              <button
+                                className="text-left hover:underline cursor-pointer font-medium"
+                                onClick={() => setDeletingUser(userInfo)}
+                                data-testid={`button-name-${userInfo.userId}`}
+                              >
+                                {userInfo.preferredName || `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || "-"}
+                              </button>
                             </TableCell>
                             <TableCell>
                               {userInfo.subscription ? (
@@ -771,6 +816,8 @@ export default function Admin() {
                                 >
                                   {isLifetime(userInfo.subscription.currentPeriodEnd) ? (
                                     <><Crown className="h-3 w-3 mr-1" />Lifetime</>
+                                  ) : isTrial(userInfo.subscription) ? (
+                                    "In Trial"
                                   ) : userInfo.subscription.status === "active" ? (
                                     "Active"
                                   ) : (
@@ -1287,7 +1334,7 @@ export default function Admin() {
                             </TableCell>
                             <TableCell>
                               <Badge variant={sub.status === "active" ? "default" : "secondary"}>
-                                {isLifetime(sub.currentPeriodEnd) ? "Lifetime" : sub.status}
+                                {isLifetime(sub.currentPeriodEnd) ? "Lifetime" : isTrial(sub) ? "In Trial" : sub.status}
                               </Badge>
                             </TableCell>
                             <TableCell>
@@ -1321,7 +1368,9 @@ export default function Admin() {
                                   Never
                                 </span>
                               ) : (
-                                formatDate(sub.currentPeriodEnd)
+                                <span className={isTrial(sub) ? "text-orange-600 dark:text-orange-400" : ""}>
+                                  {formatDateCST(sub.currentPeriodEnd)}
+                                </span>
                               )}
                             </TableCell>
                             <TableCell>{formatDate(sub.createdAt)}</TableCell>
@@ -1817,6 +1866,50 @@ export default function Admin() {
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Confirmation Dialog */}
+      <Dialog open={!!deletingUser} onOpenChange={(open) => !open && setDeletingUser(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Delete User
+            </DialogTitle>
+            <DialogDescription>
+              This will permanently delete the user and all their data including notes, tasks, templates, subscriptions, and EMR records. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deletingUser && (
+            <div className="py-4 space-y-2">
+              <p className="text-sm"><span className="text-muted-foreground">Name:</span> {deletingUser.preferredName || `${deletingUser.firstName || ""} ${deletingUser.lastName || ""}`.trim() || "-"}</p>
+              <p className="text-sm"><span className="text-muted-foreground">Email:</span> {deletingUser.email || "-"}</p>
+              <p className="text-sm font-mono text-xs"><span className="text-muted-foreground">ID:</span> {deletingUser.userId}</p>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeletingUser(null)} data-testid="button-cancel-delete">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deletingUser) {
+                  deleteUserMutation.mutate({ userId: deletingUser.userId });
+                }
+              }}
+              disabled={deleteUserMutation.isPending}
+              data-testid="button-confirm-delete-user"
+            >
+              {deleteUserMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-1" />
+              )}
+              Delete User
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

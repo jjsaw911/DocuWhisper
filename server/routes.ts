@@ -2377,6 +2377,23 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  app.delete("/api/admin/users/:userId", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId } = req.params;
+      const currentUserId = req.user?.claims?.sub;
+      
+      if (userId === currentUserId) {
+        return res.status(400).json({ error: "Cannot delete your own account" });
+      }
+      
+      await storage.deleteUserAndData(userId);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Failed to delete user:", error);
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
   // Admin: Get organization members with details
   app.get("/api/admin/organizations/:id/members", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
