@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /session/
+Disallow: /notes/
+Disallow: /tasks
+Disallow: /templates
+Disallow: /settings
+Disallow: /shared-notes
+Disallow: /analytics
+Disallow: /emr/
+Disallow: /admin
+
+Sitemap: https://docuwhisper.replit.app/sitemap.xml
