@@ -2149,33 +2149,49 @@ export default function Admin() {
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingUser(null)}>
-              Cancel
-            </Button>
+          <DialogFooter className="flex-row justify-between gap-2 sm:justify-between">
             <Button
+              variant="destructive"
+              size="sm"
               onClick={() => {
                 if (editingUser) {
-                  updateUserSettingsMutation.mutate({
-                    userId: editingUser.userId,
-                    firstName: editUserFirstName,
-                    lastName: editUserLastName,
-                    preferredName: editUserPreferredName,
-                    specialty: editUserSpecialty,
-                    practiceName: editUserPracticeName,
-                    credentials: editUserCredentials,
-                    emrRole: editUserEmrRole === "none" ? undefined : editUserEmrRole,
-                    requiresCosignature: editUserRequiresCosign,
-                    hasEmrAccess: editUserHasEmrAccess,
-                  });
+                  setEditingUser(null);
+                  setDeletingUser(editingUser);
                 }
               }}
-              disabled={updateUserSettingsMutation.isPending}
-              data-testid="button-save-user-settings"
+              data-testid="button-delete-user-from-manage"
             >
-              {updateUserSettingsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Save Settings
+              <Trash2 className="h-4 w-4 mr-1" />
+              Delete User
             </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setEditingUser(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (editingUser) {
+                    updateUserSettingsMutation.mutate({
+                      userId: editingUser.userId,
+                      firstName: editUserFirstName,
+                      lastName: editUserLastName,
+                      preferredName: editUserPreferredName,
+                      specialty: editUserSpecialty,
+                      practiceName: editUserPracticeName,
+                      credentials: editUserCredentials,
+                      emrRole: editUserEmrRole === "none" ? undefined : editUserEmrRole,
+                      requiresCosignature: editUserRequiresCosign,
+                      hasEmrAccess: editUserHasEmrAccess,
+                    });
+                  }
+                }}
+                disabled={updateUserSettingsMutation.isPending}
+                data-testid="button-save-user-settings"
+              >
+                {updateUserSettingsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save Settings
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
