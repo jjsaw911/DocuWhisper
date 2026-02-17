@@ -11,4 +11,4 @@ Disallow: /analytics
 Disallow: /emr/
 Disallow: /admin
 
-Sitemap: https://docuwhisper.replit.app/sitemap.xml
+Sitemap: https://docuwhisper.com/sitemap.xml
