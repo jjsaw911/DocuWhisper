@@ -536,6 +536,8 @@ ${contextSection}
 
 CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
 
+SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use them to determine context. Medications or conditions mentioned by the clinician about themselves (e.g., "I take...") or about third parties (e.g., "your child takes...") should NOT be attributed to the patient. Only include medications and conditions that are actually prescribed to or diagnosed in the patient. When a brand name and generic name are mentioned together (e.g., "Lipitor, which is atorvastatin"), treat them as the SAME single medication, not two separate prescriptions.
+
 TEMPLATE INSTRUCTIONS (follow these exactly):
 ${customPrompt}
 ${aiInstructionsSection}${languageInstruction}
@@ -561,6 +563,8 @@ ${contextSection}
 
 CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
 
+SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use them to determine context. Medications or conditions mentioned by the clinician about themselves (e.g., "I take...") or about third parties (e.g., "your child takes...") should NOT be attributed to the patient. Only include medications and conditions that are actually prescribed to or diagnosed in the patient. When a brand name and generic name are mentioned together (e.g., "Lipitor, which is atorvastatin"), treat them as the SAME single medication, not two separate prescriptions.
+
 TEMPLATE INSTRUCTIONS (follow these exactly):
 ${customPrompt}
 ${aiInstructionsSection}${languageInstruction}
@@ -584,6 +588,8 @@ ${specialty ? `Specialty: ${specialty}` : ""}
 ${patientName ? `Patient: ${patientName}` : ""}
 ${contextSection}
 CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
+
+SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use them to determine context. Medications or conditions mentioned by the clinician about themselves (e.g., "I take...") or about third parties (e.g., "your child takes...") should NOT be attributed to the patient. Only include medications and conditions that are actually prescribed to or diagnosed in the patient. When a brand name and generic name are mentioned together (e.g., "Lipitor, which is atorvastatin"), treat them as the SAME single medication, not two separate prescriptions.
 
 Generate a SOAP note with these sections:
 - Subjective: The patient's own description of symptoms, complaints, history, and concerns as stated in the transcript
@@ -1198,9 +1204,11 @@ PLAN: ${plan || "Not provided"}
           { 
             role: "system", 
             content: `You are a clinical pharmacist assistant. Analyze the following medications for potential drug-drug interactions. 
-            
+
+IMPORTANT: Brand names and generic names refer to the SAME medication. Do NOT flag an interaction between a brand name and its generic equivalent (e.g., Lipitor and atorvastatin are the same drug, not two separate medications). Treat them as one medication. Only flag true drug-drug interactions between DIFFERENT active ingredients.
+
 For each interaction found, provide:
-- The two drugs involved
+- The two drugs involved (use generic names)
 - Severity level: "high", "moderate", or "low"
 - Brief description of the interaction
 - Clinical recommendation
