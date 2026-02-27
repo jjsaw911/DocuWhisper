@@ -6,6 +6,10 @@ import {
   BookOpen,
   Mic,
   FileText,
+  ClipboardList,
+  Code2,
+  FileSignature,
+  ListTodo,
   ClipboardCopy,
   CheckSquare,
   ArrowRight,
@@ -31,6 +35,49 @@ const quickSteps = [
     title: "4) Mark as copied",
     description: "Check Copied to EMR once you have pasted/charted in your external EMR.",
     icon: CheckSquare,
+  },
+];
+
+const featureGuides = [
+  {
+    title: "Summary",
+    description: "Use this for patient-ready summaries, handoff notes, and discharge/instructions output.",
+    where: "SOAP note page -> AI Tools panel -> Summary",
+    steps: "Choose summary type (Brief, Detailed, Handover, Discharge, or Patient Instructions), then click Generate.",
+    output: "Generated text can be copied and printed. Patient Instructions are also saved to the note.",
+    icon: ClipboardList,
+  },
+  {
+    title: "DX Codes (ICD-10)",
+    description: "Use this to suggest diagnosis codes based on the note content.",
+    where: "SOAP note page -> AI Tools panel -> ICD-10",
+    steps: "Click ICD-10 to generate billing suggestions.",
+    output: "Shows ICD-10 code list with descriptions and quick-copy actions.",
+    icon: Code2,
+  },
+  {
+    title: "Procedures (CPT)",
+    description: "CPT procedure codes are generated together with the ICD-10 request.",
+    where: "SOAP note page -> AI Tools panel -> ICD-10",
+    steps: "After generation, review the CPT section in Billing Codes.",
+    output: "CPT codes appear in the same billing panel and can be copied code-by-code.",
+    icon: Code2,
+  },
+  {
+    title: "Referrals",
+    description: "Create suggested or manual referrals and generate the referral letter.",
+    where: "SOAP note page -> AI Tools panel -> Referral",
+    steps: "Accept a suggested referral or enter specialty/reason manually, then generate letter.",
+    output: "Referral letter can be edited, copied, and included with your chart workflow.",
+    icon: FileSignature,
+  },
+  {
+    title: "Tasks",
+    description: "Track follow-up actions tied to a chart.",
+    where: "SOAP note page -> AI Tools panel -> Add Task",
+    steps: "Add suggested tasks or create custom tasks with category.",
+    output: "Tasks appear in the Tasks page and can be marked completed.",
+    icon: ListTodo,
   },
 ];
 
@@ -85,6 +132,36 @@ export default function Guide() {
             <p>1. Scribe popup: open Navigation - Scribe and use the checkbox on each note row.</p>
             <p>2. SOAP note page: use the Copied to EMR checkbox in the top action bar.</p>
             <p>3. Checking or unchecking in one place updates the other place automatically.</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Clinical Output Guide</CardTitle>
+            <CardDescription>
+              Details for summary generation, diagnosis codes, procedures, referrals, and tasks.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            {featureGuides.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Card key={item.title} className="border-dashed">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <Icon className="h-4 w-4 text-primary" />
+                      {item.title}
+                    </CardTitle>
+                    <CardDescription>{item.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-xs text-muted-foreground">
+                    <p><span className="font-medium text-foreground">Where:</span> {item.where}</p>
+                    <p><span className="font-medium text-foreground">How:</span> {item.steps}</p>
+                    <p><span className="font-medium text-foreground">Output:</span> {item.output}</p>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </CardContent>
         </Card>
 
