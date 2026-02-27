@@ -35,7 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -207,10 +207,10 @@ export function AppSidebar() {
     <Sidebar className="border-r">
       <SidebarHeader className="p-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <Link href="/" data-testid="nav-home-logo" className="flex items-center gap-2 hover:opacity-90 transition-opacity">
             <img src={logoImage} alt="DocuWhisper" className="h-8 w-8 rounded-lg" />
             <span className="font-semibold text-lg">DocuWhisper</span>
-          </div>
+          </Link>
           {/* Recording Indicator */}
           {isRecording && (() => {
             const maxLevel = audioLevel.length > 0 ? Math.max(...audioLevel) : 0;
@@ -549,6 +549,7 @@ export function AppSidebar() {
         <SidebarSeparator className="my-2" />
         <div className="flex items-center gap-2 px-2 py-1">
           <Avatar className="h-8 w-8">
+            <AvatarImage src={user?.profileImageUrl || undefined} alt={displayName} />
             <AvatarFallback className="bg-primary/10 text-primary text-xs">
               {displayName[0]?.toUpperCase() || "U"}
             </AvatarFallback>

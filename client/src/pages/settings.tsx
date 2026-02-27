@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
@@ -9,8 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic, MessageSquare } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic, MessageSquare, Upload } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -98,6 +98,7 @@ export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const profileImageInputRef = useRef<HTMLInputElement>(null);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -274,6 +275,91 @@ export default function Settings() {
       });
     },
   });
+
+  const updateProfileImageMutation = useMutation({
+    mutationFn: async (profileImageUrl: string | null) => {
+      const response = await apiRequest("PUT", "/api/auth/profile-image", { profileImageUrl });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({
+        title: "Profile photo updated",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to update photo",
+        description: "Please try another image",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resizeImageFile = async (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const source = String(reader.result || "");
+        const image = new Image();
+        image.onload = () => {
+          const maxSide = 512;
+          const largestSide = Math.max(image.width, image.height);
+          const scale = largestSide > maxSide ? maxSide / largestSide : 1;
+          const width = Math.max(1, Math.round(image.width * scale));
+          const height = Math.max(1, Math.round(image.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(source);
+            return;
+          }
+          ctx.drawImage(image, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        };
+        image.onerror = () => resolve(source);
+        image.src = source;
+      };
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.readAsDataURL(file);
+    });
+
+  const handleProfileImageSelected = async (event: any) => {
+    const file = event?.target?.files?.[0] as File | undefined;
+    if (!file) return;
+    event.target.value = "";
+
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Invalid file type",
+        description: "Please select an image file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      toast({
+        title: "Image too large",
+        description: "Please choose an image under 8MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const resized = await resizeImageFile(file);
+      updateProfileImageMutation.mutate(resized);
+    } catch {
+      toast({
+        title: "Failed to process image",
+        description: "Please try a different file",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Add member mutation
   const addMemberMutation = useMutation({
@@ -461,6 +547,7 @@ export default function Settings() {
             <CardContent className="space-y-4">
               <div className="flex items-center gap-4 mb-6">
                 <Avatar className="h-16 w-16">
+                  <AvatarImage src={user?.profileImageUrl || undefined} alt={user?.email || "User"} />
                   <AvatarFallback className="bg-primary/10 text-primary text-xl">
                     {firstName?.[0] || user?.email?.[0]?.toUpperCase() || "U"}
                   </AvatarFallback>
@@ -488,6 +575,43 @@ export default function Settings() {
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">Your User ID</p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <input
+                      ref={profileImageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleProfileImageSelected}
+                      data-testid="input-profile-photo-file"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => profileImageInputRef.current?.click()}
+                      disabled={updateProfileImageMutation.isPending}
+                      data-testid="button-upload-profile-photo"
+                    >
+                      {updateProfileImageMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <Upload className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      Upload photo
+                    </Button>
+                    {user?.profileImageUrl && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => updateProfileImageMutation.mutate(null)}
+                        disabled={updateProfileImageMutation.isPending}
+                        data-testid="button-remove-profile-photo"
+                      >
+                        Remove photo
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
 
