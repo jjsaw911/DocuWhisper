@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Plus,
@@ -79,13 +80,73 @@ export function AppSidebar() {
   const [location, navigate] = useLocation();
   const [scribeMenuOpen, setScribeMenuOpen] = useState(false);
   const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
+  const [copiedToEmrByNoteId, setCopiedToEmrByNoteId] = useState<Record<number, boolean>>({});
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { isRecording, audioLevel } = useRecording();
+  const copiedToEmrStorageKey = user?.id ? `docuwhisper:copied-to-emr:${user.id}` : null;
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
   });
+
+  useEffect(() => {
+    if (!copiedToEmrStorageKey || typeof window === "undefined") {
+      setCopiedToEmrByNoteId({});
+      return;
+    }
+
+    try {
+      const stored = localStorage.getItem(copiedToEmrStorageKey);
+      if (!stored) {
+        setCopiedToEmrByNoteId({});
+        return;
+      }
+
+      const parsed = JSON.parse(stored) as Record<string, boolean>;
+      const normalized: Record<number, boolean> = {};
+
+      for (const [key, value] of Object.entries(parsed)) {
+        const noteId = Number(key);
+        if (Number.isInteger(noteId) && value === true) {
+          normalized[noteId] = true;
+        }
+      }
+
+      setCopiedToEmrByNoteId(normalized);
+    } catch {
+      setCopiedToEmrByNoteId({});
+    }
+  }, [copiedToEmrStorageKey]);
+
+  useEffect(() => {
+    if (!copiedToEmrStorageKey || typeof window === "undefined") {
+      return;
+    }
+
+    localStorage.setItem(copiedToEmrStorageKey, JSON.stringify(copiedToEmrByNoteId));
+  }, [copiedToEmrByNoteId, copiedToEmrStorageKey]);
+
+  useEffect(() => {
+    if (notes.length === 0) return;
+
+    const validNoteIds = new Set(notes.map((note) => note.id));
+    setCopiedToEmrByNoteId((prev) => {
+      let changed = false;
+      const next: Record<number, boolean> = {};
+
+      for (const [noteId, copied] of Object.entries(prev)) {
+        const numericNoteId = Number(noteId);
+        if (copied && validNoteIds.has(numericNoteId)) {
+          next[numericNoteId] = true;
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [notes]);
 
   const deleteNoteMutation = useMutation({
     mutationFn: async (noteId: number) => {
@@ -193,6 +254,18 @@ export function AppSidebar() {
   const groupedNotes = groupNotesByDate(notes);
   // Show all notes instead of just recent ones
   const allNotes = notes;
+  
+  const setNoteCopiedToEmr = (noteId: number, isCopied: boolean) => {
+    setCopiedToEmrByNoteId((prev) => {
+      const next = { ...prev };
+      if (isCopied) {
+        next[noteId] = true;
+      } else {
+        delete next[noteId];
+      }
+      return next;
+    });
+  };
 
   return (
     <Sidebar className="border-r">
@@ -306,6 +379,7 @@ export function AppSidebar() {
                             </div>
                             {dateNotes.map((note) => {
                               const isCurrentNote = location === `/notes/${note.id}`;
+                              const isCopiedToEmr = copiedToEmrByNoteId[note.id] === true;
                               return (
                                 <div
                                   key={note.id}
@@ -349,6 +423,18 @@ export function AppSidebar() {
                                       )}
                                     </div>
                                   </div>
+                                  <Checkbox
+                                    checked={isCopiedToEmr}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                    }}
+                                    onCheckedChange={(checked) => {
+                                      setNoteCopiedToEmr(note.id, checked === true);
+                                    }}
+                                    aria-label={`Mark ${note.title || note.patientName || "note"} as copied to EMR`}
+                                    title="Copied to external EMR"
+                                    data-testid={`checkbox-note-copied-to-emr-${note.id}`}
+                                  />
                                 </div>
                               );
                             })}
