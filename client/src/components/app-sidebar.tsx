@@ -5,6 +5,7 @@ import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useRecording } from "@/contexts/recording-context";
+import { useCopiedToEmr } from "@/hooks/use-copied-to-emr";
 import {
   Sidebar,
   SidebarContent,
@@ -80,73 +81,19 @@ export function AppSidebar() {
   const [location, navigate] = useLocation();
   const [scribeMenuOpen, setScribeMenuOpen] = useState(false);
   const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
-  const [copiedToEmrByNoteId, setCopiedToEmrByNoteId] = useState<Record<number, boolean>>({});
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { isRecording, audioLevel } = useRecording();
-  const copiedToEmrStorageKey = user?.id ? `docuwhisper:copied-to-emr:${user.id}` : null;
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
   });
-
-  useEffect(() => {
-    if (!copiedToEmrStorageKey || typeof window === "undefined") {
-      setCopiedToEmrByNoteId({});
-      return;
-    }
-
-    try {
-      const stored = localStorage.getItem(copiedToEmrStorageKey);
-      if (!stored) {
-        setCopiedToEmrByNoteId({});
-        return;
-      }
-
-      const parsed = JSON.parse(stored) as Record<string, boolean>;
-      const normalized: Record<number, boolean> = {};
-
-      for (const [key, value] of Object.entries(parsed)) {
-        const noteId = Number(key);
-        if (Number.isInteger(noteId) && value === true) {
-          normalized[noteId] = true;
-        }
-      }
-
-      setCopiedToEmrByNoteId(normalized);
-    } catch {
-      setCopiedToEmrByNoteId({});
-    }
-  }, [copiedToEmrStorageKey]);
-
-  useEffect(() => {
-    if (!copiedToEmrStorageKey || typeof window === "undefined") {
-      return;
-    }
-
-    localStorage.setItem(copiedToEmrStorageKey, JSON.stringify(copiedToEmrByNoteId));
-  }, [copiedToEmrByNoteId, copiedToEmrStorageKey]);
+  const { isNoteCopiedToEmr, setNoteCopiedToEmr, pruneCopiedToEmrForNotes } = useCopiedToEmr(user?.id);
 
   useEffect(() => {
     if (notes.length === 0) return;
-
-    const validNoteIds = new Set(notes.map((note) => note.id));
-    setCopiedToEmrByNoteId((prev) => {
-      let changed = false;
-      const next: Record<number, boolean> = {};
-
-      for (const [noteId, copied] of Object.entries(prev)) {
-        const numericNoteId = Number(noteId);
-        if (copied && validNoteIds.has(numericNoteId)) {
-          next[numericNoteId] = true;
-        } else {
-          changed = true;
-        }
-      }
-
-      return changed ? next : prev;
-    });
-  }, [notes]);
+    pruneCopiedToEmrForNotes(notes.map((note) => note.id));
+  }, [notes, pruneCopiedToEmrForNotes]);
 
   const deleteNoteMutation = useMutation({
     mutationFn: async (noteId: number) => {
@@ -251,21 +198,8 @@ export function AppSidebar() {
     return groups;
   };
 
-  const groupedNotes = groupNotesByDate(notes);
   // Show all notes instead of just recent ones
   const allNotes = notes;
-  
-  const setNoteCopiedToEmr = (noteId: number, isCopied: boolean) => {
-    setCopiedToEmrByNoteId((prev) => {
-      const next = { ...prev };
-      if (isCopied) {
-        next[noteId] = true;
-      } else {
-        delete next[noteId];
-      }
-      return next;
-    });
-  };
 
   return (
     <Sidebar className="border-r">
@@ -379,7 +313,7 @@ export function AppSidebar() {
                             </div>
                             {dateNotes.map((note) => {
                               const isCurrentNote = location === `/notes/${note.id}`;
-                              const isCopiedToEmr = copiedToEmrByNoteId[note.id] === true;
+                              const isCopiedToEmr = isNoteCopiedToEmr(note.id);
                               return (
                                 <div
                                   key={note.id}

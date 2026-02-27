@@ -2,6 +2,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,6 +60,7 @@ import {
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
+import { useCopiedToEmr } from "@/hooks/use-copied-to-emr";
 import { CollaboratorAvatars } from "@/components/collaborator-avatars";
 import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -139,6 +141,8 @@ export default function NoteDetail() {
 
   // Real-time collaboration hook
   const noteId = id ? parseInt(id) : 0;
+  const { isNoteCopiedToEmr, setNoteCopiedToEmr } = useCopiedToEmr(user?.id);
+  const isCopiedToEmr = noteId > 0 ? isNoteCopiedToEmr(noteId) : false;
   const { isConnected, collaborators, sendUpdate } = useCollaboration({
     noteId,
     userId: user?.id || "",
@@ -1501,6 +1505,22 @@ export default function NoteDetail() {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+
+            <div className="flex items-center gap-2 rounded-md border px-2.5 py-1.5" data-testid="container-note-copied-to-emr">
+              <Checkbox
+                id="checkbox-note-copied-to-emr"
+                checked={isCopiedToEmr}
+                onCheckedChange={(checked) => {
+                  if (noteId > 0) {
+                    setNoteCopiedToEmr(noteId, checked === true);
+                  }
+                }}
+                data-testid="checkbox-note-copied-to-emr"
+              />
+              <Label htmlFor="checkbox-note-copied-to-emr" className="cursor-pointer whitespace-nowrap text-sm">
+                Copied to EMR
+              </Label>
+            </div>
             
             <ThemeToggle />
             
