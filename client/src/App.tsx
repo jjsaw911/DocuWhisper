@@ -22,6 +22,7 @@ import Settings from "@/pages/settings";
 import SharedNotes from "@/pages/shared-notes";
 import Analytics from "@/pages/analytics";
 import Notes from "@/pages/notes";
+import Guide from "@/pages/guide";
 import EMRPatients from "@/pages/emr/patients";
 import EMRPatientDetail from "@/pages/emr/patient-detail";
 import EMRSchedule from "@/pages/emr/schedule";
@@ -63,6 +64,7 @@ function AuthenticatedLayout() {
               <Route path="/settings" component={Settings} />
               <Route path="/shared-notes" component={SharedNotes} />
               <Route path="/analytics" component={Analytics} />
+              <Route path="/guide" component={Guide} />
               <Route path="/emr/patients" component={EMRPatients} />
               <Route path="/emr/patients/:id" component={EMRPatientDetail} />
               <Route path="/emr/schedule" component={EMRSchedule} />

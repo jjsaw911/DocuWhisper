@@ -42,6 +42,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Plus,
   FileText,
+  BookOpen,
   LayoutTemplate,
   Settings,
   CreditCard,
@@ -421,6 +422,14 @@ export function AppSidebar() {
                   <Link href="/analytics" data-testid="nav-analytics">
                     <TrendingUp className="h-4 w-4" />
                     <span>Analytics</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/guide"}>
+                  <Link href="/guide" data-testid="nav-guide">
+                    <BookOpen className="h-4 w-4" />
+                    <span>Guide</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
