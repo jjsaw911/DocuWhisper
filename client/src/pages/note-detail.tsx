@@ -56,7 +56,8 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Trash2,
-  Printer
+  Printer,
+  Scissors
 } from "lucide-react";
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
@@ -162,6 +163,14 @@ export default function NoteDetail() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [copied, setCopied] = useState(false);
   const [translateLanguage, setTranslateLanguage] = useState("es");
+  const [transcriptSelection, setTranscriptSelection] = useState<{ start: number; end: number; text: string }>({
+    start: 0,
+    end: 0,
+    text: "",
+  });
+  const [showSplitTranscriptDialog, setShowSplitTranscriptDialog] = useState(false);
+  const [splitNoteTitle, setSplitNoteTitle] = useState("");
+  const [splitPatientName, setSplitPatientName] = useState("");
   
   // Undo/redo history for SOAP note
   const [soapHistory, setSoapHistory] = useState<string[]>([]);
@@ -635,6 +644,8 @@ export default function NoteDetail() {
     setSelectedTemplateId("");
     setSuggestedCodes(null);
     setShowCodesPanel(false);
+    setTranscriptSelection({ start: 0, end: 0, text: "" });
+    setShowSplitTranscriptDialog(false);
   }, [id]);
   
   // Track whether we've done initial load for this note ID
@@ -700,6 +711,97 @@ export default function NoteDetail() {
       toast({
         title: "Failed to update note",
         description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const hasTranscriptSelection =
+    transcriptSelection.end > transcriptSelection.start && transcriptSelection.text.trim().length > 0;
+
+  const handleTranscriptSelectionChange = (event: any) => {
+    const target = event.currentTarget;
+    const start = target.selectionStart || 0;
+    const end = target.selectionEnd || 0;
+    const text = start !== end ? target.value.slice(start, end) : "";
+    setTranscriptSelection({ start, end, text });
+  };
+
+  const openSplitTranscriptDialog = () => {
+    if (!note?.transcript || !hasTranscriptSelection) {
+      toast({
+        title: "Select transcript text first",
+        description: "Highlight the section you want to move to a new note.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const baseTitle = formData.title || note.title || "Untitled note";
+    setSplitNoteTitle(`${baseTitle} (Split)`);
+    setSplitPatientName(formData.patientName || note.patientName || "");
+    setShowSplitTranscriptDialog(true);
+  };
+
+  const splitTranscriptMutation = useMutation({
+    mutationFn: async () => {
+      if (!note?.transcript || !id) {
+        throw new Error("Transcript is not available");
+      }
+
+      const { start, end } = transcriptSelection;
+      if (end <= start) {
+        throw new Error("Please select transcript text to split");
+      }
+
+      const selectedRaw = note.transcript.slice(start, end);
+      const selectedTranscript = selectedRaw.trim();
+      if (!selectedTranscript) {
+        throw new Error("Selected text is empty");
+      }
+
+      const remainingTranscript = `${note.transcript.slice(0, start)}${note.transcript.slice(end)}`
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      const fallbackTitle = formData.title || note.title || "Split note";
+      const nextTitle = splitNoteTitle.trim() || `${fallbackTitle} (Split)`;
+      const nextPatientName = splitPatientName.trim() || formData.patientName || note.patientName || "";
+
+      const createPayload: Record<string, any> = {
+        title: nextTitle,
+        transcript: selectedTranscript,
+      };
+      if (nextPatientName) createPayload.patientName = nextPatientName;
+      if (note.specialty) createPayload.specialty = note.specialty;
+      if (note.templateId) createPayload.templateId = note.templateId;
+
+      const createResponse = await apiRequest("POST", "/api/notes", createPayload);
+      const createdNote = await createResponse.json();
+
+      await apiRequest("PATCH", `/api/notes/${id}`, {
+        transcript: remainingTranscript,
+      });
+
+      return createdNote as Note;
+    },
+    onSuccess: (createdNote) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
+      if (createdNote?.id) {
+        queryClient.invalidateQueries({ queryKey: ["/api/notes", String(createdNote.id)] });
+      }
+      setShowSplitTranscriptDialog(false);
+      setTranscriptSelection({ start: 0, end: 0, text: "" });
+      toast({
+        title: "Transcript split",
+        description: `Created "${createdNote.title}" and removed the selected text from this note.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to split transcript",
+        description: error?.message || "Please try again",
         variant: "destructive",
       });
     },
@@ -1860,20 +1962,48 @@ Treatment plan..."
                       <AudioLines className="h-4 w-4 text-primary" />
                       Transcript
                     </CardTitle>
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => copyToClipboard(note.transcript || "")}
-                      data-testid="button-copy-transcript"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={openSplitTranscriptDialog}
+                        disabled={!hasTranscriptSelection || splitTranscriptMutation.isPending}
+                        data-testid="button-split-transcript"
+                      >
+                        {splitTranscriptMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <Scissors className="h-3 w-3 mr-1" />
+                        )}
+                        Split selection
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => copyToClipboard(note.transcript || "")}
+                        data-testid="button-copy-transcript"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-base whitespace-pre-wrap leading-relaxed" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>{note.transcript}</p>
-                  </div>
+                  <Textarea
+                    readOnly
+                    value={note.transcript || ""}
+                    onSelect={handleTranscriptSelectionChange}
+                    onMouseUp={handleTranscriptSelectionChange}
+                    onKeyUp={handleTranscriptSelectionChange}
+                    className="min-h-[220px] text-base leading-relaxed bg-muted/50"
+                    style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+                    data-testid="textarea-transcript-readonly"
+                  />
+                  <p className="mt-2 text-xs text-muted-foreground" data-testid="text-transcript-selection-hint">
+                    {hasTranscriptSelection
+                      ? `${transcriptSelection.text.trim().length} characters selected. Click "Split selection" to move it to a new note.`
+                      : "Highlight transcript text to split it into a new note."}
+                  </p>
                 </CardContent>
               </Card>
             )}
@@ -2272,6 +2402,85 @@ Treatment plan..."
           )}
         </div>
       </div>
+
+      <Dialog
+        open={showSplitTranscriptDialog}
+        onOpenChange={(open) => {
+          if (!splitTranscriptMutation.isPending) {
+            setShowSplitTranscriptDialog(open);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Scissors className="h-4 w-4" />
+              Split Transcript Selection
+            </DialogTitle>
+            <DialogDescription>
+              This will create a new note from the highlighted transcript and remove that text from this note.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="split-note-title">New note title</Label>
+              <Input
+                id="split-note-title"
+                value={splitNoteTitle}
+                onChange={(e) => setSplitNoteTitle(e.target.value)}
+                placeholder="Enter a title for the new split note"
+                data-testid="input-split-note-title"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="split-note-patient-name">Patient name (optional)</Label>
+              <Input
+                id="split-note-patient-name"
+                value={splitPatientName}
+                onChange={(e) => setSplitPatientName(e.target.value)}
+                placeholder="Patient name for the new note"
+                data-testid="input-split-note-patient-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Selected transcript preview</Label>
+              <Textarea
+                readOnly
+                value={transcriptSelection.text.trim()}
+                className="min-h-[120px]"
+                data-testid="textarea-split-transcript-preview"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowSplitTranscriptDialog(false)}
+              disabled={splitTranscriptMutation.isPending}
+              data-testid="button-cancel-split-transcript"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => splitTranscriptMutation.mutate()}
+              disabled={!hasTranscriptSelection || splitTranscriptMutation.isPending}
+              data-testid="button-confirm-split-transcript"
+            >
+              {splitTranscriptMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Splitting...
+                </>
+              ) : (
+                <>
+                  <Scissors className="h-4 w-4 mr-2" />
+                  Split Into New Note
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
