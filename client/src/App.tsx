@@ -35,7 +35,7 @@ function NoteDetail() {
 }
 
 function AuthenticatedLayout() {
-  useSessionTimeout(); // HIPAA compliance - auto-logout after 30 min inactivity
+  useSessionTimeout(); // Auto-logout after inactivity unless disabled in Session Security settings
   
   const style = {
     "--sidebar-width": "16rem",

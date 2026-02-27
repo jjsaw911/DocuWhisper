@@ -39,6 +39,7 @@ import {
 } from "@/lib/transcription";
 import { Key, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { isStaySignedInEnabled, setStaySignedInPreference } from "@/hooks/use-session-timeout";
 
 const US_STATES = [
   "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -112,6 +113,7 @@ export default function Settings() {
   const [transcriptionMode, setTranscriptionMode] = useState<TranscriptionMode>(DEFAULT_TRANSCRIPTION_MODE);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
+  const [staySignedIn, setStaySignedIn] = useState(false);
 
   // EMR Credentials state
   const [emrRole, setEmrRole] = useState<string>("");
@@ -331,6 +333,10 @@ export default function Settings() {
       setRequiresCosignature(settings.requiresCosignature || false);
     }
   }, [settings]);
+
+  useEffect(() => {
+    setStaySignedIn(isStaySignedInEnabled());
+  }, []);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -711,6 +717,41 @@ export default function Settings() {
                 <li>If audio is very quiet or the mic drops, a blob may not send until silence flushes.</li>
                 <li>Switching tabs or audio devices can interrupt delivery; keep the mic active.</li>
               </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-primary" />
+                <CardTitle>Session Security</CardTitle>
+              </div>
+              <CardDescription>Control automatic sign-out behavior on this device</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="staySignedIn">Stay signed in on this device</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Disables inactivity auto-logout. Use only on a private trusted device.
+                  </p>
+                </div>
+                <Switch
+                  id="staySignedIn"
+                  checked={staySignedIn}
+                  onCheckedChange={(checked) => {
+                    setStaySignedIn(checked);
+                    setStaySignedInPreference(checked);
+                    toast({
+                      title: checked ? "Stay signed in enabled" : "Stay signed in disabled",
+                      description: checked
+                        ? "You will remain signed in unless you manually log out."
+                        : "Inactivity auto-logout is active again (30 minutes).",
+                    });
+                  }}
+                  data-testid="switch-stay-signed-in"
+                />
+              </div>
             </CardContent>
           </Card>
 
