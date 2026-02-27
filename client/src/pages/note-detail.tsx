@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams, useLocation } from "wouter";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -34,8 +35,6 @@ import {
   Redo2,
   ChevronDown,
   ChevronUp,
-  ChevronLeft,
-  ChevronRight,
   Languages,
   FileSignature,
   Code2,
@@ -47,14 +46,10 @@ import {
   Plus,
   ShoppingCart,
   Users,
-  Info,
-  Pill,
   Wifi,
   WifiOff,
   ClipboardCopy,
   Mic,
-  PanelRightClose,
-  PanelRightOpen,
   Trash2,
   Printer,
   Scissors
@@ -160,7 +155,7 @@ export default function NoteDetail() {
   });
   const [aiInstructions, setAiInstructions] = useState("");
   const [showAiInstructions, setShowAiInstructions] = useState(false);
-  const [showTranscript, setShowTranscript] = useState(false);
+  const [activeMainTab, setActiveMainTab] = useState("soap");
   const [copied, setCopied] = useState(false);
   const [translateLanguage, setTranslateLanguage] = useState("es");
   const [transcriptSelection, setTranscriptSelection] = useState<{ start: number; end: number; text: string }>({
@@ -214,7 +209,6 @@ export default function NoteDetail() {
   const [referralReason, setReferralReason] = useState("");
   const [referralLetter, setReferralLetter] = useState("");
   
-  const [showCodesPanel, setShowCodesPanel] = useState(false);
   const [suggestedCodes, setSuggestedCodes] = useState<{
     codes: { code: string; description: string; category: string; confidence: string }[];
     cptCodes: { code: string; description: string; rationale: string }[];
@@ -358,8 +352,6 @@ export default function NoteDetail() {
       setGeneratedSummary("");
     }
   }, [summaryCache, summaryType]);
-  const [showAiToolsPanel, setShowAiToolsPanel] = useState(false);
-  
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskCategory, setNewTaskCategory] = useState("document");
@@ -643,7 +635,6 @@ export default function NoteDetail() {
     setHistoryIndex(-1);
     setSelectedTemplateId("");
     setSuggestedCodes(null);
-    setShowCodesPanel(false);
     setTranscriptSelection({ start: 0, end: 0, text: "" });
     setShowSplitTranscriptDialog(false);
   }, [id]);
@@ -677,7 +668,6 @@ export default function NoteDetail() {
             ? JSON.parse(note.icdCodes) 
             : note.icdCodes;
           setSuggestedCodes(parsedCodes);
-          setShowCodesPanel(true);
         } catch (e) {
           console.error("Failed to parse saved ICD codes:", e);
         }
@@ -908,7 +898,7 @@ export default function NoteDetail() {
           const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
           icdCodesData = await codesResponse.json();
           setSuggestedCodes(icdCodesData);
-          setShowCodesPanel(true);
+          setActiveMainTab("codes");
         } catch (e) {
           console.error("Failed to generate ICD codes:", e);
         }
@@ -1058,7 +1048,7 @@ export default function NoteDetail() {
     },
     onSuccess: async (data) => {
       setSuggestedCodes(data);
-      setShowCodesPanel(true);
+      setActiveMainTab("codes");
       
       // Auto-save codes to the database (guard against undefined id)
       if (!id) {
@@ -1699,140 +1689,133 @@ export default function NoteDetail() {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Main Content Area */}
-        <div className="flex-1 overflow-auto p-6">
-          <div className="max-w-4xl mx-auto space-y-6">
-            {/* Metadata */}
-            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-              {note.patientName && (
-                <div className="flex items-center gap-1">
-                  <User className="h-4 w-4" />
-                  <span>{note.patientName}</span>
-                </div>
-              )}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-5xl mx-auto space-y-6">
+          {/* Metadata */}
+          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+            {note.patientName && (
               <div className="flex items-center gap-1">
-                <Calendar className="h-4 w-4" />
-                <span>{new Date(note.createdAt).toLocaleDateString()}</span>
+                <User className="h-4 w-4" />
+                <span>{note.patientName}</span>
               </div>
-              <div className="flex items-center gap-1">
-                <Clock className="h-4 w-4" />
-                <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
-              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <Calendar className="h-4 w-4" />
+              <span>{new Date(note.createdAt).toLocaleDateString()}</span>
             </div>
+            <div className="flex items-center gap-1">
+              <Clock className="h-4 w-4" />
+              <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
+            </div>
+          </div>
 
-            {/* Title/Patient Card */}
-            <Card data-testid="card-details">
-              <CardContent className="pt-4 grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="title">Title</Label>
-                  <Input
-                    id="title"
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    data-testid="input-title"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="patientName">Patient Name</Label>
-                  <Input
-                    id="patientName"
-                    value={formData.patientName}
-                    onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
-                    data-testid="input-patient-name"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+          {/* Title/Patient Card */}
+          <Card data-testid="card-details">
+            <CardContent className="pt-4 grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="title">Title</Label>
+                <Input
+                  id="title"
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  data-testid="input-title"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="patientName">Patient Name</Label>
+                <Input
+                  id="patientName"
+                  value={formData.patientName}
+                  onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
+                  data-testid="input-patient-name"
+                />
+              </div>
+            </CardContent>
+          </Card>
 
-            {/* SOAP Note Card */}
-            <Card data-testid="card-soap">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-primary" />
-                    SOAP Note
-                  </CardTitle>
-                  <div className="flex items-center gap-2">
-                    {/* Template dropdown */}
-                    <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
-                      <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
-                        <SelectValue placeholder="Template" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="default">Default</SelectItem>
-                        <SelectItem value="none">No template</SelectItem>
-                        {templates.map((template) => (
-                          <SelectItem key={template.id} value={template.id.toString()}>
-                            {template.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    
-                    {/* Re-transcribe button */}
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => regenerateMutation.mutate()}
-                      disabled={regenerateMutation.isPending || !note.transcript}
-                      data-testid="button-retranscribe"
-                    >
-                      {regenerateMutation.isPending ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <>
-                          <RefreshCw className="h-3 w-3 mr-1" />
-                          Redo
-                        </>
-                      )}
-                    </Button>
-                    
-                    {/* Transcript toggle - only show if transcript exists */}
-                    {note.transcript && (
-                      <Button 
-                        variant={showTranscript ? "secondary" : "ghost"}
+          <Tabs value={activeMainTab} onValueChange={setActiveMainTab} className="space-y-4">
+            <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+              <TabsTrigger value="soap" data-testid="tab-note-view-soap">SOAP</TabsTrigger>
+              <TabsTrigger value="transcript" data-testid="tab-note-view-transcript" disabled={!note.transcript}>
+                Transcript
+              </TabsTrigger>
+              <TabsTrigger value="codes" data-testid="tab-note-view-codes">Dx Codes</TabsTrigger>
+              <TabsTrigger value="ai-tools" data-testid="tab-note-view-ai-tools">AI Tools</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="soap" className="space-y-4">
+              <Card data-testid="card-soap">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      SOAP Note
+                    </CardTitle>
+                    <div className="flex items-center gap-2">
+                      <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
+                        <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
+                          <SelectValue placeholder="Template" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default</SelectItem>
+                          <SelectItem value="none">No template</SelectItem>
+                          {templates.map((template) => (
+                            <SelectItem key={template.id} value={template.id.toString()}>
+                              {template.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="outline"
                         size="sm"
-                        onClick={() => setShowTranscript(!showTranscript)}
-                        data-testid="button-toggle-transcript-header"
+                        onClick={() => regenerateMutation.mutate()}
+                        disabled={regenerateMutation.isPending || !note.transcript}
+                        data-testid="button-retranscribe"
                       >
-                        <FileText className="h-3 w-3 mr-1" />
-                        Transcript
-                        {showTranscript ? (
-                          <ChevronUp className="ml-1 h-3 w-3" />
+                        {regenerateMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          <ChevronDown className="ml-1 h-3 w-3" />
+                          <>
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                            Redo
+                          </>
                         )}
                       </Button>
-                    )}
-                    
-                    {/* Copy button */}
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => copyToClipboard(formData.soapNote)}
-                      data-testid="button-copy-soap"
-                    >
-                      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                    </Button>
+                      {note.transcript && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setActiveMainTab("transcript")}
+                          data-testid="button-toggle-transcript-header"
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          Transcript
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => copyToClipboard(formData.soapNote)}
+                        data-testid="button-copy-soap"
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Drug interaction alert */}
-                <DrugInteractionAlert text={formData.soapNote} />
-                
-                <MedicalAutocomplete
-                  value={formData.soapNote}
-                  onChange={(value) => {
-                    setFormData({ ...formData, soapNote: value });
-                    // Send update to collaborators
-                    sendUpdate("soapNote", value);
-                  }}
-                  className="text-base leading-relaxed"
-                  autoResize={true}
-                  minHeight={300}
-                  placeholder="SUBJECTIVE:
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <DrugInteractionAlert text={formData.soapNote} />
+                  <MedicalAutocomplete
+                    value={formData.soapNote}
+                    onChange={(value) => {
+                      setFormData({ ...formData, soapNote: value });
+                      sendUpdate("soapNote", value);
+                    }}
+                    className="text-base leading-relaxed"
+                    autoResize={true}
+                    minHeight={300}
+                    placeholder="SUBJECTIVE:
 Patient's symptoms...
 
 OBJECTIVE:
@@ -1843,563 +1826,590 @@ Diagnosis...
 
 PLAN:
 Treatment plan..."
-                  data-testid="textarea-soap"
-                />
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowAiInstructions(!showAiInstructions)}
-                  className="text-xs text-muted-foreground"
-                  data-testid="button-toggle-ai"
-                >
-                  <Wand2 className="mr-1 h-3 w-3" />
-                  AI Instructions
-                  {showAiInstructions ? (
-                    <ChevronUp className="ml-1 h-3 w-3" />
-                  ) : (
-                    <ChevronDown className="ml-1 h-3 w-3" />
-                  )}
-                </Button>
+                    data-testid="textarea-soap"
+                  />
 
-                {showAiInstructions && (
-                  <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Template</Label>
-                      <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
-                        <SelectTrigger data-testid="select-regenerate-template">
-                          <SelectValue placeholder="Use default template" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default (uses your default template)</SelectItem>
-                          <SelectItem value="none">No template (standard SOAP)</SelectItem>
-                          {templates.map((template) => (
-                            <SelectItem key={template.id} value={template.id.toString()}>
-                              {template.name}
-                              {template.isDefault && " ★"}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        "Default" uses your default template if set in Templates page
-                      </p>
-                    </div>
-                    <Textarea
-                      placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on chest pain symptoms' or 'Add that patient has history of diabetes'"
-                      value={aiInstructions}
-                      onChange={(e) => setAiInstructions(e.target.value)}
-                      className="min-h-[80px]"
-                      data-testid="textarea-ai-instructions"
-                    />
-                    <Button 
-                      variant="secondary" 
-                      onClick={() => regenerateMutation.mutate()}
-                      disabled={regenerateMutation.isPending || !note.transcript}
-                      className="w-full"
-                      data-testid="button-regenerate"
-                    >
-                      {regenerateMutation.isPending ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Regenerating...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          Regenerate SOAP Note
-                        </>
-                      )}
-                    </Button>
-                    {!note.transcript && (
-                      <p className="text-xs text-muted-foreground text-center">
-                        Regeneration requires a transcript.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2">
-                  <Select value={translateLanguage} onValueChange={setTranslateLanguage}>
-                    <SelectTrigger className="w-[100px] text-xs" data-testid="select-translate-language">
-                      <SelectValue placeholder="Language" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="es">Spanish</SelectItem>
-                      <SelectItem value="fr">French</SelectItem>
-                      <SelectItem value="de">German</SelectItem>
-                      <SelectItem value="pt">Portuguese</SelectItem>
-                      <SelectItem value="en">English</SelectItem>
-                    </SelectContent>
-                  </Select>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => translateMutation.mutate(translateLanguage)}
-                    disabled={translateMutation.isPending || !formData.soapNote}
+                    onClick={() => setShowAiInstructions(!showAiInstructions)}
                     className="text-xs text-muted-foreground"
-                    data-testid="button-translate"
+                    data-testid="button-toggle-ai"
                   >
-                    {translateMutation.isPending ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
+                    <Wand2 className="mr-1 h-3 w-3" />
+                    AI Instructions
+                    {showAiInstructions ? (
+                      <ChevronUp className="ml-1 h-3 w-3" />
                     ) : (
-                      <>
-                        <Languages className="mr-1 h-3 w-3" />
-                        Translate
-                      </>
+                      <ChevronDown className="ml-1 h-3 w-3" />
                     )}
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
 
-            {/* Transcript Card */}
-            {note.transcript && showTranscript && (
-              <Card data-testid="card-transcript" className="mb-6">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <AudioLines className="h-4 w-4 text-primary" />
-                      Transcript
-                    </CardTitle>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={openSplitTranscriptDialog}
-                        disabled={!hasTranscriptSelection || splitTranscriptMutation.isPending}
-                        data-testid="button-split-transcript"
-                      >
-                        {splitTranscriptMutation.isPending ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Scissors className="h-3 w-3 mr-1" />
-                        )}
-                        Split selection
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => copyToClipboard(note.transcript || "")}
-                        data-testid="button-copy-transcript"
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <Textarea
-                    readOnly
-                    value={note.transcript || ""}
-                    onSelect={handleTranscriptSelectionChange}
-                    onMouseUp={handleTranscriptSelectionChange}
-                    onKeyUp={handleTranscriptSelectionChange}
-                    className="min-h-[220px] text-base leading-relaxed bg-muted/50"
-                    style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
-                    data-testid="textarea-transcript-readonly"
-                  />
-                  <p className="mt-2 text-xs text-muted-foreground" data-testid="text-transcript-selection-hint">
-                    {hasTranscriptSelection
-                      ? `${transcriptSelection.text.trim().length} characters selected. Click "Split selection" to move it to a new note.`
-                      : "Highlight transcript text to split it into a new note."}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </div>
-
-        {/* AI Tools Collapsible Side Panel */}
-        <div 
-          className={`transition-all duration-300 border-l bg-background flex flex-col ${showAiToolsPanel ? 'w-80' : 'w-12'}`}
-          data-testid="panel-ai-tools"
-        >
-          {/* Toggle Button */}
-          <button
-            onClick={() => setShowAiToolsPanel(!showAiToolsPanel)}
-            className="flex items-center justify-center h-12 w-full border-b hover-elevate"
-            data-testid="button-toggle-ai-tools"
-          >
-            {showAiToolsPanel ? (
-              <ChevronRight className="h-5 w-5" />
-            ) : (
-              <Sparkles className="h-5 w-5 text-primary" />
-            )}
-          </button>
-
-          {/* Panel Content */}
-          {showAiToolsPanel && (
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              <div className="flex items-center gap-2 mb-4">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <h3 className="font-semibold">AI Tools</h3>
-              </div>
-
-              {/* Tool Buttons */}
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="outline"
-                  className="flex flex-col h-auto py-3"
-                  onClick={handleOpenTaskModal}
-                  data-testid="button-create-task-panel"
-                >
-                  <ListTodo className="h-5 w-5 mb-1" />
-                  <span className="text-xs">Add Task</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex flex-col h-auto py-3"
-                  onClick={handleOpenReferralModal}
-                  data-testid="button-referral-panel"
-                >
-                  <FileSignature className="h-5 w-5 mb-1" />
-                  <span className="text-xs">Referral</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex flex-col h-auto py-3"
-                  onClick={() => codesMutation.mutate()}
-                  disabled={codesMutation.isPending}
-                  data-testid="button-codes-panel"
-                >
-                  {codesMutation.isPending ? (
-                    <Loader2 className="h-5 w-5 mb-1 animate-spin" />
-                  ) : (
-                    <Code2 className="h-5 w-5 mb-1" />
-                  )}
-                  <span className="text-xs">ICD-10</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex flex-col h-auto py-3"
-                  onClick={() => setShowAiChat(!showAiChat)}
-                  data-testid="button-ai-chat-panel"
-                >
-                  <MessageSquare className="h-5 w-5 mb-1" />
-                  <span className="text-xs">AI Chat</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex flex-col h-auto py-3 col-span-2"
-                  onClick={() => setShowSummaryPanel(!showSummaryPanel)}
-                  data-testid="button-summary-panel"
-                >
-                  <ClipboardList className="h-5 w-5 mb-1" />
-                  <span className="text-xs">Summary</span>
-                </Button>
-              </div>
-
-              {/* ICD-10 Codes Panel */}
-              {showCodesPanel && suggestedCodes && (
-                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">Billing Codes</h4>
-                    <Button variant="ghost" size="icon" onClick={() => setShowCodesPanel(false)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  
-                  {suggestedCodes.codes && suggestedCodes.codes.length > 0 && (
-                    <div className="space-y-2">
-                      <h5 className="text-xs font-medium">ICD-10 Codes</h5>
-                      {suggestedCodes.codes.map((code, i) => (
-                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border text-xs">
-                          <Badge variant={code.category === "primary" ? "default" : "secondary"} className="text-xs">
-                            {code.code}
-                          </Badge>
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate">{code.description}</p>
-                          </div>
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(code.code)}>
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {suggestedCodes.cptCodes && suggestedCodes.cptCodes.length > 0 && (
-                    <div className="space-y-2">
-                      <h5 className="text-xs font-medium">CPT Codes</h5>
-                      {suggestedCodes.cptCodes.map((code, i) => (
-                        <div key={i} className="flex items-start gap-2 p-2 bg-background rounded border text-xs">
-                          <Badge variant="outline" className="text-xs">{code.code}</Badge>
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate">{code.description}</p>
-                          </div>
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(code.code)}>
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* AI Chat Panel */}
-              {showAiChat && (
-                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">AI Assistant</h4>
-                    <Button variant="ghost" size="icon" onClick={() => setShowAiChat(false)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  
-                  <div className="max-h-[200px] overflow-auto space-y-2">
-                    {chatHistory.length === 0 && (
-                      <p className="text-xs text-muted-foreground text-center py-2">
-                        Ask questions about documentation or clinical guidance
-                      </p>
-                    )}
-                    {chatHistory.map((msg, i) => (
-                      <div key={i} className={`p-2 rounded text-xs ${msg.role === "user" ? "bg-primary/10 ml-4" : "bg-background mr-4 border"}`}>
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {showAiInstructions && (
+                    <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">Template</Label>
+                        <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
+                          <SelectTrigger data-testid="select-regenerate-template">
+                            <SelectValue placeholder="Use default template" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">Default (uses your default template)</SelectItem>
+                            <SelectItem value="none">No template (standard SOAP)</SelectItem>
+                            {templates.map((template) => (
+                              <SelectItem key={template.id} value={template.id.toString()}>
+                                {template.name}
+                                {template.isDefault && " ★"}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          "Default" uses your default template if set in Templates page
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Ask a question..."
-                      value={chatQuestion}
-                      onChange={(e) => setChatQuestion(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
-                      className="text-xs"
-                    />
-                    <Button size="icon" onClick={handleSendChat} disabled={aiChatMutation.isPending || !chatQuestion.trim()}>
-                      {aiChatMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    </Button>
-                  </div>
-                </div>
-              )}
+                      <Textarea
+                        placeholder="Tell the AI what to include, omit, or modify. For example: 'Omit personal family history' or 'Focus more on chest pain symptoms' or 'Add that patient has history of diabetes'"
+                        value={aiInstructions}
+                        onChange={(e) => setAiInstructions(e.target.value)}
+                        className="min-h-[80px]"
+                        data-testid="textarea-ai-instructions"
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={() => regenerateMutation.mutate()}
+                        disabled={regenerateMutation.isPending || !note.transcript}
+                        className="w-full"
+                        data-testid="button-regenerate"
+                      >
+                        {regenerateMutation.isPending ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Regenerating...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Regenerate SOAP Note
+                          </>
+                        )}
+                      </Button>
+                      {!note.transcript && (
+                        <p className="text-xs text-muted-foreground text-center">
+                          Regeneration requires a transcript.
+                        </p>
+                      )}
+                    </div>
+                  )}
 
-              {/* Summary Panel */}
-              {showSummaryPanel && (
-                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">Patient Summary</h4>
-                    <Button variant="ghost" size="icon" onClick={() => setShowSummaryPanel(false)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <Select value={summaryType} onValueChange={setSummaryType}>
-                      <SelectTrigger className="text-xs">
-                        <SelectValue placeholder="Type" />
+                  <div className="flex items-center gap-2">
+                    <Select value={translateLanguage} onValueChange={setTranslateLanguage}>
+                      <SelectTrigger className="w-[100px] text-xs" data-testid="select-translate-language">
+                        <SelectValue placeholder="Language" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="brief">Brief</SelectItem>
-                        <SelectItem value="detailed">Detailed</SelectItem>
-                        <SelectItem value="handover">Handover</SelectItem>
-                        <SelectItem value="discharge">Discharge</SelectItem>
-                        <SelectItem value="patient_instructions">Patient Instructions</SelectItem>
+                        <SelectItem value="es">Spanish</SelectItem>
+                        <SelectItem value="fr">French</SelectItem>
+                        <SelectItem value="de">German</SelectItem>
+                        <SelectItem value="pt">Portuguese</SelectItem>
+                        <SelectItem value="en">English</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Button size="sm" onClick={() => summaryMutation.mutate()} disabled={summaryMutation.isPending}>
-                      {summaryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate"}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => translateMutation.mutate(translateLanguage)}
+                      disabled={translateMutation.isPending || !formData.soapNote}
+                      className="text-xs text-muted-foreground"
+                      data-testid="button-translate"
+                    >
+                      {translateMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <>
+                          <Languages className="mr-1 h-3 w-3" />
+                          Translate
+                        </>
+                      )}
                     </Button>
                   </div>
-                  
-                  {generatedSummary && (
-                    <div className="p-2 bg-background rounded border">
-                      <div className="flex justify-end gap-1 mb-1">
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(generatedSummary)}>
-                          <Copy className="h-3 w-3" />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="transcript" className="space-y-4">
+              {note.transcript ? (
+                <Card data-testid="card-transcript">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <AudioLines className="h-4 w-4 text-primary" />
+                        Transcript
+                      </CardTitle>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={openSplitTranscriptDialog}
+                          disabled={!hasTranscriptSelection || splitTranscriptMutation.isPending}
+                          data-testid="button-split-transcript"
+                        >
+                          {splitTranscriptMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Scissors className="h-3 w-3 mr-1" />
+                          )}
+                          Split selection
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6"
-                          onClick={() => printPatientInstructions(generatedSummary)}
+                          onClick={() => copyToClipboard(note.transcript || "")}
+                          data-testid="button-copy-transcript"
                         >
-                          <Printer className="h-3 w-3" />
+                          <Copy className="h-4 w-4" />
                         </Button>
                       </div>
-                      <p className="text-xs whitespace-pre-wrap">{generatedSummary}</p>
                     </div>
-                  )}
-                </div>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <Textarea
+                      readOnly
+                      value={note.transcript || ""}
+                      onSelect={handleTranscriptSelectionChange}
+                      onMouseUp={handleTranscriptSelectionChange}
+                      onKeyUp={handleTranscriptSelectionChange}
+                      className="min-h-[260px] text-base leading-relaxed bg-muted/50"
+                      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+                      data-testid="textarea-transcript-readonly"
+                    />
+                    <p className="mt-2 text-xs text-muted-foreground" data-testid="text-transcript-selection-hint">
+                      {hasTranscriptSelection
+                        ? `${transcriptSelection.text.trim().length} characters selected. Click "Split selection" to move it to a new note.`
+                        : "Highlight transcript text to split it into a new note."}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card data-testid="card-transcript-empty">
+                  <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                    No transcript is available for this note.
+                  </CardContent>
+                </Card>
               )}
+            </TabsContent>
 
-              {/* Referral Panel */}
-              {showReferralModal && (
-                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">Referrals</h4>
-                    <Button variant="ghost" size="icon" onClick={() => setShowReferralModal(false)}>
-                      <X className="h-4 w-4" />
+            <TabsContent value="codes" className="space-y-4">
+              <Card data-testid="card-dx-codes">
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Code2 className="h-4 w-4 text-primary" />
+                      Dx/Codes
+                    </CardTitle>
+                    <Button
+                      onClick={() => codesMutation.mutate()}
+                      disabled={codesMutation.isPending}
+                      data-testid="button-generate-dx-codes"
+                    >
+                      {codesMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4 mr-2" />
+                      )}
+                      Suggest Codes
                     </Button>
                   </div>
-                  
-                  {/* Suggested Referrals */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h5 className="text-xs font-medium">Suggested</h5>
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSuggestedReferrals} disabled={isLoadingReferrals}>
-                        {isLoadingReferrals ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                      </Button>
-                    </div>
-                    
-                    {isLoadingReferrals ? (
-                      <div className="flex items-center justify-center py-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : suggestedReferrals.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center py-1">No referrals suggested</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {suggestedReferrals.map((ref, index) => (
-                          <div key={index} className={`flex items-start gap-2 p-2 rounded border text-xs ${ref.confirmed ? 'bg-green-50 dark:bg-green-900/20' : 'bg-background'}`}>
-                            <div className="flex-1">
-                              <p className="font-medium">{ref.specialty}</p>
-                              <Badge variant={ref.urgency === 'urgent' || ref.urgency === 'emergent' ? 'destructive' : 'secondary'} className="text-xs">
-                                {ref.urgency}
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {suggestedCodes ? (
+                    <>
+                      {suggestedCodes.codes && suggestedCodes.codes.length > 0 && (
+                        <div className="space-y-2">
+                          <h5 className="text-sm font-medium">ICD-10 Codes</h5>
+                          {suggestedCodes.codes.map((code, i) => (
+                            <div key={i} className="flex items-start gap-2 p-3 bg-muted/40 rounded border text-sm">
+                              <Badge variant={code.category === "primary" ? "default" : "secondary"}>
+                                {code.code}
                               </Badge>
-                            </div>
-                            {!ref.confirmed && (
-                              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => confirmSuggestedReferral(ref, index)}>
-                                <FileSignature className="h-3 w-3" />
+                              <div className="flex-1 min-w-0">
+                                <p>{code.description}</p>
+                              </div>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copyToClipboard(code.code)}>
+                                <Copy className="h-3 w-3" />
                               </Button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
-                  {/* Manual Entry */}
-                  <div className="border-t pt-2 space-y-2">
-                    <h5 className="text-xs font-medium">Create Manually</h5>
-                    <Input
-                      placeholder="Specialty"
-                      value={referralSpecialty}
-                      onChange={(e) => setReferralSpecialty(e.target.value)}
-                      className="text-xs"
-                    />
-                    <Input
-                      placeholder="Reason"
-                      value={referralReason}
-                      onChange={(e) => setReferralReason(e.target.value)}
-                      className="text-xs"
-                    />
-                    <Button size="sm" className="w-full" onClick={() => referralMutation.mutate({})} disabled={referralMutation.isPending}>
-                      {referralMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate Letter"}
-                    </Button>
-                  </div>
-                  
-                  {referralLetter && (
-                    <div className="p-2 bg-background rounded border">
-                      <div className="flex justify-end mb-1 gap-1">
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(referralLetter)}>
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReferralLetter("")}>
-                          <X className="h-3 w-3" />
-                        </Button>
-                      </div>
-                      <Textarea
-                        value={referralLetter}
-                        onChange={(e) => setReferralLetter(e.target.value)}
-                        className="min-h-[150px] text-xs"
-                      />
-                    </div>
+                      {suggestedCodes.cptCodes && suggestedCodes.cptCodes.length > 0 && (
+                        <div className="space-y-2">
+                          <h5 className="text-sm font-medium">CPT Codes</h5>
+                          {suggestedCodes.cptCodes.map((code, i) => (
+                            <div key={i} className="flex items-start gap-2 p-3 bg-muted/40 rounded border text-sm">
+                              <Badge variant="outline">{code.code}</Badge>
+                              <div className="flex-1 min-w-0">
+                                <p>{code.description}</p>
+                              </div>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copyToClipboard(code.code)}>
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No code suggestions yet. Click "Suggest Codes" to generate ICD-10/CPT recommendations.
+                    </p>
                   )}
-                </div>
-              )}
 
-              {/* Task Panel */}
-              {showTaskModal && (
-                <div className="p-3 bg-muted/50 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">Tasks</h4>
-                    <Button variant="ghost" size="icon" onClick={() => setShowTaskModal(false)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  
-                  {/* Suggested Tasks */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h5 className="text-xs font-medium">Suggested</h5>
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSuggestedTasks} disabled={isLoadingSuggestedTasks}>
-                        {isLoadingSuggestedTasks ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  <div className="border-t pt-4 space-y-3">
+                    <h5 className="text-sm font-medium">Manual Diagnosis</h5>
+                    <div className="grid gap-2 md:grid-cols-[180px_1fr_auto]">
+                      <Input
+                        placeholder="Code (e.g., J06.9)"
+                        value={newDiagnosisCode}
+                        onChange={(e) => setNewDiagnosisCode(e.target.value)}
+                        data-testid="input-manual-diagnosis-code"
+                      />
+                      <Input
+                        placeholder="Description"
+                        value={newDiagnosisDesc}
+                        onChange={(e) => setNewDiagnosisDesc(e.target.value)}
+                        data-testid="input-manual-diagnosis-description"
+                      />
+                      <Button onClick={addManualDiagnosis} disabled={!newDiagnosisCode.trim()} data-testid="button-add-manual-diagnosis">
+                        Add
                       </Button>
                     </div>
-                    
-                    {isLoadingSuggestedTasks ? (
-                      <div className="flex items-center justify-center py-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : suggestedTasks.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center py-1">No tasks suggested</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {suggestedTasks.map((task, index) => (
-                          <div key={index} className={`flex items-start gap-2 p-2 rounded border text-xs ${task.confirmed ? 'bg-green-50 dark:bg-green-900/20' : 'bg-background'}`}>
-                            <div className="flex-1">
-                              <p className="font-medium">{task.title}</p>
-                              <Badge variant="outline" className="text-xs">{task.category}</Badge>
-                            </div>
-                            {!task.confirmed && (
-                              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => confirmSuggestedTask(task, index)}>
-                                <Check className="h-3 w-3" />
-                              </Button>
-                            )}
+                    {additionalDiagnoses.length > 0 && (
+                      <div className="space-y-2">
+                        {additionalDiagnoses.map((diag, index) => (
+                          <div key={`${diag.code}-${index}`} className="flex items-start gap-2 p-3 bg-muted/40 rounded border text-sm">
+                            <Badge variant="secondary">{diag.code}</Badge>
+                            <div className="flex-1">{diag.description}</div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => removeManualDiagnosis(index)}
+                              data-testid={`button-remove-manual-diagnosis-${index}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-                  {/* Manual Entry */}
-                  <div className="border-t pt-2 space-y-2">
-                    <h5 className="text-xs font-medium">Add Manually</h5>
-                    <Input
-                      placeholder="Task description"
-                      value={newTaskTitle}
-                      onChange={(e) => setNewTaskTitle(e.target.value)}
-                      className="text-xs"
-                    />
-                    <Select value={newTaskCategory} onValueChange={setNewTaskCategory}>
-                      <SelectTrigger className="text-xs">
-                        <SelectValue placeholder="Category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TASK_CATEGORIES.map((cat) => (
-                          <SelectItem key={cat.value} value={cat.value}>
-                            {cat.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button size="sm" className="w-full" onClick={handleCreateTask} disabled={!newTaskTitle.trim() || createTaskMutation.isPending}>
-                      {createTaskMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Task"}
+            <TabsContent value="ai-tools" className="space-y-4">
+              <Card data-testid="card-ai-tools">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    AI Tools
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex flex-col h-auto py-3"
+                      onClick={handleOpenTaskModal}
+                      data-testid="button-create-task-panel"
+                    >
+                      <ListTodo className="h-5 w-5 mb-1" />
+                      <span className="text-xs">Add Task</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex flex-col h-auto py-3"
+                      onClick={handleOpenReferralModal}
+                      data-testid="button-referral-panel"
+                    >
+                      <FileSignature className="h-5 w-5 mb-1" />
+                      <span className="text-xs">Referral</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex flex-col h-auto py-3"
+                      onClick={() => setShowAiChat(!showAiChat)}
+                      data-testid="button-ai-chat-panel"
+                    >
+                      <MessageSquare className="h-5 w-5 mb-1" />
+                      <span className="text-xs">AI Chat</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex flex-col h-auto py-3"
+                      onClick={() => setShowSummaryPanel(!showSummaryPanel)}
+                      data-testid="button-summary-panel"
+                    >
+                      <ClipboardList className="h-5 w-5 mb-1" />
+                      <span className="text-xs">Summary</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex flex-col h-auto py-3"
+                      onClick={() => setActiveMainTab("codes")}
+                      data-testid="button-open-codes-tab"
+                    >
+                      <Code2 className="h-5 w-5 mb-1" />
+                      <span className="text-xs">Dx Codes</span>
                     </Button>
                   </div>
 
-                  {noteTasks && noteTasks.length > 0 && (
-                    <div className="border-t pt-2">
-                      <h5 className="text-xs font-medium mb-1">Linked Tasks ({noteTasks.length})</h5>
-                      <div className="space-y-1">
-                        {noteTasks.slice(0, 3).map((task) => (
-                          <div key={task.id} className="flex items-center gap-2 text-xs p-1 bg-background rounded">
-                            <ListTodo className="h-3 w-3 text-muted-foreground" />
-                            <span className={task.status === "completed" ? "line-through text-muted-foreground" : ""}>
-                              {task.title}
-                            </span>
+                  {showAiChat && (
+                    <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">AI Assistant</h4>
+                        <Button variant="ghost" size="icon" onClick={() => setShowAiChat(false)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="max-h-[220px] overflow-auto space-y-2">
+                        {chatHistory.length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-2">
+                            Ask questions about documentation or clinical guidance
+                          </p>
+                        )}
+                        {chatHistory.map((msg, i) => (
+                          <div key={i} className={`p-2 rounded text-xs ${msg.role === "user" ? "bg-primary/10 ml-4" : "bg-background mr-4 border"}`}>
+                            <p className="whitespace-pre-wrap">{msg.content}</p>
                           </div>
                         ))}
                       </div>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Ask a question..."
+                          value={chatQuestion}
+                          onChange={(e) => setChatQuestion(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
+                          className="text-xs"
+                        />
+                        <Button size="icon" onClick={handleSendChat} disabled={aiChatMutation.isPending || !chatQuestion.trim()}>
+                          {aiChatMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        </Button>
+                      </div>
                     </div>
                   )}
-                </div>
-              )}
-            </div>
-          )}
+
+                  {showSummaryPanel && (
+                    <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">Patient Summary</h4>
+                        <Button variant="ghost" size="icon" onClick={() => setShowSummaryPanel(false)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="flex gap-2">
+                        <Select value={summaryType} onValueChange={setSummaryType}>
+                          <SelectTrigger className="text-xs">
+                            <SelectValue placeholder="Type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="brief">Brief</SelectItem>
+                            <SelectItem value="detailed">Detailed</SelectItem>
+                            <SelectItem value="handover">Handover</SelectItem>
+                            <SelectItem value="discharge">Discharge</SelectItem>
+                            <SelectItem value="patient_instructions">Patient Instructions</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button size="sm" onClick={() => summaryMutation.mutate()} disabled={summaryMutation.isPending}>
+                          {summaryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate"}
+                        </Button>
+                      </div>
+                      {generatedSummary && (
+                        <div className="p-2 bg-background rounded border">
+                          <div className="flex justify-end gap-1 mb-1">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(generatedSummary)}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => printPatientInstructions(generatedSummary)}
+                            >
+                              <Printer className="h-3 w-3" />
+                            </Button>
+                          </div>
+                          <p className="text-xs whitespace-pre-wrap">{generatedSummary}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showReferralModal && (
+                    <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">Referrals</h4>
+                        <Button variant="ghost" size="icon" onClick={() => setShowReferralModal(false)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-xs font-medium">Suggested</h5>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSuggestedReferrals} disabled={isLoadingReferrals}>
+                            {isLoadingReferrals ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                          </Button>
+                        </div>
+                        {isLoadingReferrals ? (
+                          <div className="flex items-center justify-center py-2">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : suggestedReferrals.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-1">No referrals suggested</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {suggestedReferrals.map((ref, index) => (
+                              <div key={index} className={`flex items-start gap-2 p-2 rounded border text-xs ${ref.confirmed ? 'bg-green-50 dark:bg-green-900/20' : 'bg-background'}`}>
+                                <div className="flex-1">
+                                  <p className="font-medium">{ref.specialty}</p>
+                                  <Badge variant={ref.urgency === 'urgent' || ref.urgency === 'emergent' ? 'destructive' : 'secondary'} className="text-xs">
+                                    {ref.urgency}
+                                  </Badge>
+                                </div>
+                                {!ref.confirmed && (
+                                  <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => confirmSuggestedReferral(ref, index)}>
+                                    <FileSignature className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="border-t pt-2 space-y-2">
+                        <h5 className="text-xs font-medium">Create Manually</h5>
+                        <Input
+                          placeholder="Specialty"
+                          value={referralSpecialty}
+                          onChange={(e) => setReferralSpecialty(e.target.value)}
+                          className="text-xs"
+                        />
+                        <Input
+                          placeholder="Reason"
+                          value={referralReason}
+                          onChange={(e) => setReferralReason(e.target.value)}
+                          className="text-xs"
+                        />
+                        <Button size="sm" className="w-full" onClick={() => referralMutation.mutate({})} disabled={referralMutation.isPending}>
+                          {referralMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate Letter"}
+                        </Button>
+                      </div>
+                      {referralLetter && (
+                        <div className="p-2 bg-background rounded border">
+                          <div className="flex justify-end mb-1 gap-1">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(referralLetter)}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReferralLetter("")}>
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                          <Textarea
+                            value={referralLetter}
+                            onChange={(e) => setReferralLetter(e.target.value)}
+                            className="min-h-[150px] text-xs"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showTaskModal && (
+                    <div className="p-3 bg-muted/50 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">Tasks</h4>
+                        <Button variant="ghost" size="icon" onClick={() => setShowTaskModal(false)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-xs font-medium">Suggested</h5>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSuggestedTasks} disabled={isLoadingSuggestedTasks}>
+                            {isLoadingSuggestedTasks ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                          </Button>
+                        </div>
+                        {isLoadingSuggestedTasks ? (
+                          <div className="flex items-center justify-center py-2">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : suggestedTasks.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-1">No tasks suggested</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {suggestedTasks.map((task, index) => (
+                              <div key={index} className={`flex items-start gap-2 p-2 rounded border text-xs ${task.confirmed ? 'bg-green-50 dark:bg-green-900/20' : 'bg-background'}`}>
+                                <div className="flex-1">
+                                  <p className="font-medium">{task.title}</p>
+                                  <Badge variant="outline" className="text-xs">{task.category}</Badge>
+                                </div>
+                                {!task.confirmed && (
+                                  <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => confirmSuggestedTask(task, index)}>
+                                    <Check className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="border-t pt-2 space-y-2">
+                        <h5 className="text-xs font-medium">Add Manually</h5>
+                        <Input
+                          placeholder="Task description"
+                          value={newTaskTitle}
+                          onChange={(e) => setNewTaskTitle(e.target.value)}
+                          className="text-xs"
+                        />
+                        <Select value={newTaskCategory} onValueChange={setNewTaskCategory}>
+                          <SelectTrigger className="text-xs">
+                            <SelectValue placeholder="Category" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TASK_CATEGORIES.map((cat) => (
+                              <SelectItem key={cat.value} value={cat.value}>
+                                {cat.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button size="sm" className="w-full" onClick={handleCreateTask} disabled={!newTaskTitle.trim() || createTaskMutation.isPending}>
+                          {createTaskMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Task"}
+                        </Button>
+                      </div>
+                      {noteTasks && noteTasks.length > 0 && (
+                        <div className="border-t pt-2">
+                          <h5 className="text-xs font-medium mb-1">Linked Tasks ({noteTasks.length})</h5>
+                          <div className="space-y-1">
+                            {noteTasks.slice(0, 3).map((task) => (
+                              <div key={task.id} className="flex items-center gap-2 text-xs p-1 bg-background rounded">
+                                <ListTodo className="h-3 w-3 text-muted-foreground" />
+                                <span className={task.status === "completed" ? "line-through text-muted-foreground" : ""}>
+                                  {task.title}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 
