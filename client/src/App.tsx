@@ -19,6 +19,7 @@ import Tasks from "@/pages/tasks";
 import Admin from "@/pages/admin";
 import Invite from "@/pages/invite";
 import Settings from "@/pages/settings";
+import Mailbox from "@/pages/mailbox";
 import SharedNotes from "@/pages/shared-notes";
 import Analytics from "@/pages/analytics";
 import Notes from "@/pages/notes";
@@ -62,6 +63,7 @@ function AuthenticatedLayout() {
               <Route path="/subscription" component={Subscription} />
               <Route path="/templates" component={Templates} />
               <Route path="/settings" component={Settings} />
+              <Route path="/mailbox" component={Mailbox} />
               <Route path="/shared-notes" component={SharedNotes} />
               <Route path="/analytics" component={Analytics} />
               <Route path="/guide" component={Guide} />

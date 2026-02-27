@@ -228,6 +228,12 @@ const submitInternalMessageSchema = z.object({
   category: z.enum(["general", "support", "billing", "bug", "feature"]).default("general"),
 });
 
+const sendMailboxMessageSchema = z.object({
+  recipientUserId: z.string().trim().min(1, "Recipient User ID is required").max(128, "Recipient User ID is too long"),
+  subject: z.string().trim().min(3, "Subject must be at least 3 characters").max(150, "Subject is too long"),
+  message: z.string().trim().min(1, "Message is required").max(5000, "Message is too long"),
+});
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -1508,6 +1514,122 @@ Focus only on clinically significant interactions. Do not include minor or theor
     } catch (error) {
       console.error("Error submitting internal message:", error);
       res.status(500).json({ error: "Failed to send message" });
+    }
+  });
+
+  app.get("/api/mailbox/users/:userId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const lookupUserId = String(req.params.userId || "").trim();
+      if (!lookupUserId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      const recipient = await storage.getUserById(lookupUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const displayName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
+      res.json({
+        userId: recipient.id,
+        email: recipient.email,
+        displayName: displayName || recipient.email || recipient.id,
+      });
+    } catch (error) {
+      console.error("Error looking up mailbox recipient:", error);
+      res.status(500).json({ error: "Failed to look up user" });
+    }
+  });
+
+  app.post("/api/mailbox/messages", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = sendMailboxMessageSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid message" });
+      }
+
+      const senderUserId = req.user.claims.sub;
+      const senderEmail = req.user.claims.email;
+      if (parsed.data.recipientUserId === senderUserId) {
+        return res.status(400).json({ error: "You cannot send a mailbox message to yourself" });
+      }
+
+      const recipient = await storage.getUserById(parsed.data.recipientUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "Recipient user was not found" });
+      }
+
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const userAgent = req.headers["user-agent"];
+      const recipientDisplayName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
+
+      await storage.createAuditLog({
+        userId: senderUserId,
+        userEmail: senderEmail,
+        action: "sent",
+        resourceType: "user_mailbox",
+        details: JSON.stringify({
+          recipientUserId: recipient.id,
+          recipientEmail: recipient.email,
+          recipientDisplayName: recipientDisplayName || recipient.email || recipient.id,
+          subject: parsed.data.subject,
+          message: parsed.data.message,
+        }),
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent,
+      });
+
+      res.status(201).json({ success: true, message: "Message sent" });
+    } catch (error) {
+      console.error("Error sending mailbox message:", error);
+      res.status(500).json({ error: "Failed to send mailbox message" });
+    }
+  });
+
+  app.get("/api/mailbox/messages", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const folderParam = Array.isArray(req.query.folder) ? req.query.folder[0] : req.query.folder;
+      const folder = folderParam === "sent" ? "sent" : "inbox";
+      const logs = await storage.getAuditLogs({ resourceType: "user_mailbox" });
+
+      const parsedMessages = logs
+        .map((log) => {
+          let details: any = {};
+          try {
+            details = log.details ? JSON.parse(log.details) : {};
+          } catch {
+            details = {};
+          }
+
+          const recipientUserId = typeof details.recipientUserId === "string" ? details.recipientUserId : "";
+          const recipientEmail = typeof details.recipientEmail === "string" ? details.recipientEmail : null;
+          const recipientDisplayName = typeof details.recipientDisplayName === "string" ? details.recipientDisplayName : null;
+          const subject = typeof details.subject === "string" ? details.subject : "No subject";
+          const message = typeof details.message === "string" ? details.message : "";
+
+          return {
+            id: log.id,
+            senderUserId: log.userId,
+            senderEmail: log.userEmail,
+            recipientUserId,
+            recipientEmail,
+            recipientDisplayName,
+            subject,
+            message,
+            createdAt: log.timestamp,
+          };
+        })
+        .filter((message) => message.recipientUserId);
+
+      const messages = parsedMessages.filter((message) =>
+        folder === "sent" ? message.senderUserId === userId : message.recipientUserId === userId
+      );
+
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching mailbox messages:", error);
+      res.status(500).json({ error: "Failed to fetch mailbox messages" });
     }
   });
 

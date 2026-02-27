@@ -51,6 +51,7 @@ import {
   Crown,
   ListTodo,
   Share2,
+  MessageSquare,
   TrendingUp,
   ChevronRight,
   Users,
@@ -414,6 +415,14 @@ export function AppSidebar() {
                   <Link href="/shared-notes" data-testid="nav-shared-notes">
                     <Share2 className="h-4 w-4" />
                     <span>Shared Notes</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/mailbox"}>
+                  <Link href="/mailbox" data-testid="nav-mailbox">
+                    <MessageSquare className="h-4 w-4" />
+                    <span>Mailbox</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

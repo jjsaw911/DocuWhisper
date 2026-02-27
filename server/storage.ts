@@ -60,6 +60,7 @@ export interface IStorage {
   // Admin - get all users
   getAllUserSettings(): Promise<UserSettings[]>;
   getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
+  getUserById(userId: string): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null } | undefined>;
   deleteUserAndData(userId: string): Promise<void>;
   // Practice/Team functions
   createPractice(practice: InsertPractice): Promise<Practice>;
@@ -524,6 +525,21 @@ class DatabaseStorage implements IStorage {
       lastName: users.lastName,
       createdAt: users.createdAt,
     }).from(users).orderBy(desc(users.createdAt));
+  }
+
+  async getUserById(userId: string): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null } | undefined> {
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return user;
   }
 
   async deleteUserAndData(userId: string): Promise<void> {
