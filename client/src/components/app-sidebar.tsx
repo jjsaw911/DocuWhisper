@@ -282,7 +282,7 @@ export function AppSidebar() {
                     side="right" 
                     align="start" 
                     sideOffset={8}
-                    className="w-72"
+                    className="w-80 max-w-[calc(100vw-2rem)]"
                   >
                     <DropdownMenuLabel className="flex items-center justify-between">
                       <span>Recent Sessions</span>
@@ -317,7 +317,7 @@ export function AppSidebar() {
                               return (
                                 <div
                                   key={note.id}
-                                  className={`flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-accent ${isCurrentNote ? 'bg-accent' : ''}`}
+                                  className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 px-1.5 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-accent ${isCurrentNote ? 'bg-accent' : ''}`}
                                   data-testid={`note-item-${note.id}`}
                                 >
                                   <button
@@ -333,7 +333,7 @@ export function AppSidebar() {
                                     <Trash2 className="h-4 w-4 text-red-500 dark:text-red-400" />
                                   </button>
                                   <div 
-                                    className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                                    className="flex items-center gap-2 min-w-0 cursor-pointer"
                                     onClick={(e) => {
                                       e.preventDefault();
                                       const targetPath = `/notes/${note.id}`;
@@ -359,6 +359,7 @@ export function AppSidebar() {
                                   </div>
                                   <Checkbox
                                     checked={isCopiedToEmr}
+                                    className="justify-self-end"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                     }}
