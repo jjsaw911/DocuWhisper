@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic, MessageSquare } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -114,6 +114,9 @@ export default function Settings() {
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
   const [staySignedIn, setStaySignedIn] = useState(false);
+  const [internalMessageSubject, setInternalMessageSubject] = useState("");
+  const [internalMessageCategory, setInternalMessageCategory] = useState("general");
+  const [internalMessageBody, setInternalMessageBody] = useState("");
 
   // EMR Credentials state
   const [emrRole, setEmrRole] = useState<string>("");
@@ -380,6 +383,33 @@ export default function Settings() {
       toast({
         title: "Error",
         description: "Failed to save settings",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const sendInternalMessageMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/internal-messages", {
+        subject: internalMessageSubject.trim(),
+        category: internalMessageCategory,
+        message: internalMessageBody.trim(),
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      setInternalMessageSubject("");
+      setInternalMessageBody("");
+      setInternalMessageCategory("general");
+      toast({
+        title: "Message sent",
+        description: "Your message is now in the internal admin inbox.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to send",
+        description: error?.message || "Please try again",
         variant: "destructive",
       });
     },
@@ -798,6 +828,68 @@ export default function Settings() {
                   </p>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-5 w-5 text-primary" />
+                <CardTitle>Contact Admin</CardTitle>
+              </div>
+              <CardDescription>
+                Send an internal message to your admin inbox without external email.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="internal-message-subject">Subject</Label>
+                <Input
+                  id="internal-message-subject"
+                  value={internalMessageSubject}
+                  onChange={(e) => setInternalMessageSubject(e.target.value)}
+                  placeholder="What do you need help with?"
+                  data-testid="input-internal-message-subject"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="internal-message-category">Category</Label>
+                <Select value={internalMessageCategory} onValueChange={setInternalMessageCategory}>
+                  <SelectTrigger id="internal-message-category" data-testid="select-internal-message-category">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="support">Support</SelectItem>
+                    <SelectItem value="billing">Billing</SelectItem>
+                    <SelectItem value="bug">Bug Report</SelectItem>
+                    <SelectItem value="feature">Feature Request</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="internal-message-body">Message</Label>
+                <Textarea
+                  id="internal-message-body"
+                  value={internalMessageBody}
+                  onChange={(e) => setInternalMessageBody(e.target.value)}
+                  placeholder="Describe your request or issue..."
+                  className="min-h-[140px]"
+                  data-testid="textarea-internal-message-body"
+                />
+              </div>
+              <Button
+                onClick={() => sendInternalMessageMutation.mutate()}
+                disabled={!internalMessageSubject.trim() || !internalMessageBody.trim() || sendInternalMessageMutation.isPending}
+                data-testid="button-send-internal-message"
+              >
+                {sendInternalMessageMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                )}
+                Send to Admin Inbox
+              </Button>
             </CardContent>
           </Card>
 

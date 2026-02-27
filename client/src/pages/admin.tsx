@@ -28,6 +28,7 @@ import {
   Crown,
   Shield,
   Mail,
+  MessageSquare,
   Send,
   CreditCard,
   Settings,
@@ -112,6 +113,16 @@ interface ApiKey {
 
 interface ApiKeyScopes {
   [scope: string]: string;
+}
+
+interface InternalMessage {
+  id: number;
+  userId: string;
+  userEmail?: string | null;
+  subject: string;
+  message: string;
+  category: string;
+  createdAt: string;
 }
 
 const EMR_LICENSE_TYPES = [
@@ -239,6 +250,11 @@ export default function Admin() {
 
   const { data: apiKeyScopes } = useQuery<ApiKeyScopes>({
     queryKey: ["/api/admin/api-keys/scopes"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  const { data: internalMessages, isLoading: internalMessagesLoading } = useQuery<InternalMessage[]>({
+    queryKey: ["/api/admin/internal-messages"],
     enabled: !!user && adminCheck?.isAdmin === true,
   });
 
@@ -764,6 +780,10 @@ export default function Admin() {
             <TabsTrigger value="api-keys" data-testid="tab-api-keys">
               <Key className="mr-2 h-4 w-4" />
               API Keys
+            </TabsTrigger>
+            <TabsTrigger value="internal-inbox" data-testid="tab-internal-inbox">
+              <MessageSquare className="mr-2 h-4 w-4" />
+              Internal Inbox
             </TabsTrigger>
           </TabsList>
 
@@ -1693,6 +1713,69 @@ export default function Admin() {
                   <div className="text-center py-8 text-muted-foreground">
                     <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <p>Select an organization to manage API keys</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="internal-inbox" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5" />
+                  Internal Inbox
+                </CardTitle>
+                <CardDescription>
+                  User-submitted internal messages (no external mailbox required)
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {internalMessagesLoading ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : internalMessages && internalMessages.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>From</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Subject</TableHead>
+                          <TableHead>Message</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {internalMessages.map((msg) => (
+                          <TableRow key={msg.id} data-testid={`row-internal-message-${msg.id}`}>
+                            <TableCell className="whitespace-nowrap">{formatDate(msg.createdAt)}</TableCell>
+                            <TableCell className="max-w-[220px]">
+                              <div className="truncate font-medium">{msg.userEmail || "-"}</div>
+                              <div className="truncate text-xs text-muted-foreground">{msg.userId}</div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="secondary" className="capitalize">
+                                {msg.category}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="max-w-[240px] truncate font-medium">
+                              {msg.subject}
+                            </TableCell>
+                            <TableCell className="max-w-[420px]">
+                              <p className="line-clamp-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                                {msg.message}
+                              </p>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No internal messages yet</p>
+                    <p className="text-sm">Messages submitted from Settings will appear here</p>
                   </div>
                 )}
               </CardContent>

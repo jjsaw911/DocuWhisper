@@ -222,6 +222,12 @@ const updateTaskSchema = z.object({
   status: z.enum(["todo", "completed"]).optional(),
 });
 
+const submitInternalMessageSchema = z.object({
+  subject: z.string().trim().min(3, "Subject must be at least 3 characters").max(150, "Subject is too long"),
+  message: z.string().trim().min(1, "Message is required").max(5000, "Message is too long"),
+  category: z.enum(["general", "support", "billing", "bug", "feature"]).default("general"),
+});
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -1471,6 +1477,40 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  // Internal user-to-admin inbox (no external email provider required)
+  app.post("/api/internal-messages", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = submitInternalMessageSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid message" });
+      }
+
+      const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const userAgent = req.headers["user-agent"];
+
+      await storage.createAuditLog({
+        userId,
+        userEmail,
+        action: "submitted",
+        resourceType: "internal_message",
+        details: JSON.stringify({
+          subject: parsed.data.subject,
+          message: parsed.data.message,
+          category: parsed.data.category,
+        }),
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent,
+      });
+
+      res.status(201).json({ success: true, message: "Message sent to admin inbox" });
+    } catch (error) {
+      console.error("Error submitting internal message:", error);
+      res.status(500).json({ error: "Failed to send message" });
+    }
+  });
+
   // ===== Personal API Key Management =====
   app.get("/api/personal-api-keys", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -1717,6 +1757,36 @@ Focus only on clinically significant interactions. Do not include minor or theor
       isAdmin: isAdmin(req),
       userEmail: req.user?.claims?.email,
     });
+  });
+
+  // Get internal inbox submissions (admin only)
+  app.get("/api/admin/internal-messages", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const logs = await storage.getAuditLogs({ resourceType: "internal_message" });
+      const messages = logs.map((log) => {
+        let parsedDetails: any = {};
+        try {
+          parsedDetails = log.details ? JSON.parse(log.details) : {};
+        } catch {
+          parsedDetails = {};
+        }
+
+        return {
+          id: log.id,
+          userId: log.userId,
+          userEmail: log.userEmail,
+          subject: parsedDetails.subject || "No subject",
+          message: parsedDetails.message || "",
+          category: parsedDetails.category || "general",
+          createdAt: log.timestamp,
+        };
+      });
+
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching internal messages:", error);
+      res.status(500).json({ error: "Failed to fetch internal messages" });
+    }
   });
 
   // Get all subscribers (admin only)
