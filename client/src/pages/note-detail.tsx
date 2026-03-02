@@ -13,8 +13,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams, useLocation } from "wouter";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import html2pdf from "html2pdf.js";
-import DOMPurify from "dompurify";
 import { 
   ArrowLeft, 
   Save,
@@ -1196,7 +1194,7 @@ export default function NoteDetail() {
     }
   };
 
-  const printPatientInstructions = (summaryText: string) => {
+  const printPatientInstructions = async (summaryText: string) => {
     if (!summaryText || !summaryText.trim()) {
       toast({
         title: "No summary to print",
@@ -1243,6 +1241,19 @@ export default function NoteDetail() {
       return;
     }
 
+    let DOMPurify: { sanitize: (value: string) => string };
+    try {
+      const purifyModule = await import("dompurify");
+      DOMPurify = purifyModule.default;
+    } catch {
+      toast({
+        title: "Failed to load printer",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     printWindow.document.open();
     printWindow.document.write(DOMPurify.sanitize(rawHtml));
     printWindow.document.close();
@@ -1253,37 +1264,7 @@ export default function NoteDetail() {
     }, 250);
   };
 
-  const exportToPDF = () => {
-    const confirmedTasksHtml = noteTasks && noteTasks.length > 0 ? `
-      <div class="section">
-        <h2>Tasks</h2>
-        <ul>
-          ${noteTasks.map(task => `<li>${task.title} (${task.category}) - ${task.status === 'completed' ? 'Completed' : 'Pending'}</li>`).join('')}
-        </ul>
-      </div>
-    ` : '';
-
-    const hasDiagnoses = (suggestedCodes?.codes && suggestedCodes.codes.length > 0) || additionalDiagnoses.length > 0;
-    const diagnosesHtml = hasDiagnoses ? `
-      <div class="section">
-        <h2>Diagnoses</h2>
-        <ul>
-          ${(suggestedCodes?.codes || []).map(code => `<li><strong>${code.code}</strong> - ${code.description}</li>`).join('')}
-          ${additionalDiagnoses.map(diag => `<li><strong>${diag.code}</strong> - ${diag.description}</li>`).join('')}
-        </ul>
-      </div>
-    ` : '';
-
-    const hasCptCodes = suggestedCodes?.cptCodes && suggestedCodes.cptCodes.length > 0;
-    const cptCodesHtml = hasCptCodes ? `
-      <div class="section">
-        <h2>Billing Codes</h2>
-        <ul>
-          ${(suggestedCodes?.cptCodes || []).map(code => `<li><strong>${code.code}</strong> - ${code.description}</li>`).join('')}
-        </ul>
-      </div>
-    ` : '';
-
+  const exportToPDF = async () => {
     const confirmedReferralLetters = suggestedReferrals
       .filter(r => r.confirmed && r.letterGenerated)
       .map(r => ({ specialty: r.specialty, letter: r.letterGenerated! }));
@@ -1291,18 +1272,6 @@ export default function NoteDetail() {
     if (referralLetter && !confirmedReferralLetters.some(r => r.letter === referralLetter)) {
       confirmedReferralLetters.push({ specialty: referralSpecialty || "Specialist", letter: referralLetter });
     }
-
-    const referralHtml = confirmedReferralLetters.length > 0 ? `
-      <div class="section">
-        <h2>Referral Letters</h2>
-        ${confirmedReferralLetters.map(r => `
-          <div class="referral-content">
-            <p><strong>Referral to: ${r.specialty}</strong></p>
-            ${r.letter.replace(/\n/g, '<br>')}
-          </div>
-        `).join('')}
-      </div>
-    ` : '';
 
     const buildSectionHtml = (title: string, items: string[]) => {
       if (items.length === 0) return '';
@@ -1347,20 +1316,34 @@ export default function NoteDetail() {
         ${referralSections}
       </div>
     `;
-    container.innerHTML = DOMPurify.sanitize(rawHtml);
 
-    const filename = `${(formData.title || formData.patientName || 'SOAP-Note').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+    try {
+      const [{ default: DOMPurify }, { default: html2pdf }] = await Promise.all([
+        import("dompurify"),
+        import("html2pdf.js"),
+      ]);
 
-    const opt = {
-      margin: 0.5,
-      filename: filename,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'in' as const, format: 'letter' as const, orientation: 'portrait' as const }
-    };
+      container.innerHTML = DOMPurify.sanitize(rawHtml);
 
-    html2pdf().set(opt).from(container).save();
-    toast({ title: "Downloading PDF", description: "Your SOAP note is being saved as PDF." });
+      const filename = `${(formData.title || formData.patientName || "SOAP-Note").replace(/[^a-z0-9]/gi, "_")}_${new Date().toISOString().split("T")[0]}.pdf`;
+
+      const opt = {
+        margin: 0.5,
+        filename,
+        image: { type: "jpeg" as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: "in" as const, format: "letter" as const, orientation: "portrait" as const },
+      };
+
+      await html2pdf().set(opt).from(container).save();
+      toast({ title: "Downloading PDF", description: "Your SOAP note is being saved as PDF." });
+    } catch {
+      toast({
+        title: "Failed to export PDF",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const shareNote = async () => {

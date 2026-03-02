@@ -1,9 +1,19 @@
-import { defineConfig } from "vite";
+import { createLogger, defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+const viteLogger = createLogger();
+const viteWarn = viteLogger.warn;
+viteLogger.warn = (msg, options) => {
+  if (msg.includes("A PostCSS plugin did not pass the `from` option to `postcss.parse`")) {
+    return;
+  }
+  viteWarn(msg, options);
+};
+
 export default defineConfig({
+  customLogger: viteLogger,
   plugins: [
     react(),
     runtimeErrorOverlay(),
@@ -30,6 +40,8 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    // Keep bundle alerts useful while allowing the intentionally lazy-loaded html2pdf chunk.
+    chunkSizeWarningLimit: 1100,
   },
   server: {
     fs: {
