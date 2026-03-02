@@ -72,6 +72,23 @@ type TranscriptEntry = {
   type: "system" | "content";
 };
 
+type Speaker = "clinician" | "patient";
+
+type StructuredSegment = {
+  speaker: Speaker;
+  text: string;
+  chunk_id: number;
+  timestamp: number;
+};
+
+type ResumeNoteData = {
+  id: number;
+  title: string;
+  transcript: string;
+  patientName: string | null;
+  patientContext: string | null;
+};
+
 export default function Session() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -88,13 +105,7 @@ export default function Session() {
   const resumeNoteId = urlParams.get("resumeId");
   const autoStartRecording = urlParams.get("autoStart") === "true";
   const [isResumeMode, setIsResumeMode] = useState(!!resumeNoteId);
-  const [resumeNoteData, setResumeNoteData] = useState<{
-    id: number;
-    title: string;
-    transcript: string;
-    patientName: string | null;
-    patientContext: string | null;
-  } | null>(null);
+  const [resumeNoteData, setResumeNoteData] = useState<ResumeNoteData | null>(null);
   
   // Refs to avoid stale closures in async callbacks
   const isResumeModeRef = useRef(!!resumeNoteId);
@@ -150,17 +161,45 @@ export default function Session() {
   const isRecordingRef = useRef<boolean>(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isTranscribingRef = useRef<boolean>(false);
+  const transcribeLockSessionRef = useRef<string | null>(null);
   const lastActivityDispatchRef = useRef<number>(0); // For throttled session activity
   
-  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number; peakLevel: number; rmsMax: number; speechFrames: number; speaker: "clinician" | "patient" };
+  type ChunkItem = { id: number; blob: Blob; processed: boolean; timestampSec: number; peakLevel: number; rmsMax: number; speechFrames: number; speaker: Speaker };
   const pendingChunksRef = useRef<ChunkItem[]>([]);
   const nextChunkIdRef = useRef<number>(0);
   const processedChunkIdsRef = useRef<Set<number>>(new Set());
   const recordingSessionIdRef = useRef<string>("");
-  type OrderedChunkEntry = { text: string; timestampSec: number; speaker: "clinician" | "patient" };
+  type OrderedChunkEntry = { text: string; timestampSec: number; speaker: Speaker };
   const orderedChunksRef = useRef<Map<number, OrderedChunkEntry>>(new Map());
   const nextExpectedChunkIdRef = useRef<number>(1);
   const droppedChunksRef = useRef<Set<number>>(new Set());
+
+  type FinalizeSnapshot = {
+    transcript: string;
+    pendingChunks: ChunkItem[];
+    orderedChunks: Map<number, OrderedChunkEntry>;
+    droppedChunks: Set<number>;
+    nextExpectedChunkId: number;
+    structuredSegments: StructuredSegment[];
+    patientName: string;
+    contextText: string;
+    selectedTemplateId: string;
+    transcriptionLanguage: string;
+    resumeMode: boolean;
+    resumeNoteData: ResumeNoteData | null;
+    sessionId: string;
+  };
+
+  type AutoGenerateAndSaveOptions = {
+    background?: boolean;
+    patientName?: string;
+    contextText?: string;
+    selectedTemplateId?: string;
+    transcriptionLanguage?: string;
+    speakerSegments?: StructuredSegment[];
+    resumeMode?: boolean;
+    resumeNoteData?: ResumeNoteData | null;
+  };
 
   const VAD_RMS_THRESHOLD = 0.02;
   const MIN_SPEECH_FRAMES = 10;
@@ -169,11 +208,9 @@ export default function Session() {
   const [vadStats, setVadStats] = useState({ uploaded: 0, dropped: 0, lastRms: 0 });
   const [showVadDebug, setShowVadDebug] = useState(false);
 
-  type Speaker = "clinician" | "patient";
   const [currentSpeaker, setCurrentSpeaker] = useState<Speaker>("clinician");
   const currentSpeakerRef = useRef<Speaker>("clinician");
   useEffect(() => { currentSpeakerRef.current = currentSpeaker; }, [currentSpeaker]);
-  type StructuredSegment = { speaker: Speaker; text: string; chunk_id: number; timestamp: number };
   const structuredSegmentsRef = useRef<StructuredSegment[]>([]);
   const recordingStartMsRef = useRef<number>(0);
   const recordingElapsedMsRef = useRef<number>(0);
@@ -340,6 +377,7 @@ export default function Session() {
     language?: string;
     autoSaveEnabled?: boolean;
     defaultTemplateId?: number;
+    transcriptionMode?: string;
     noiseThreshold?: number;
   }>({
     queryKey: ["/api/settings"],
@@ -409,9 +447,16 @@ export default function Session() {
   };
 
   type TranscribeResult = { ok: true; transcript: string; chunk_id: number; session_id: string } | { ok: false; error: "api_error" | "timeout" | "network" };
-  
-  const transcribeChunk = async (audioBlob: Blob, chunkId: number, maxRetries: number = 2): Promise<TranscribeResult> => {
-    const sessionId = recordingSessionIdRef.current;
+
+  const transcribeChunk = async (
+    audioBlob: Blob,
+    chunkId: number,
+    options?: { maxRetries?: number; sessionId?: string; language?: string },
+  ): Promise<TranscribeResult> => {
+    const maxRetries = options?.maxRetries ?? 2;
+    const sessionId = options?.sessionId ?? recordingSessionIdRef.current;
+    const language = options?.language ?? transcriptionLanguage;
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -419,7 +464,7 @@ export default function Session() {
       try {
         const formData = new FormData();
         formData.append("audio", audioBlob, "chunk.webm");
-        formData.append("language", transcriptionLanguage);
+        formData.append("language", language);
         formData.append("chunk_id", String(chunkId));
         formData.append("session_id", sessionId);
 
@@ -588,20 +633,33 @@ export default function Session() {
   };
 
   const processNextChunk = async () => {
+    const activeSessionId = recordingSessionIdRef.current;
     const chunkItem = pendingChunksRef.current.find(c => !c.processed);
     const pendingCount = pendingChunksRef.current.length;
     const unprocessedCount = pendingChunksRef.current.filter(c => !c.processed).length;
     console.log(`[processNextChunk] Called. Pending: ${pendingCount}, Unprocessed: ${unprocessedCount}, isTranscribing: ${isTranscribingRef.current}`);
+    const releaseTranscribeLock = () => {
+      if (transcribeLockSessionRef.current === activeSessionId) {
+        transcribeLockSessionRef.current = null;
+        isTranscribingRef.current = false;
+      }
+    };
     
     if (!chunkItem) {
       console.log("[Chunk] No unprocessed chunks remaining");
       return;
     }
     if (isTranscribingRef.current) {
-      console.log(`[Chunk] Already transcribing, chunk ${chunkItem.id} will be picked up when current finishes`);
-      return;
+      if (transcribeLockSessionRef.current && transcribeLockSessionRef.current !== activeSessionId) {
+        console.log("[Chunk] Clearing stale transcription lock for prior session");
+        transcribeLockSessionRef.current = null;
+        isTranscribingRef.current = false;
+      } else {
+        console.log(`[Chunk] Already transcribing, chunk ${chunkItem.id} will be picked up when current finishes`);
+        return;
+      }
     }
-    
+
     if (processedChunkIdsRef.current.has(chunkItem.id)) {
       console.log(`[Chunk ${chunkItem.id}] Already in processed set, skipping (dedup)`);
       chunkItem.processed = true;
@@ -623,12 +681,24 @@ export default function Session() {
     }
 
     isTranscribingRef.current = true;
+    transcribeLockSessionRef.current = activeSessionId;
     processedChunkIdsRef.current.add(chunkItem.id);
     
     console.log(`[Chunk ${chunkItem.id}] Processing ${chunkItem.blob.size} bytes (peak: ${chunkItem.peakLevel.toFixed(1)}%, rms: ${chunkItem.rmsMax.toFixed(4)}, speaker: ${chunkItem.speaker})...`);
     
     try {
-      const result = await transcribeChunk(chunkItem.blob, chunkItem.id);
+      const result = await transcribeChunk(chunkItem.blob, chunkItem.id, {
+        sessionId: activeSessionId,
+        language: transcriptionLanguage,
+      });
+
+      // Ignore late responses from a previous recording session.
+      if (activeSessionId !== recordingSessionIdRef.current) {
+        console.log(`[Chunk ${chunkItem.id}] Ignored - session changed`);
+        chunkItem.processed = true;
+        releaseTranscribeLock();
+        return;
+      }
       
       if (result.ok) {
         if (orderedChunksRef.current.has(result.chunk_id)) {
@@ -646,6 +716,12 @@ export default function Session() {
         flushOrderedChunks();
       }
     } catch (err) {
+      if (activeSessionId !== recordingSessionIdRef.current) {
+        console.log(`[Chunk ${chunkItem.id}] Error ignored - session changed`);
+        chunkItem.processed = true;
+        releaseTranscribeLock();
+        return;
+      }
       console.error(`[Chunk ${chunkItem.id}] Transcription error:`, err);
       droppedChunksRef.current.add(chunkItem.id);
       addTranscriptEntry(`[Chunk ${chunkItem.id} dropped]`);
@@ -653,11 +729,11 @@ export default function Session() {
     }
 
     chunkItem.processed = true;
-    isTranscribingRef.current = false;
+    releaseTranscribeLock();
     
     const remaining = pendingChunksRef.current.filter(c => !c.processed);
     console.log(`[Chunk] ${remaining.length} chunks remaining to process`);
-    if (remaining.length > 0) {
+    if (remaining.length > 0 && activeSessionId === recordingSessionIdRef.current) {
       processNextChunk();
     }
   };
@@ -876,6 +952,8 @@ export default function Session() {
       pendingChunksRef.current = [];
       nextChunkIdRef.current = 1;
       processedChunkIdsRef.current.clear();
+      isTranscribingRef.current = false;
+      transcribeLockSessionRef.current = null;
       recordingSessionIdRef.current = crypto.randomUUID();
       orderedChunksRef.current.clear();
       nextExpectedChunkIdRef.current = 1;
@@ -1268,38 +1346,175 @@ export default function Session() {
     },
   });
 
+  const resetSessionForNextRecording = useCallback(() => {
+    setRecordingState("idle");
+    setDuration(0);
+    setTranscriptEntries([]);
+    setSoapNote(null);
+    setPatientName("");
+    setContextText("");
+    setActiveTab("transcript");
+
+    // Exit resume mode so next recording starts a fresh note.
+    setIsResumeMode(false);
+    isResumeModeRef.current = false;
+    setResumeNoteData(null);
+    resumeNoteDataRef.current = null;
+
+    // Clear transcript aggregation buffers.
+    committedTextRef.current = "";
+    partialTextRef.current = "";
+    recentLinesRef.current = [];
+    lastCumulativeTranscriptRef.current = "";
+    structuredSegmentsRef.current = [];
+
+    // Keep queue refs clean for next recording cycle.
+    pendingChunksRef.current = [];
+    orderedChunksRef.current.clear();
+    droppedChunksRef.current.clear();
+    processedChunkIdsRef.current.clear();
+    isTranscribingRef.current = false;
+    transcribeLockSessionRef.current = null;
+    recordingSessionIdRef.current = "";
+    nextChunkIdRef.current = 0;
+    nextExpectedChunkIdRef.current = 1;
+
+    clearBackup();
+  }, [clearBackup]);
+
+  const finalizeSnapshotInBackground = async (snapshot: FinalizeSnapshot) => {
+    try {
+      let transcript = snapshot.transcript.trim();
+      const ordered = new Map<number, OrderedChunkEntry>(snapshot.orderedChunks);
+      const dropped = new Set<number>(snapshot.droppedChunks);
+      let nextExpected = snapshot.nextExpectedChunkId;
+      const structuredSegments = [...snapshot.structuredSegments];
+
+      const flushOrdered = () => {
+        while (ordered.has(nextExpected) || dropped.has(nextExpected)) {
+          if (dropped.has(nextExpected)) {
+            dropped.delete(nextExpected);
+            nextExpected++;
+            continue;
+          }
+
+          const entry = ordered.get(nextExpected);
+          ordered.delete(nextExpected);
+          if (!entry) {
+            nextExpected++;
+            continue;
+          }
+
+          const text = entry.text.trim();
+          if (text) {
+            transcript = transcript ? `${transcript} ${text}` : text;
+            if (!structuredSegments.some((segment) => segment.chunk_id === nextExpected)) {
+              structuredSegments.push({
+                speaker: entry.speaker,
+                text,
+                chunk_id: nextExpected,
+                timestamp: entry.timestampSec,
+              });
+            }
+          }
+
+          nextExpected++;
+        }
+      };
+
+      flushOrdered();
+
+      const pendingChunks = snapshot.pendingChunks
+        .filter((chunk) => !chunk.processed && chunk.id >= nextExpected)
+        .sort((a, b) => a.id - b.id);
+
+      for (const chunk of pendingChunks) {
+        if (ordered.has(chunk.id) || dropped.has(chunk.id)) {
+          flushOrdered();
+          continue;
+        }
+
+        if (chunk.peakLevel < noiseThreshold) {
+          ordered.set(chunk.id, { text: "", timestampSec: chunk.timestampSec, speaker: chunk.speaker });
+          flushOrdered();
+          continue;
+        }
+
+        const result = await transcribeChunk(chunk.blob, chunk.id, {
+          sessionId: snapshot.sessionId,
+          language: snapshot.transcriptionLanguage,
+        });
+
+        if (result.ok) {
+          ordered.set(result.chunk_id, {
+            text: result.transcript.trim(),
+            timestampSec: chunk.timestampSec,
+            speaker: chunk.speaker,
+          });
+        } else {
+          dropped.add(chunk.id);
+        }
+
+        flushOrdered();
+      }
+
+      if (!transcript.trim()) {
+        toast({
+          title: "No speech detected",
+          description: "The recording didn't capture any speech. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      await autoGenerateAndSave(transcript, {
+        background: true,
+        patientName: snapshot.patientName,
+        contextText: snapshot.contextText,
+        selectedTemplateId: snapshot.selectedTemplateId,
+        transcriptionLanguage: snapshot.transcriptionLanguage,
+        speakerSegments: structuredSegments,
+        resumeMode: snapshot.resumeMode,
+        resumeNoteData: snapshot.resumeNoteData,
+      });
+    } catch (error) {
+      console.error("Background finalization failed:", error);
+      toast({
+        title: "Processing failed",
+        description: "There was an issue processing the recording in background.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const finalizeRecording = async () => {
     setRecordingState("processing");
-    addTranscriptEntry("Finishing transcription...");
+    addTranscriptEntry("Finishing transcription in background...");
 
     try {
-      processNextChunk();
-      
-      const hasUnprocessedChunks = () => pendingChunksRef.current.some(c => !c.processed);
-      
-      let waitCount = 0;
-      const maxWait = 360;
-      while ((isTranscribingRef.current || hasUnprocessedChunks()) && waitCount < maxWait) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        waitCount++;
-        if (!isTranscribingRef.current && hasUnprocessedChunks()) {
-          processNextChunk();
-        }
-      }
-      
-      if (waitCount >= maxWait) {
-        console.warn("Transcription timeout after 3 minutes - using available chunks");
-        const remaining = pendingChunksRef.current.filter(c => !c.processed);
-        if (remaining.length > 0) {
-          addTranscriptEntry(`${remaining.length} audio segment(s) still processing - transcript may be incomplete`);
-        }
-      }
-
-      // Finalize any pending partial text
       finalizePartial();
-      const fullTranscript = committedTextRef.current;
-      
-      if (!fullTranscript.trim()) {
+
+      const snapshot: FinalizeSnapshot = {
+        transcript: committedTextRef.current.trim(),
+        pendingChunks: pendingChunksRef.current.map((chunk) => ({ ...chunk })),
+        orderedChunks: new Map(orderedChunksRef.current),
+        droppedChunks: new Set(droppedChunksRef.current),
+        nextExpectedChunkId: nextExpectedChunkIdRef.current,
+        structuredSegments: [...structuredSegmentsRef.current],
+        patientName,
+        contextText,
+        selectedTemplateId,
+        transcriptionLanguage,
+        resumeMode: isResumeModeRef.current,
+        resumeNoteData: resumeNoteDataRef.current,
+        sessionId: recordingSessionIdRef.current,
+      };
+
+      const hasPendingChunks = snapshot.pendingChunks.some((chunk) => !chunk.processed);
+      const hasTranscriptWork =
+        snapshot.transcript.length > 0 || snapshot.orderedChunks.size > 0 || hasPendingChunks;
+
+      if (!hasTranscriptWork) {
         toast({
           title: "No speech detected",
           description: "The recording didn't capture any speech. Please try again.",
@@ -1309,10 +1524,14 @@ export default function Session() {
         return;
       }
 
-      // Auto-generate SOAP and save
-      addTranscriptEntry("Generating SOAP note...");
-      await autoGenerateAndSave(fullTranscript);
+      void finalizeSnapshotInBackground(snapshot);
 
+      toast({
+        title: "Processing in background",
+        description: "You can start a new session now. This note will save when processing finishes.",
+      });
+
+      resetSessionForNextRecording();
     } catch (error) {
       console.error("Finalization failed:", error);
       toast({
@@ -1325,31 +1544,44 @@ export default function Session() {
   };
 
   // Automatic SOAP generation and save after transcription
-  const autoGenerateAndSave = async (transcript: string) => {
+  const autoGenerateAndSave = async (transcript: string, options?: AutoGenerateAndSaveOptions) => {
+    const background = options?.background === true;
+
     try {
+      const patientNameSnapshot = options?.patientName ?? patientName;
+      const contextTextSnapshot = options?.contextText ?? contextText;
+      const selectedTemplateIdSnapshot = options?.selectedTemplateId ?? selectedTemplateId;
+      const transcriptionLanguageSnapshot = options?.transcriptionLanguage ?? transcriptionLanguage;
+
       // Step 1: Generate SOAP note
-      const segments = structuredSegmentsRef.current.length > 0 ? structuredSegmentsRef.current : undefined;
+      const segments =
+        options?.speakerSegments && options.speakerSegments.length > 0
+          ? options.speakerSegments
+          : structuredSegmentsRef.current.length > 0
+            ? structuredSegmentsRef.current
+            : undefined;
       const soapResponse = await apiRequest("POST", "/api/generate-soap", {
         transcript,
-        patientName,
+        patientName: patientNameSnapshot,
         specialty: "general",
-        templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
-        outputLanguage: transcriptionLanguage,
-        context: contextText || undefined,
+        templateId: selectedTemplateIdSnapshot !== "default" ? parseInt(selectedTemplateIdSnapshot, 10) : undefined,
+        outputLanguage: transcriptionLanguageSnapshot,
+        context: contextTextSnapshot || undefined,
         speakerSegments: segments,
       });
       const soapData = await soapResponse.json();
       const icdCodesData = soapData.icdCodes || null;
       
-      setSoapNote(soapData);
-
-      addTranscriptEntry("Saving note...");
+      if (!background) {
+        setSoapNote(soapData);
+        addTranscriptEntry("Saving note...");
+      }
 
       let savedNoteId: number;
 
       // Use refs to avoid stale closure issues
-      const currentIsResumeMode = isResumeModeRef.current;
-      const currentResumeNoteData = resumeNoteDataRef.current;
+      const currentIsResumeMode = options?.resumeMode ?? isResumeModeRef.current;
+      const currentResumeNoteData = options?.resumeNoteData ?? resumeNoteDataRef.current;
       console.log("[Save] isResumeMode (ref):", currentIsResumeMode, "resumeNoteData (ref):", currentResumeNoteData);
       
       if (currentIsResumeMode && currentResumeNoteData) {
@@ -1371,28 +1603,34 @@ export default function Session() {
         const updateResponse = await apiRequest("PATCH", `/api/notes/${currentResumeNoteData.id}`, {
           ...noteData,
           transcript,
-          patientContext: contextText || null,
+          patientContext: contextTextSnapshot || null,
           icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
         });
         await updateResponse.json();
         savedNoteId = currentResumeNoteData.id;
         
-        toast({
-          title: "Session updated",
-          description: `Your additional recording has been added${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
-        });
+        if (!background) {
+          toast({
+            title: "Session updated",
+            description: `Your additional recording has been added${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
+          });
+        }
       } else {
         // Create new note
         let title: string;
-        if (patientName) {
-          title = `${patientName} - ${new Date().toLocaleDateString()}`;
+        if (patientNameSnapshot) {
+          title = `${patientNameSnapshot} - ${new Date().toLocaleDateString()}`;
         } else if (transcript.trim()) {
-          try {
-            const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
-            const titleData = await titleResponse.json();
-            title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
-          } catch {
+          if (background) {
             title = `Session - ${new Date().toLocaleDateString()}`;
+          } else {
+            try {
+              const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
+              const titleData = await titleResponse.json();
+              title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
+            } catch {
+              title = `Session - ${new Date().toLocaleDateString()}`;
+            }
           }
         } else {
           title = `Session - ${new Date().toLocaleDateString()}`;
@@ -1414,28 +1652,37 @@ export default function Session() {
 
         const saveResponse = await apiRequest("POST", "/api/notes", {
           title,
-          patientName,
+          patientName: patientNameSnapshot,
           specialty: "general",
           ...noteData,
           transcript,
-          patientContext: contextText || null,
+          patientContext: contextTextSnapshot || null,
           icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
         });
         const savedNote = await saveResponse.json();
         savedNoteId = savedNote.id;
         
-        toast({
-          title: "Session complete",
-          description: `Your note has been saved automatically${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
-        });
+        if (!background) {
+          toast({
+            title: "Session complete",
+            description: `Your note has been saved automatically${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
+          });
+        }
       }
 
-      // Clear backup and navigate to saved note
+      // Clear backup and refresh notes list.
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notes", savedNoteId.toString()] });
       clearBackup();
 
-      navigate(`/notes/${savedNoteId}`);
+      if (background) {
+        toast({
+          title: "Background processing complete",
+          description: "Your session note is ready in Scribe.",
+        });
+      } else {
+        navigate(`/notes/${savedNoteId}`);
+      }
 
     } catch (error) {
       console.error("Auto-save failed:", error);
@@ -1444,7 +1691,9 @@ export default function Session() {
         description: "Please try saving manually.",
         variant: "destructive",
       });
-      setRecordingState("idle");
+      if (!background) {
+        setRecordingState("idle");
+      }
     }
   };
 
@@ -1473,9 +1722,14 @@ export default function Session() {
         addTranscriptEntry(data.transcript, "content");
         committedTextRef.current = (committedTextRef.current + " " + data.transcript).trim();
         
-        // Auto-generate SOAP and save
-        addTranscriptEntry("Generating SOAP note...");
-        await autoGenerateAndSave(committedTextRef.current);
+        // Auto-generate SOAP and save in background for faster turnaround.
+        addTranscriptEntry("Generating SOAP note in background...");
+        void autoGenerateAndSave(committedTextRef.current, { background: true });
+        toast({
+          title: "Processing in background",
+          description: "You can start a new session now. This note will save when processing finishes.",
+        });
+        resetSessionForNextRecording();
       } else {
         toast({
           title: "No speech detected",

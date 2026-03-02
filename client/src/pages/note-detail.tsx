@@ -1178,7 +1178,9 @@ export default function NoteDetail() {
 
   const copyToClipboard = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      // Normalize dash-like Unicode characters for EMR systems with limited glyph support.
+      const normalizedText = text.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g, "-");
+      await navigator.clipboard.writeText(normalizedText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       toast({

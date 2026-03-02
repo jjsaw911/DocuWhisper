@@ -395,11 +395,11 @@ export async function registerRoutes(
 
   setInterval(() => {
     const now = Date.now();
-    for (const [userId, timestamps] of transcribeRateLimit.entries()) {
-      const recent = timestamps.filter((t) => now - t < TRANSCRIBE_WINDOW_MS);
+    transcribeRateLimit.forEach((timestamps, userId) => {
+      const recent = timestamps.filter((t: number) => now - t < TRANSCRIBE_WINDOW_MS);
       if (recent.length === 0) transcribeRateLimit.delete(userId);
       else transcribeRateLimit.set(userId, recent);
-    }
+    });
   }, 60_000);
 
   app.post("/api/transcribe", isAuthenticated, upload.single("audio"), async (req: any, res: Response) => {
@@ -475,17 +475,11 @@ export async function registerRoutes(
       let effectiveTemplateId = templateId;
       
       // If no template specified and user didn't explicitly request no template,
-      // check for user's default template (from user_settings or templates.isDefault)
+      // check for user's default template setting.
       if (!effectiveTemplateId && !noDefaultTemplate) {
         effectiveTemplateId = await storage.getDefaultTemplateId(userId);
         if (effectiveTemplateId) {
           console.log("SOAP generation - using user's default template:", effectiveTemplateId);
-        } else {
-          const defaultTemplate = await storage.getDefaultTemplateForUser(userId);
-          if (defaultTemplate) {
-            effectiveTemplateId = defaultTemplate.id;
-            console.log("SOAP generation - using template marked as default:", effectiveTemplateId);
-          }
         }
       }
       
