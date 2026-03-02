@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useRecording } from "@/contexts/recording-context";
 import { useCopiedToEmr } from "@/hooks/use-copied-to-emr";
+import { useScribeGenerationStatus } from "@/hooks/use-scribe-generation-status";
 import {
   Sidebar,
   SidebarContent,
@@ -86,6 +87,7 @@ export function AppSidebar() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { isRecording, audioLevel } = useRecording();
+  const { pendingCount, isGenerating } = useScribeGenerationStatus(user?.id);
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
@@ -276,7 +278,19 @@ export function AppSidebar() {
                       }`}
                     >
                       <FileText className="h-4 w-4" />
-                      <span>Scribe</span>
+                      <div className="flex min-w-0 flex-col items-start leading-tight">
+                        <span>Scribe</span>
+                        {isGenerating && (
+                          <span
+                            className="text-[10px] font-normal text-muted-foreground"
+                            data-testid="label-scribe-generating"
+                          >
+                            {pendingCount > 1
+                              ? `Generating ${pendingCount} notes...`
+                              : "Generating note..."}
+                          </span>
+                        )}
+                      </div>
                       <ChevronRight className="ml-auto h-4 w-4" />
                     </button>
                   </DropdownMenuTrigger>

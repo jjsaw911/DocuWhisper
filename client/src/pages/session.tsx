@@ -14,6 +14,7 @@ import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { DrugInteractionAlert } from "@/components/drug-interaction-alert";
 import { useRecording } from "@/contexts/recording-context";
 import { dispatchActivityEvent } from "@/hooks/use-session-timeout";
+import { decrementScribeGeneration, incrementScribeGeneration } from "@/hooks/use-scribe-generation-status";
 import { getTranscriptionConfig } from "@/lib/transcription";
 import {
   Mic,
@@ -1524,7 +1525,10 @@ export default function Session() {
         return;
       }
 
-      void finalizeSnapshotInBackground(snapshot);
+      incrementScribeGeneration(user?.id);
+      void finalizeSnapshotInBackground(snapshot).finally(() => {
+        decrementScribeGeneration(user?.id);
+      });
 
       toast({
         title: "Processing in background",
@@ -1621,16 +1625,12 @@ export default function Session() {
         if (patientNameSnapshot) {
           title = `${patientNameSnapshot} - ${new Date().toLocaleDateString()}`;
         } else if (transcript.trim()) {
-          if (background) {
+          try {
+            const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
+            const titleData = await titleResponse.json();
+            title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
+          } catch {
             title = `Session - ${new Date().toLocaleDateString()}`;
-          } else {
-            try {
-              const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
-              const titleData = await titleResponse.json();
-              title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
-            } catch {
-              title = `Session - ${new Date().toLocaleDateString()}`;
-            }
           }
         } else {
           title = `Session - ${new Date().toLocaleDateString()}`;
@@ -1724,7 +1724,10 @@ export default function Session() {
         
         // Auto-generate SOAP and save in background for faster turnaround.
         addTranscriptEntry("Generating SOAP note in background...");
-        void autoGenerateAndSave(committedTextRef.current, { background: true });
+        incrementScribeGeneration(user?.id);
+        void autoGenerateAndSave(committedTextRef.current, { background: true }).finally(() => {
+          decrementScribeGeneration(user?.id);
+        });
         toast({
           title: "Processing in background",
           description: "You can start a new session now. This note will save when processing finishes.",
