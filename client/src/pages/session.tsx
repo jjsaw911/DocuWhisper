@@ -14,7 +14,7 @@ import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { DrugInteractionAlert } from "@/components/drug-interaction-alert";
 import { useRecording } from "@/contexts/recording-context";
 import { dispatchActivityEvent } from "@/hooks/use-session-timeout";
-import { decrementScribeGeneration, incrementScribeGeneration } from "@/hooks/use-scribe-generation-status";
+import { finishScribeGeneration, startScribeGeneration } from "@/hooks/use-scribe-generation-status";
 import { getTranscriptionConfig } from "@/lib/transcription";
 import {
   Mic,
@@ -88,6 +88,25 @@ type ResumeNoteData = {
   transcript: string;
   patientName: string | null;
   patientContext: string | null;
+};
+
+const getFallbackTitle = (patientName?: string) =>
+  patientName ? `${patientName} - ${new Date().toLocaleDateString()}` : `Session - ${new Date().toLocaleDateString()}`;
+
+const getChiefComplaintPreview = (transcript: string) => {
+  const cleaned = transcript
+    .replace(/\[(Clinician|Patient)\]\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return "Chief complaint";
+
+  const firstSentence = cleaned.split(/[.!?]/)[0]?.trim() || cleaned;
+  const words = firstSentence.split(" ").filter(Boolean).slice(0, 8);
+  if (words.length === 0) return "Chief complaint";
+
+  const preview = words.join(" ").replace(/[,:;]+$/, "");
+  return preview.charAt(0).toUpperCase() + preview.slice(1);
 };
 
 export default function Session() {
@@ -1340,12 +1359,25 @@ export default function Session() {
     });
   };
 
-  const generateTitleMutation = useMutation({
-    mutationFn: async (transcript: string) => {
-      const response = await apiRequest("POST", "/api/generate-title", { transcript });
-      return response.json();
+  const resolveChiefComplaintTitle = useCallback(
+    async (transcript: string, patientNameValue?: string) => {
+      const fallbackTitle = getFallbackTitle(patientNameValue);
+      if (!transcript.trim()) return fallbackTitle;
+
+      try {
+        const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
+        const titleData = await titleResponse.json();
+        const generatedTitle = typeof titleData?.title === "string" ? titleData.title.trim() : "";
+        if (generatedTitle) return generatedTitle;
+      } catch {
+        // Fall back to local chief-complaint preview if title generation API fails.
+      }
+
+      const preview = getChiefComplaintPreview(transcript);
+      return preview || fallbackTitle;
     },
-  });
+    []
+  );
 
   const resetSessionForNextRecording = useCallback(() => {
     setRecordingState("idle");
@@ -1525,9 +1557,9 @@ export default function Session() {
         return;
       }
 
-      incrementScribeGeneration(user?.id);
+      const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(snapshot.transcript));
       void finalizeSnapshotInBackground(snapshot).finally(() => {
-        decrementScribeGeneration(user?.id);
+        finishScribeGeneration(user?.id, generationId);
       });
 
       toast({
@@ -1621,20 +1653,7 @@ export default function Session() {
         }
       } else {
         // Create new note
-        let title: string;
-        if (patientNameSnapshot) {
-          title = `${patientNameSnapshot} - ${new Date().toLocaleDateString()}`;
-        } else if (transcript.trim()) {
-          try {
-            const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
-            const titleData = await titleResponse.json();
-            title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
-          } catch {
-            title = `Session - ${new Date().toLocaleDateString()}`;
-          }
-        } else {
-          title = `Session - ${new Date().toLocaleDateString()}`;
-        }
+        const title = await resolveChiefComplaintTitle(transcript, patientNameSnapshot || undefined);
 
         // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
         const noteData = soapData.hpi ? {
@@ -1724,9 +1743,9 @@ export default function Session() {
         
         // Auto-generate SOAP and save in background for faster turnaround.
         addTranscriptEntry("Generating SOAP note in background...");
-        incrementScribeGeneration(user?.id);
+        const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(committedTextRef.current));
         void autoGenerateAndSave(committedTextRef.current, { background: true }).finally(() => {
-          decrementScribeGeneration(user?.id);
+          finishScribeGeneration(user?.id, generationId);
         });
         toast({
           title: "Processing in background",
@@ -1804,22 +1823,8 @@ export default function Session() {
         .map((e) => e.text)
         .join("\n");
 
-      // Generate title: use patient name if provided, otherwise auto-generate from transcript
-      let title: string;
-      if (patientName) {
-        title = `${patientName} - ${new Date().toLocaleDateString()}`;
-      } else if (transcript.trim()) {
-        // Auto-generate title from chief complaint/symptoms
-        try {
-          const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
-          const titleData = await titleResponse.json();
-          title = titleData.title || `Session - ${new Date().toLocaleDateString()}`;
-        } catch {
-          title = `Session - ${new Date().toLocaleDateString()}`;
-        }
-      } else {
-        title = `Session - ${new Date().toLocaleDateString()}`;
-      }
+      // Prefer chief-complaint titles for consistency with background flow.
+      const title = await resolveChiefComplaintTitle(transcript, patientName || undefined);
 
       // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
       const noteData = soapNote?.hpi ? {

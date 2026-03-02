@@ -87,7 +87,7 @@ export function AppSidebar() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { isRecording, audioLevel } = useRecording();
-  const { pendingCount, isGenerating } = useScribeGenerationStatus(user?.id);
+  const { pendingCount, currentLabel, isGenerating } = useScribeGenerationStatus(user?.id);
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
@@ -282,12 +282,12 @@ export function AppSidebar() {
                         <span>Scribe</span>
                         {isGenerating && (
                           <span
-                            className="text-[10px] font-normal text-muted-foreground"
+                            className="max-w-[150px] truncate text-[10px] font-normal text-muted-foreground"
                             data-testid="label-scribe-generating"
                           >
                             {pendingCount > 1
-                              ? `Generating ${pendingCount} notes...`
-                              : "Generating note..."}
+                              ? `${pendingCount} notes in progress...`
+                              : `In progress: ${currentLabel}`}
                           </span>
                         )}
                       </div>
