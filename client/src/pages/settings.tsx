@@ -51,6 +51,7 @@ const US_STATES = [
 
 const SPECIALTIES = [
   "Primary Care",
+  "Allergy",
   "Internal Medicine",
   "Family Medicine",
   "Cardiology",

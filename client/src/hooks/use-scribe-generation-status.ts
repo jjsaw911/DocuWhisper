@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 
 const SCRIBE_GENERATION_EVENT = "docuwhisper:scribe-generation-updated";
 const DEFAULT_LABEL = "Generating note...";
+const STALE_GENERATION_MS = 10 * 60 * 1000;
 
 export interface ScribeGenerationItem {
   id: string;
   label: string;
+  startedAt: number;
 }
 
 interface ScribeGenerationEventDetail {
@@ -26,6 +28,7 @@ const parseItems = (value: string | null): ScribeGenerationItem[] => {
     return Array.from({ length: count }, (_, index) => ({
       id: `legacy-${index}`,
       label: DEFAULT_LABEL,
+      startedAt: 0,
     }));
   }
 
@@ -39,10 +42,16 @@ const parseItems = (value: string | null): ScribeGenerationItem[] => {
       .map((item) => ({
         id: item.id,
         label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : DEFAULT_LABEL,
+        startedAt: typeof (item as any).startedAt === "number" ? (item as any).startedAt : 0,
       }));
   } catch {
     return [];
   }
+};
+
+const pruneStaleItems = (items: ScribeGenerationItem[]) => {
+  const now = Date.now();
+  return items.filter((item) => item.startedAt > 0 && now - item.startedAt <= STALE_GENERATION_MS);
 };
 
 const persistItems = (storageKey: string, items: ScribeGenerationItem[]) => {
@@ -61,13 +70,14 @@ export const startScribeGeneration = (userId?: string, label?: string) => {
   const storageKey = getStorageKey(userId);
   if (!storageKey || typeof window === "undefined") return "";
 
-  const current = parseItems(localStorage.getItem(storageKey));
+  const current = pruneStaleItems(parseItems(localStorage.getItem(storageKey)));
   const id = createItemId();
   const next = [
     ...current,
     {
       id,
       label: label && label.trim() ? label.trim() : DEFAULT_LABEL,
+      startedAt: Date.now(),
     },
   ];
 
@@ -79,7 +89,7 @@ export const finishScribeGeneration = (userId?: string, id?: string) => {
   const storageKey = getStorageKey(userId);
   if (!storageKey || typeof window === "undefined") return;
 
-  const current = parseItems(localStorage.getItem(storageKey));
+  const current = pruneStaleItems(parseItems(localStorage.getItem(storageKey)));
   const next = id
     ? current.filter((item) => item.id !== id)
     : current.slice(0, Math.max(0, current.length - 1));
@@ -106,17 +116,21 @@ export const useScribeGenerationStatus = (userId?: string) => {
       return;
     }
 
-    setItems(parseItems(localStorage.getItem(storageKey)));
+    const initialItems = pruneStaleItems(parseItems(localStorage.getItem(storageKey)));
+    setItems(initialItems);
+    persistItems(storageKey, initialItems);
 
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== storageKey) return;
-      setItems(parseItems(event.newValue));
+      const nextItems = pruneStaleItems(parseItems(event.newValue));
+      setItems(nextItems);
     };
 
     const handleCustomEvent = (event: Event) => {
       const customEvent = event as CustomEvent<ScribeGenerationEventDetail>;
       if (customEvent.detail.storageKey !== storageKey) return;
-      setItems(customEvent.detail.items);
+      const nextItems = pruneStaleItems(customEvent.detail.items);
+      setItems(nextItems);
     };
 
     window.addEventListener("storage", handleStorage);
