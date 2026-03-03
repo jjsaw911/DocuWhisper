@@ -493,6 +493,14 @@ export async function registerRoutes(
     return undefined;
   };
 
+  const percentile = (values: number[], p: number): number => {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = Math.ceil((p / 100) * sorted.length) - 1;
+    const clampedIdx = Math.min(Math.max(idx, 0), sorted.length - 1);
+    return sorted[clampedIdx];
+  };
+
   const classifyTranscriptionError = (error: unknown): string => {
     const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
     if (message.includes("timeout") || message.includes("abort")) return "timeout";
@@ -532,6 +540,149 @@ export async function registerRoutes(
     console.log("[transcribe-metric]", JSON.stringify(payload));
     persistTranscriptionMetric(payload);
   };
+
+  const TRANSCRIPTION_ALERT_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+  const TRANSCRIPTION_ALERT_WINDOW_HOURS = 1;
+  const TRANSCRIPTION_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
+  const TRANSCRIPTION_ALERT_MIN_REQUESTS = 10;
+  const TRANSCRIPTION_ALERT_THRESHOLDS = {
+    fallbackRate: 0.1, // 10%
+    errorRate: 0.03, // 3%
+    p95LatencyMs: 8000, // 8s
+  };
+  const transcriptionAlertCooldowns = new Map<string, number>();
+
+  const sendTranscriptionAlert = async (
+    key: string,
+    subject: string,
+    message: string,
+    details: Record<string, unknown>,
+  ) => {
+    const now = Date.now();
+    const lastSentAt = transcriptionAlertCooldowns.get(key) ?? 0;
+    if (now - lastSentAt < TRANSCRIPTION_ALERT_COOLDOWN_MS) {
+      return;
+    }
+
+    await storage.createAuditLog({
+      userId: "system-monitor",
+      userEmail: "monitor@docuwhisper.local",
+      action: "alerted",
+      resourceType: "internal_message",
+      details: JSON.stringify({
+        subject,
+        message,
+        category: "monitoring",
+        source: "transcription_monitor",
+        ...details,
+      }),
+      ipAddress: "127.0.0.1",
+      userAgent: "docuwhisper-monitor/1.0",
+    });
+
+    transcriptionAlertCooldowns.set(key, now);
+    console.warn(`[transcription-alert] ${subject}`);
+  };
+
+  const runTranscriptionAlertCheck = async () => {
+    try {
+      const startDate = new Date(Date.now() - TRANSCRIPTION_ALERT_WINDOW_HOURS * 60 * 60 * 1000);
+      const metrics = await storage.getTranscriptionMetrics({ startDate, limit: 5000 });
+
+      let requests = 0;
+      let errors = 0;
+      let fallbacks = 0;
+      const latencies: number[] = [];
+
+      for (const row of metrics) {
+        if (row.eventType === "request") {
+          requests += 1;
+          continue;
+        }
+        if (row.eventType === "error") {
+          errors += 1;
+        } else if (row.eventType === "fallback") {
+          fallbacks += 1;
+        }
+        if (
+          (row.eventType === "success" || row.eventType === "error") &&
+          typeof row.latencyMs === "number" &&
+          Number.isFinite(row.latencyMs)
+        ) {
+          latencies.push(row.latencyMs);
+        }
+      }
+
+      if (requests < TRANSCRIPTION_ALERT_MIN_REQUESTS) {
+        return;
+      }
+
+      const fallbackRate = requests > 0 ? fallbacks / requests : 0;
+      const errorRate = requests > 0 ? errors / requests : 0;
+      const p95LatencyMs = Math.round(percentile(latencies, 95));
+
+      if (fallbackRate > TRANSCRIPTION_ALERT_THRESHOLDS.fallbackRate) {
+        await sendTranscriptionAlert(
+          "fallback-rate",
+          `Transcription fallback rate high (${(fallbackRate * 100).toFixed(1)}%)`,
+          `Fallback rate exceeded threshold in the last ${TRANSCRIPTION_ALERT_WINDOW_HOURS} hour(s).`,
+          {
+            metric: "fallback_rate",
+            metricValue: fallbackRate,
+            threshold: TRANSCRIPTION_ALERT_THRESHOLDS.fallbackRate,
+            requests,
+            fallbacks,
+            windowHours: TRANSCRIPTION_ALERT_WINDOW_HOURS,
+            checkedAt: new Date().toISOString(),
+          },
+        );
+      }
+
+      if (errorRate > TRANSCRIPTION_ALERT_THRESHOLDS.errorRate) {
+        await sendTranscriptionAlert(
+          "error-rate",
+          `Transcription error rate high (${(errorRate * 100).toFixed(1)}%)`,
+          `Error rate exceeded threshold in the last ${TRANSCRIPTION_ALERT_WINDOW_HOURS} hour(s).`,
+          {
+            metric: "error_rate",
+            metricValue: errorRate,
+            threshold: TRANSCRIPTION_ALERT_THRESHOLDS.errorRate,
+            requests,
+            errors,
+            windowHours: TRANSCRIPTION_ALERT_WINDOW_HOURS,
+            checkedAt: new Date().toISOString(),
+          },
+        );
+      }
+
+      if (p95LatencyMs > TRANSCRIPTION_ALERT_THRESHOLDS.p95LatencyMs) {
+        await sendTranscriptionAlert(
+          "p95-latency",
+          `Transcription p95 latency high (${p95LatencyMs.toLocaleString()} ms)`,
+          `Latency exceeded threshold in the last ${TRANSCRIPTION_ALERT_WINDOW_HOURS} hour(s).`,
+          {
+            metric: "p95_latency_ms",
+            metricValue: p95LatencyMs,
+            threshold: TRANSCRIPTION_ALERT_THRESHOLDS.p95LatencyMs,
+            requests,
+            samples: latencies.length,
+            windowHours: TRANSCRIPTION_ALERT_WINDOW_HOURS,
+            checkedAt: new Date().toISOString(),
+          },
+        );
+      }
+    } catch (error) {
+      console.error("Error running transcription alert check:", error);
+    }
+  };
+
+  setInterval(() => {
+    void runTranscriptionAlertCheck();
+  }, TRANSCRIPTION_ALERT_CHECK_INTERVAL_MS);
+
+  setTimeout(() => {
+    void runTranscriptionAlertCheck();
+  }, 60_000);
 
   app.get("/api/transcription-provider", isAuthenticated, async (_req: any, res: Response) => {
     const status = getTranscriptionProviderStatus();
@@ -2630,14 +2781,6 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
       const startDate = new Date(Date.now() - windowHours * 60 * 60 * 1000);
       const metrics = await storage.getTranscriptionMetrics({ startDate, limit });
-
-      const percentile = (values: number[], p: number): number => {
-        if (values.length === 0) return 0;
-        const sorted = [...values].sort((a, b) => a - b);
-        const idx = Math.ceil((p / 100) * sorted.length) - 1;
-        const clampedIdx = Math.min(Math.max(idx, 0), sorted.length - 1);
-        return sorted[clampedIdx];
-      };
 
       type Bucket = {
         requests: number;
