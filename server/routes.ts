@@ -16,13 +16,20 @@ import {
   updateAiProviderPreference,
 } from "./aiProviderPreference";
 import {
+  clearSavedPersonalAiKey,
+  getSavedPersonalAiKeyStatus,
+  initializeSavedPersonalAiKey,
+  savePersonalAiKey,
+} from "./aiCredentialStore";
+import {
   getMailboxDirectoryPreference,
   getMailboxDirectoryVisibilityMap,
   updateMailboxDirectoryPreference,
 } from "./mailboxDirectory";
+import { getApiUsageSummary } from "./apiUsageMonitor";
 import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
-import { openai, type AiProviderSource } from "./openaiClient";
+import { getPersonalKeySource, openai, type AiProviderSource } from "./openaiClient";
 import multer from "multer";
 import { Resend } from "resend";
 import externalApiRoutes from "./externalApiRoutes";
@@ -261,6 +268,10 @@ const updateAdminAiSettingsSchema = z.object({
   preferredSource: z.enum(["personal", "replit"]),
 });
 
+const saveAdminPersonalAiKeySchema = z.object({
+  personalApiKey: z.string().trim().min(10, "OpenAI API key is too short"),
+});
+
 const NUMERIC_IDENTIFIER_REGEX = /^[\d+\-().\s]+$/;
 
 const getMailboxDisplayName = (recipient: {
@@ -297,6 +308,11 @@ export async function registerRoutes(
     await initializeAiProviderPreference();
   } catch (error) {
     console.error("Failed to initialize AI provider preference:", error);
+  }
+  try {
+    await initializeSavedPersonalAiKey();
+  } catch (error) {
+    console.error("Failed to initialize saved personal AI key:", error);
   }
   
   app.get("/api/notes", isAuthenticated, async (req: any, res: Response) => {
@@ -2071,8 +2087,15 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
   app.get("/api/admin/ai-settings", isAuthenticated, requireAdmin, async (_req: any, res: Response) => {
     try {
-      const settings = await getAiProviderPreference();
-      res.json(settings);
+      const [settings, personalKeyStatus] = await Promise.all([
+        getAiProviderPreference(),
+        getSavedPersonalAiKeyStatus(),
+      ]);
+      res.json({
+        ...settings,
+        ...personalKeyStatus,
+        personalKeySource: getPersonalKeySource(),
+      });
     } catch (error) {
       console.error("Error fetching admin AI settings:", error);
       res.status(500).json({ error: "Failed to fetch AI settings" });
@@ -2099,6 +2122,167 @@ Focus only on clinically significant interactions. Do not include minor or theor
     } catch (error) {
       console.error("Error updating admin AI settings:", error);
       res.status(500).json({ error: "Failed to update AI settings" });
+    }
+  });
+
+  app.put("/api/admin/ai-settings/personal-key", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const parsed = saveAdminPersonalAiKeySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid personal OpenAI key payload" });
+      }
+
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const updated = await savePersonalAiKey({
+        apiKey: parsed.data.personalApiKey,
+        userId: req.user.claims.sub,
+        userEmail: req.user.claims.email,
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent: req.headers["user-agent"],
+      });
+      res.json({
+        ...updated,
+        personalKeySource: getPersonalKeySource(),
+      });
+    } catch (error) {
+      console.error("Error saving personal OpenAI key:", error);
+      res.status(500).json({ error: "Failed to save personal OpenAI key" });
+    }
+  });
+
+  app.delete("/api/admin/ai-settings/personal-key", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const updated = await clearSavedPersonalAiKey({
+        userId: req.user.claims.sub,
+        userEmail: req.user.claims.email,
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent: req.headers["user-agent"],
+      });
+      res.json({
+        ...updated,
+        personalKeySource: getPersonalKeySource(),
+      });
+    } catch (error) {
+      console.error("Error clearing personal OpenAI key:", error);
+      res.status(500).json({ error: "Failed to clear personal OpenAI key" });
+    }
+  });
+
+  app.get("/api/admin/ai-usage", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const requestedHours = typeof req.query.hours === "string" ? Number.parseInt(req.query.hours, 10) : Number.NaN;
+      const windowHours = Number.isFinite(requestedHours)
+        ? Math.min(Math.max(requestedHours, 1), 24 * 30)
+        : 24;
+      const startDate = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+      const logs = await storage.getAuditLogs({ resourceType: "ai_usage", startDate });
+
+      type Provider = "personal" | "replit";
+      type ProviderStats = { requests: number; errors: number; totalTokens: number };
+      type OperationStats = { requests: number; errors: number; totalTokens: number };
+      const byProvider: Record<Provider, ProviderStats> = {
+        personal: { requests: 0, errors: 0, totalTokens: 0 },
+        replit: { requests: 0, errors: 0, totalTokens: 0 },
+      };
+      const byOperation: Record<string, OperationStats> = {};
+      const byModel: Record<string, number> = {};
+      let totalRequests = 0;
+      let totalErrors = 0;
+      let totalTokens = 0;
+
+      const recent = logs
+        .slice(0, 100)
+        .map((log) => {
+          try {
+            const details = log.details ? JSON.parse(log.details) : {};
+            const provider =
+              details?.provider === "personal" || details?.provider === "replit"
+                ? details.provider
+                : "replit";
+            const operation = typeof details?.operation === "string" ? details.operation : "unknown";
+            const model = typeof details?.model === "string" ? details.model : null;
+            const success = details?.success !== false;
+            const eventTokens =
+              typeof details?.usage?.totalTokens === "number"
+                ? details.usage.totalTokens
+                : typeof details?.usage?.total_tokens === "number"
+                  ? details.usage.total_tokens
+                  : 0;
+
+            totalRequests += 1;
+            if (!success) totalErrors += 1;
+            totalTokens += eventTokens;
+
+            if (!byOperation[operation]) {
+              byOperation[operation] = { requests: 0, errors: 0, totalTokens: 0 };
+            }
+
+            byProvider[provider].requests += 1;
+            byProvider[provider].totalTokens += eventTokens;
+            byOperation[operation].requests += 1;
+            byOperation[operation].totalTokens += eventTokens;
+
+            if (!success) {
+              byProvider[provider].errors += 1;
+              byOperation[operation].errors += 1;
+            }
+
+            if (model) {
+              byModel[model] = (byModel[model] || 0) + 1;
+            }
+
+            return {
+              id: log.id,
+              createdAt: log.timestamp,
+              provider,
+              operation,
+              model,
+              success,
+              totalTokens: eventTokens,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+
+      const topModels = Object.entries(byModel)
+        .map(([model, requests]) => ({ model, requests }))
+        .sort((a, b) => b.requests - a.requests)
+        .slice(0, 10);
+
+      res.json({
+        windowHours,
+        totalRequests,
+        totalErrors,
+        errorRate: totalRequests > 0 ? totalErrors / totalRequests : 0,
+        totalTokens,
+        byProvider,
+        byOperation,
+        topModels,
+        recent,
+      });
+    } catch (error) {
+      console.error("Error fetching AI usage summary:", error);
+      res.status(500).json({ error: "Failed to fetch AI usage summary" });
+    }
+  });
+
+  app.get("/api/admin/api-usage", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const requestedHours = typeof req.query.hours === "string" ? Number.parseInt(req.query.hours, 10) : Number.NaN;
+      const requestedLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : Number.NaN;
+
+      const usageSummary = getApiUsageSummary({
+        windowHours: Number.isFinite(requestedHours) ? requestedHours : 24,
+        limit: Number.isFinite(requestedLimit) ? requestedLimit : 20,
+      });
+
+      res.json(usageSummary);
+    } catch (error) {
+      console.error("Error fetching API usage summary:", error);
+      res.status(500).json({ error: "Failed to fetch API usage summary" });
     }
   });
 

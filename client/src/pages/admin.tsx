@@ -76,8 +76,70 @@ interface AdminAiSettings {
   effectiveSource: "personal" | "replit";
   hasPersonalKey: boolean;
   hasReplitKey: boolean;
+  hasSavedPersonalKey: boolean;
+  keyLast4: string | null;
+  personalKeySource: "saved" | "env" | "none";
   updatedAt: string | null;
   updatedBy: string | null;
+}
+
+interface AdminAiUsageResponse {
+  windowHours: number;
+  totalRequests: number;
+  totalErrors: number;
+  errorRate: number;
+  totalTokens: number;
+  byProvider: {
+    personal: { requests: number; errors: number; totalTokens: number };
+    replit: { requests: number; errors: number; totalTokens: number };
+  };
+  byOperation: Record<string, { requests: number; errors: number; totalTokens: number }>;
+  topModels: { model: string; requests: number }[];
+  recent: {
+    id: number;
+    createdAt: string;
+    provider: "personal" | "replit";
+    operation: string;
+    model: string | null;
+    success: boolean;
+    totalTokens: number;
+  }[];
+}
+
+interface AdminApiUsageResponse {
+  generatedAt: string;
+  windowHours: number;
+  totals: {
+    requests: number;
+    errors: number;
+    errorRate: number;
+    avgDurationMs: number;
+    maxDurationMs: number;
+    statusCounts: {
+      "2xx": number;
+      "3xx": number;
+      "4xx": number;
+      "5xx": number;
+      other: number;
+    };
+  };
+  topRoutes: {
+    method: string;
+    path: string;
+    requests: number;
+    errors: number;
+    errorRate: number;
+    avgDurationMs: number;
+    maxDurationMs: number;
+    statusCounts: {
+      "2xx": number;
+      "3xx": number;
+      "4xx": number;
+      "5xx": number;
+      other: number;
+    };
+    lastRequestAt: string;
+  }[];
 }
 
 interface Organization {
@@ -232,6 +294,9 @@ export default function Admin() {
   const [newlyCreatedApiKey, setNewlyCreatedApiKey] = useState<string | null>(null);
   const [copiedApiKey, setCopiedApiKey] = useState(false);
   const [preferredAiSource, setPreferredAiSource] = useState<"personal" | "replit">("personal");
+  const [personalAiKeyInput, setPersonalAiKeyInput] = useState("");
+  const [aiUsageWindowHours, setAiUsageWindowHours] = useState("24");
+  const [apiUsageWindowHours, setApiUsageWindowHours] = useState("24");
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -241,6 +306,35 @@ export default function Admin() {
   const { data: adminAiSettings, isLoading: aiSettingsLoading } = useQuery<AdminAiSettings>({
     queryKey: ["/api/admin/ai-settings"],
     enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  const {
+    data: adminAiUsage,
+    isLoading: aiUsageLoading,
+    refetch: refetchAiUsage,
+  } = useQuery<AdminAiUsageResponse>({
+    queryKey: ["/api/admin/ai-usage", aiUsageWindowHours],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/admin/ai-usage?hours=${encodeURIComponent(aiUsageWindowHours)}`);
+      return response.json();
+    },
+  });
+
+  const {
+    data: adminApiUsage,
+    isLoading: apiUsageLoading,
+    refetch: refetchApiUsage,
+  } = useQuery<AdminApiUsageResponse>({
+    queryKey: ["/api/admin/api-usage", apiUsageWindowHours],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/admin/api-usage?hours=${encodeURIComponent(apiUsageWindowHours)}&limit=12`,
+      );
+      return response.json();
+    },
   });
 
   const { data: subscribers, isLoading: subLoading } = useQuery<Subscription[]>({
@@ -297,6 +391,48 @@ export default function Admin() {
     onError: () => {
       toast({
         title: "Failed to update AI settings",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const savePersonalAiKeyMutation = useMutation({
+    mutationFn: async (personalApiKey: string) => {
+      const response = await apiRequest("PUT", "/api/admin/ai-settings/personal-key", {
+        personalApiKey,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-settings"] });
+      setPersonalAiKeyInput("");
+      toast({
+        title: "Personal OpenAI key saved",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to save OpenAI key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const clearPersonalAiKeyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("DELETE", "/api/admin/ai-settings/personal-key");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-settings"] });
+      setPersonalAiKeyInput("");
+      toast({
+        title: "Saved personal OpenAI key cleared",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to clear saved key",
         variant: "destructive",
       });
     },
@@ -934,6 +1070,7 @@ export default function Admin() {
                 )}
               </CardContent>
             </Card>
+
           </TabsContent>
 
           <TabsContent value="organizations" className="space-y-4">
@@ -1798,6 +1935,16 @@ export default function Admin() {
                       <p className="text-xs text-muted-foreground">
                         Preferred source will automatically fall back if its key is not configured.
                       </p>
+                      <p className="text-xs text-muted-foreground">
+                        Personal key source: {adminAiSettings?.personalKeySource === "saved"
+                          ? "Saved in admin settings"
+                          : adminAiSettings?.personalKeySource === "env"
+                            ? "Environment variable"
+                            : "Not configured"}
+                        {adminAiSettings?.hasSavedPersonalKey && adminAiSettings?.keyLast4
+                          ? ` (saved key ends in ${adminAiSettings.keyLast4})`
+                          : ""}
+                      </p>
                     </div>
 
                     <div className="flex items-center justify-between rounded-md border p-4">
@@ -1828,6 +1975,46 @@ export default function Admin() {
                       </Button>
                     </div>
 
+                    <div className="rounded-md border p-4 space-y-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="admin-personal-ai-key">Personal OpenAI API Key</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Enter and save your key here to use it without changing deployment secrets.
+                        </p>
+                      </div>
+                      <Input
+                        id="admin-personal-ai-key"
+                        type="password"
+                        value={personalAiKeyInput}
+                        onChange={(e) => setPersonalAiKeyInput(e.target.value)}
+                        placeholder="sk-..."
+                        data-testid="input-admin-personal-ai-key"
+                      />
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          onClick={() => clearPersonalAiKeyMutation.mutate()}
+                          disabled={clearPersonalAiKeyMutation.isPending}
+                          data-testid="button-clear-admin-personal-ai-key"
+                        >
+                          {clearPersonalAiKeyMutation.isPending ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Clear Saved Key
+                        </Button>
+                        <Button
+                          onClick={() => savePersonalAiKeyMutation.mutate(personalAiKeyInput)}
+                          disabled={!personalAiKeyInput.trim() || savePersonalAiKeyMutation.isPending}
+                          data-testid="button-save-admin-personal-ai-key"
+                        >
+                          {savePersonalAiKeyMutation.isPending ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Save Personal Key
+                        </Button>
+                      </div>
+                    </div>
+
                     {adminAiSettings?.updatedAt ? (
                       <p className="text-xs text-muted-foreground">
                         Last updated {formatDate(adminAiSettings.updatedAt)}
@@ -1835,6 +2022,197 @@ export default function Admin() {
                       </p>
                     ) : null}
                   </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5" />
+                  AI Usage Monitor
+                </CardTitle>
+                <CardDescription>
+                  Track which provider and operations are used most to control AI costs.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-2">
+                    <Label>Window</Label>
+                    <Select value={aiUsageWindowHours} onValueChange={setAiUsageWindowHours}>
+                      <SelectTrigger className="w-[160px]" data-testid="select-admin-ai-usage-window">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Last 1 hour</SelectItem>
+                        <SelectItem value="6">Last 6 hours</SelectItem>
+                        <SelectItem value="24">Last 24 hours</SelectItem>
+                        <SelectItem value="72">Last 3 days</SelectItem>
+                        <SelectItem value="168">Last 7 days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => refetchAiUsage()}
+                    disabled={aiUsageLoading}
+                    data-testid="button-refresh-admin-ai-usage"
+                  >
+                    {aiUsageLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    Refresh
+                  </Button>
+                </div>
+
+                {aiUsageLoading ? (
+                  <Skeleton className="h-28 w-full" />
+                ) : adminAiUsage ? (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Requests</p>
+                        <p className="text-xl font-semibold">{adminAiUsage.totalRequests.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Errors</p>
+                        <p className="text-xl font-semibold">{adminAiUsage.totalErrors.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Error Rate</p>
+                        <p className="text-xl font-semibold">{(adminAiUsage.errorRate * 100).toFixed(1)}%</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Total Tokens</p>
+                        <p className="text-xl font-semibold">{adminAiUsage.totalTokens.toLocaleString()}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-md border p-3">
+                        <p className="text-sm font-medium">Provider split</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Personal: {adminAiUsage.byProvider.personal.requests.toLocaleString()} requests
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Replit: {adminAiUsage.byProvider.replit.requests.toLocaleString()} requests
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-sm font-medium">Top model</p>
+                        {adminAiUsage.topModels.length > 0 ? (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {adminAiUsage.topModels[0].model}: {adminAiUsage.topModels[0].requests.toLocaleString()} requests
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground mt-1">No model data yet</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No AI usage data yet.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5" />
+                  Autoscale/API Usage
+                </CardTitle>
+                <CardDescription>
+                  Monitor which API routes are used most so you can target autoscale cost spikes.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-2">
+                    <Label>Window</Label>
+                    <Select value={apiUsageWindowHours} onValueChange={setApiUsageWindowHours}>
+                      <SelectTrigger className="w-[160px]" data-testid="select-admin-api-usage-window">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Last 1 hour</SelectItem>
+                        <SelectItem value="6">Last 6 hours</SelectItem>
+                        <SelectItem value="24">Last 24 hours</SelectItem>
+                        <SelectItem value="72">Last 3 days</SelectItem>
+                        <SelectItem value="168">Last 7 days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => refetchApiUsage()}
+                    disabled={apiUsageLoading}
+                    data-testid="button-refresh-admin-api-usage"
+                  >
+                    {apiUsageLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    Refresh
+                  </Button>
+                </div>
+
+                {apiUsageLoading ? (
+                  <Skeleton className="h-28 w-full" />
+                ) : adminApiUsage ? (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Requests</p>
+                        <p className="text-xl font-semibold">{adminApiUsage.totals.requests.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Errors</p>
+                        <p className="text-xl font-semibold">{adminApiUsage.totals.errors.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Error Rate</p>
+                        <p className="text-xl font-semibold">{(adminApiUsage.totals.errorRate * 100).toFixed(1)}%</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Avg Latency</p>
+                        <p className="text-xl font-semibold">{adminApiUsage.totals.avgDurationMs.toLocaleString()} ms</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Endpoint</TableHead>
+                            <TableHead className="text-right">Requests</TableHead>
+                            <TableHead className="text-right">Errors</TableHead>
+                            <TableHead className="text-right">Err %</TableHead>
+                            <TableHead className="text-right">Avg ms</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {adminApiUsage.topRoutes.length > 0 ? (
+                            adminApiUsage.topRoutes.map((route) => (
+                              <TableRow key={`${route.method}-${route.path}`}>
+                                <TableCell className="font-mono text-xs">
+                                  {route.method} {route.path}
+                                </TableCell>
+                                <TableCell className="text-right">{route.requests.toLocaleString()}</TableCell>
+                                <TableCell className="text-right">{route.errors.toLocaleString()}</TableCell>
+                                <TableCell className="text-right">{(route.errorRate * 100).toFixed(1)}%</TableCell>
+                                <TableCell className="text-right">{route.avgDurationMs.toLocaleString()}</TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                                No API traffic data yet.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No API traffic data yet.</p>
                 )}
               </CardContent>
             </Card>

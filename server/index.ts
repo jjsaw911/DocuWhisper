@@ -8,6 +8,7 @@ import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { getStripeSync } from "./stripeClient";
 import { WebhookHandlers } from "./webhookHandlers";
 import { setupWebSocket } from "./websocket";
+import { recordApiUsage } from "./apiUsageMonitor";
 
 const app = express();
 const httpServer = createServer(app);
@@ -205,6 +206,13 @@ async function initStripe() {
     res.on("finish", () => {
       const duration = Date.now() - start;
       if (path.startsWith("/api")) {
+        recordApiUsage({
+          method: req.method,
+          path,
+          statusCode: res.statusCode,
+          durationMs: duration,
+        });
+
         let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
         if (capturedJsonResponse) {
           logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
