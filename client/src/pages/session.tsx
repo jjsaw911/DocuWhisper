@@ -149,8 +149,9 @@ export default function Session() {
     icdCodes?: {
       codes?: { code: string; description: string; category: string; confidence: string }[];
       cptCodes?: { code: string; description: string; rationale: string }[];
+      visitTimeMinutes?: number;
     };
-    [key: string]: string | { codes?: unknown[]; cptCodes?: unknown[] } | undefined;
+    [key: string]: string | { codes?: unknown[]; cptCodes?: unknown[]; visitTimeMinutes?: number } | undefined;
   } | null>(null);
   
   // New features: Visit mode, Context, AI command
@@ -208,6 +209,7 @@ export default function Session() {
     resumeMode: boolean;
     resumeNoteData: ResumeNoteData | null;
     sessionId: string;
+    sessionDurationSeconds: number;
   };
 
   type AutoGenerateAndSaveOptions = {
@@ -219,6 +221,7 @@ export default function Session() {
     speakerSegments?: StructuredSegment[];
     resumeMode?: boolean;
     resumeNoteData?: ResumeNoteData | null;
+    sessionDurationSeconds?: number;
   };
 
   const VAD_RMS_THRESHOLD = 0.02;
@@ -447,6 +450,44 @@ export default function Session() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const normalizeVisitTimeMinutes = (value: unknown): number | undefined => {
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number.parseInt(value, 10)
+          : Number.NaN;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    return Math.round(parsed);
+  };
+
+  const buildIcdCodesWithVisitTime = (
+    icdCodesPayload: any,
+    sessionDurationSeconds?: number,
+  ) => {
+    if (!icdCodesPayload || typeof icdCodesPayload !== "object") {
+      return icdCodesPayload;
+    }
+
+    const recordedMinutes =
+      typeof sessionDurationSeconds === "number" && sessionDurationSeconds > 0
+        ? Math.max(1, Math.round(sessionDurationSeconds / 60))
+        : undefined;
+    const existingMinutes =
+      normalizeVisitTimeMinutes(icdCodesPayload.visitTimeMinutes) ??
+      normalizeVisitTimeMinutes(icdCodesPayload.timeSpentMinutes) ??
+      normalizeVisitTimeMinutes(icdCodesPayload.billableTimeMinutes);
+
+    return {
+      ...icdCodesPayload,
+      ...(existingMinutes || recordedMinutes
+        ? { visitTimeMinutes: existingMinutes ?? recordedMinutes }
+        : {}),
+    };
   };
 
   const addTranscriptEntry = (text: string, type: "system" | "content" = "system", recordingTimeSec?: number) => {
@@ -1509,6 +1550,7 @@ export default function Session() {
         speakerSegments: structuredSegments,
         resumeMode: snapshot.resumeMode,
         resumeNoteData: snapshot.resumeNoteData,
+        sessionDurationSeconds: snapshot.sessionDurationSeconds,
       });
     } catch (error) {
       console.error("Background finalization failed:", error);
@@ -1541,6 +1583,7 @@ export default function Session() {
         resumeMode: isResumeModeRef.current,
         resumeNoteData: resumeNoteDataRef.current,
         sessionId: recordingSessionIdRef.current,
+        sessionDurationSeconds: duration,
       };
 
       const hasPendingChunks = snapshot.pendingChunks.some((chunk) => !chunk.processed);
@@ -1588,6 +1631,7 @@ export default function Session() {
       const contextTextSnapshot = options?.contextText ?? contextText;
       const selectedTemplateIdSnapshot = options?.selectedTemplateId ?? selectedTemplateId;
       const transcriptionLanguageSnapshot = options?.transcriptionLanguage ?? transcriptionLanguage;
+      const sessionDurationSecondsSnapshot = options?.sessionDurationSeconds ?? duration;
 
       // Step 1: Generate SOAP note
       const segments =
@@ -1606,10 +1650,13 @@ export default function Session() {
         speakerSegments: segments,
       });
       const soapData = await soapResponse.json();
-      const icdCodesData = soapData.icdCodes || null;
+      const icdCodesData = buildIcdCodesWithVisitTime(soapData.icdCodes || null, sessionDurationSecondsSnapshot);
       
       if (!background) {
-        setSoapNote(soapData);
+        setSoapNote({
+          ...soapData,
+          icdCodes: icdCodesData || undefined,
+        });
         addTranscriptEntry("Saving note...");
       }
 
@@ -1797,7 +1844,10 @@ export default function Session() {
     },
     onSuccess: (data) => {
       console.log("[Regenerate] Setting soapNote state:", data);
-      setSoapNote(data);
+      setSoapNote({
+        ...data,
+        icdCodes: buildIcdCodesWithVisitTime(data.icdCodes || null, duration) || undefined,
+      });
       setActiveTab("soap");
       setTranscriptPanelOpen(false); // Collapse transcript panel when SOAP is generated
       if (data.icdCodes) {
@@ -1838,6 +1888,7 @@ export default function Session() {
         assessment: soapNote?.assessment || "",
         plan: soapNote?.plan || "",
       };
+      const icdCodesPayload = buildIcdCodesWithVisitTime(soapNote?.icdCodes || null, duration);
       
       const response = await apiRequest("POST", "/api/notes", {
         title,
@@ -1846,7 +1897,7 @@ export default function Session() {
         ...noteData,
         transcript,
         patientContext: contextText || null,
-        icdCodes: soapNote?.icdCodes ? JSON.stringify(soapNote.icdCodes) : null,
+        icdCodes: icdCodesPayload ? JSON.stringify(icdCodesPayload) : null,
       });
       return response.json();
     },
@@ -2549,6 +2600,11 @@ ${noteContentSection}
                           <FileText className="h-4 w-4" />
                           Billing Codes
                         </h3>
+                        {soapNote.icdCodes.visitTimeMinutes ? (
+                          <div className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-sm" data-testid="text-billing-visit-time">
+                            Total time for billing: <span className="font-medium">{soapNote.icdCodes.visitTimeMinutes} minutes</span>
+                          </div>
+                        ) : null}
                         
                         {/* ICD-10 Codes */}
                         {soapNote.icdCodes.codes && soapNote.icdCodes.codes.length > 0 && (

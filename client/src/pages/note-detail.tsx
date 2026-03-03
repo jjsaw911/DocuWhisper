@@ -94,6 +94,117 @@ const TASK_CATEGORIES = [
   { value: "communicate", label: "Communicate", icon: MessageSquare },
 ];
 
+type SuggestedDiagnosisCode = {
+  code: string;
+  description: string;
+  category: string;
+  confidence: string;
+};
+
+type SuggestedCptCode = {
+  code: string;
+  description: string;
+  rationale: string;
+};
+
+type SuggestedCodesPayload = {
+  codes: SuggestedDiagnosisCode[];
+  cptCodes: SuggestedCptCode[];
+  visitTimeMinutes?: number;
+};
+
+const CPT_TIME_MIDPOINT_MINUTES: Record<string, number> = {
+  "99211": 5,
+  "99212": 15,
+  "99213": 25,
+  "99214": 35,
+  "99215": 47,
+  "99202": 22,
+  "99203": 37,
+  "99204": 52,
+  "99205": 67,
+  "99441": 8,
+  "99442": 18,
+  "99443": 28,
+};
+
+const parsePositiveMinutes = (value: unknown): number | undefined => {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.round(parsed);
+};
+
+const estimateMinutesFromCptCodes = (cptCodes: SuggestedCptCode[]): number | undefined => {
+  for (const cpt of cptCodes) {
+    const normalizedCode = cpt.code.trim();
+    if (CPT_TIME_MIDPOINT_MINUTES[normalizedCode]) {
+      return CPT_TIME_MIDPOINT_MINUTES[normalizedCode];
+    }
+  }
+  return undefined;
+};
+
+const normalizeSuggestedCodes = (value: unknown): SuggestedCodesPayload | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const rawCodes = Array.isArray(source.codes) ? source.codes : [];
+  const rawCptCodes = Array.isArray(source.cptCodes) ? source.cptCodes : [];
+
+  const codes: SuggestedDiagnosisCode[] = rawCodes
+    .filter((code) => code && typeof code === "object")
+    .map((code) => {
+      const entry = code as Record<string, unknown>;
+      return {
+        code: typeof entry.code === "string" ? entry.code : "",
+        description: typeof entry.description === "string" ? entry.description : "",
+        category: typeof entry.category === "string" ? entry.category : "secondary",
+        confidence: typeof entry.confidence === "string" ? entry.confidence : "medium",
+      };
+    })
+    .filter((code) => code.code.trim().length > 0);
+
+  const cptCodes: SuggestedCptCode[] = rawCptCodes
+    .filter((code) => code && typeof code === "object")
+    .map((code) => {
+      const entry = code as Record<string, unknown>;
+      return {
+        code: typeof entry.code === "string" ? entry.code : "",
+        description: typeof entry.description === "string" ? entry.description : "",
+        rationale: typeof entry.rationale === "string" ? entry.rationale : "",
+      };
+    })
+    .filter((code) => code.code.trim().length > 0);
+
+  const explicitMinutes =
+    parsePositiveMinutes(source.visitTimeMinutes) ??
+    parsePositiveMinutes(source.timeSpentMinutes) ??
+    parsePositiveMinutes(source.billableTimeMinutes) ??
+    parsePositiveMinutes(source.estimatedTimeMinutes);
+
+  const inferredMinutes = explicitMinutes ?? estimateMinutesFromCptCodes(cptCodes);
+
+  const normalized: SuggestedCodesPayload = {
+    codes,
+    cptCodes,
+  };
+
+  if (inferredMinutes) {
+    normalized.visitTimeMinutes = inferredMinutes;
+  }
+
+  return normalized;
+};
+
 export default function NoteDetail() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
@@ -207,14 +318,17 @@ export default function NoteDetail() {
   const [referralReason, setReferralReason] = useState("");
   const [referralLetter, setReferralLetter] = useState("");
   
-  const [suggestedCodes, setSuggestedCodes] = useState<{
-    codes: { code: string; description: string; category: string; confidence: string }[];
-    cptCodes: { code: string; description: string; rationale: string }[];
-  } | null>(null);
+  const [suggestedCodes, setSuggestedCodes] = useState<SuggestedCodesPayload | null>(null);
+  const [billableTimeInput, setBillableTimeInput] = useState("");
   
   // Ref to hold latest suggestedCodes for mutation closure
   const suggestedCodesRef = useRef(suggestedCodes);
   suggestedCodesRef.current = suggestedCodes;
+
+  useEffect(() => {
+    const minutes = parsePositiveMinutes(suggestedCodes?.visitTimeMinutes);
+    setBillableTimeInput(minutes ? String(minutes) : "");
+  }, [suggestedCodes?.visitTimeMinutes]);
   
   const [showAiChat, setShowAiChat] = useState(false);
   
@@ -633,6 +747,7 @@ export default function NoteDetail() {
     setHistoryIndex(-1);
     setSelectedTemplateId("");
     setSuggestedCodes(null);
+    setBillableTimeInput("");
     setTranscriptSelection({ start: 0, end: 0, text: "" });
     setShowSplitTranscriptDialog(false);
   }, [id]);
@@ -665,7 +780,7 @@ export default function NoteDetail() {
           const parsedCodes = typeof note.icdCodes === 'string' 
             ? JSON.parse(note.icdCodes) 
             : note.icdCodes;
-          setSuggestedCodes(parsedCodes);
+          setSuggestedCodes(normalizeSuggestedCodes(parsedCodes));
         } catch (e) {
           console.error("Failed to parse saved ICD codes:", e);
         }
@@ -703,6 +818,66 @@ export default function NoteDetail() {
       });
     },
   });
+
+  const saveBillableTimeMutation = useMutation({
+    mutationFn: async (nextCodes: SuggestedCodesPayload) => {
+      if (!id) return null;
+      const response = await apiRequest("PATCH", `/api/notes/${id}`, {
+        icdCodes: JSON.stringify(nextCodes),
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      toast({
+        title: "Time saved",
+        description: "Billable time has been recorded for this note.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to save time",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const saveBillableTime = () => {
+    if (!suggestedCodes) return;
+
+    const rawValue = billableTimeInput.trim();
+    let nextCodes: SuggestedCodesPayload;
+    const currentMinutes = parsePositiveMinutes(suggestedCodes.visitTimeMinutes);
+
+    if (!rawValue) {
+      if (!currentMinutes) return;
+      const rest = { ...suggestedCodes };
+      delete rest.visitTimeMinutes;
+      nextCodes = rest;
+    } else {
+      const parsed = Number.parseInt(rawValue, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        toast({
+          title: "Invalid time",
+          description: "Enter a whole number of minutes greater than 0.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const normalizedMinutes = Math.min(240, Math.max(1, Math.round(parsed)));
+      if (currentMinutes === normalizedMinutes) return;
+      nextCodes = { ...suggestedCodes, visitTimeMinutes: normalizedMinutes };
+      setBillableTimeInput(String(normalizedMinutes));
+    }
+
+    setSuggestedCodes(nextCodes);
+    if (id) {
+      saveBillableTimeMutation.mutate(nextCodes);
+    }
+  };
 
   const hasTranscriptSelection =
     transcriptSelection.end > transcriptSelection.start && transcriptSelection.text.trim().length > 0;
@@ -894,7 +1069,8 @@ export default function NoteDetail() {
         let icdCodesData = null;
         try {
           const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
-          icdCodesData = await codesResponse.json();
+          const rawCodesData = await codesResponse.json();
+          icdCodesData = normalizeSuggestedCodes(rawCodesData);
           setSuggestedCodes(icdCodesData);
           setActiveMainTab("codes");
         } catch (e) {
@@ -1045,33 +1221,34 @@ export default function NoteDetail() {
       return response.json();
     },
     onSuccess: async (data) => {
-      setSuggestedCodes(data);
+      const normalizedCodes = normalizeSuggestedCodes(data);
+      setSuggestedCodes(normalizedCodes);
       setActiveMainTab("codes");
       
       // Auto-save codes to the database (guard against undefined id)
       if (!id) {
         toast({
           title: "Codes suggested",
-          description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes`,
+          description: `Found ${normalizedCodes?.codes?.length || 0} ICD-10 codes and ${normalizedCodes?.cptCodes?.length || 0} CPT codes`,
         });
         return;
       }
       
       try {
         await apiRequest("PATCH", `/api/notes/${id}`, {
-          icdCodes: JSON.stringify(data),
+          icdCodes: normalizedCodes ? JSON.stringify(normalizedCodes) : null,
         });
         // Invalidate both detail and list caches
         queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
         queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
         toast({
           title: "Codes suggested & saved",
-          description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes`,
+          description: `Found ${normalizedCodes?.codes?.length || 0} ICD-10 codes and ${normalizedCodes?.cptCodes?.length || 0} CPT codes`,
         });
       } catch (e) {
         toast({
           title: "Codes suggested",
-          description: `Found ${data.codes?.length || 0} ICD-10 codes and ${data.cptCodes?.length || 0} CPT codes (save failed)`,
+          description: `Found ${normalizedCodes?.codes?.length || 0} ICD-10 codes and ${normalizedCodes?.cptCodes?.length || 0} CPT codes (save failed)`,
         });
       }
     },
@@ -1290,7 +1467,10 @@ export default function NoteDetail() {
       ...additionalDiagnoses.map(diag => `<strong>${diag.code}</strong> - ${diag.description}`)
     ];
     
-    const cptItems = (suggestedCodes?.cptCodes || []).map(code => `<strong>${code.code}</strong> - ${code.description}`);
+    const cptItems = [
+      ...(suggestedCodes?.cptCodes || []).map(code => `<strong>${code.code}</strong> - ${code.description}`),
+      ...(suggestedCodes?.visitTimeMinutes ? [`<strong>Total time</strong> - ${suggestedCodes.visitTimeMinutes} minutes`] : []),
+    ];
     
     const taskItems = (noteTasks || []).map(task => `${task.title} (${task.category}) - ${task.status === 'completed' ? 'Completed' : 'Pending'}`);
 
@@ -2050,6 +2230,49 @@ Treatment plan..."
                       No code suggestions yet. Click "Suggest Codes" to generate ICD-10/CPT recommendations.
                     </p>
                   )}
+
+                  <div className="rounded-md border bg-muted/20 p-3 space-y-2" data-testid="card-billable-time">
+                    <div className="flex items-center justify-between gap-2">
+                      <h5 className="text-sm font-medium">Time-Based Billing</h5>
+                      {saveBillableTimeMutation.isPending && (
+                        <span className="inline-flex items-center text-xs text-muted-foreground">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Saving...
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Record total time spent with the patient (minutes). This is prefilled from suggested E/M CPT levels when available.
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={billableTimeInput}
+                        onChange={(e) => setBillableTimeInput(e.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            saveBillableTime();
+                          }
+                        }}
+                        disabled={!suggestedCodes}
+                        placeholder={suggestedCodes ? "Minutes (e.g., 25)" : "Generate codes first"}
+                        className="sm:max-w-[220px]"
+                        data-testid="input-billable-time-minutes"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={saveBillableTime}
+                        disabled={!suggestedCodes || saveBillableTimeMutation.isPending}
+                        data-testid="button-save-billable-time"
+                      >
+                        Save Time
+                      </Button>
+                    </div>
+                  </div>
 
                   <div className="border-t pt-4 space-y-3">
                     <h5 className="text-sm font-medium">Manual Diagnosis</h5>
