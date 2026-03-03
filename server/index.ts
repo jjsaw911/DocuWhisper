@@ -10,6 +10,7 @@ import { WebhookHandlers } from "./webhookHandlers";
 import { setupWebSocket } from "./websocket";
 import { recordApiUsage } from "./apiUsageMonitor";
 import { runWithRequestContext } from "./requestContext";
+import { validateTranscriptionProviderConfig } from "./sttClient";
 
 const app = express();
 const httpServer = createServer(app);
@@ -75,6 +76,7 @@ async function initStripe() {
 }
 
 (async () => {
+  validateTranscriptionProviderConfig();
   await initStripe();
 
   app.use(cookieParser());

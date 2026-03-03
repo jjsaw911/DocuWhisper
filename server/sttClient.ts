@@ -60,6 +60,35 @@ export function isLocalSttEnabled(): boolean {
   return getTranscriptionProviderStatus().provider === "local";
 }
 
+export function validateTranscriptionProviderConfig(): void {
+  const rawConfigured = (TRANSCRIPTION_PROVIDER() || "").trim();
+  const configuredProvider = rawConfigured.toLowerCase();
+  const localUrl = LOCAL_STT_URL()?.trim();
+  const hasLocalApiKey = Boolean(LOCAL_STT_API_KEY()?.trim());
+
+  if (!configuredProvider || configuredProvider === "openai") {
+    return;
+  }
+
+  if (configuredProvider === "local") {
+    if (!localUrl) {
+      throw new Error(
+        "Invalid transcription config: TRANSCRIPTION_PROVIDER=local requires LOCAL_STT_URL to be set."
+      );
+    }
+    if (!hasLocalApiKey) {
+      console.warn(
+        "[config] TRANSCRIPTION_PROVIDER=local is enabled without LOCAL_STT_API_KEY. Continuing without auth header."
+      );
+    }
+    return;
+  }
+
+  console.warn(
+    `[config] Unsupported TRANSCRIPTION_PROVIDER='${rawConfigured}'. Falling back to OpenAI transcription.`
+  );
+}
+
 class SttAuthError extends Error {
   constructor(status: number, body: string) {
     super(`Local STT authentication failed (${status}): ${body || "Unauthorized"}. Check LOCAL_STT_API_KEY.`);
