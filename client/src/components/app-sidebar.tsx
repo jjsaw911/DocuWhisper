@@ -561,6 +561,15 @@ export function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
         <SidebarSeparator className="my-2" />
+        <div className="px-2 pb-1">
+          <Link
+            href="/whats-new"
+            className="text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+            data-testid="nav-whats-new"
+          >
+            What's New
+          </Link>
+        </div>
         <div className="flex items-center gap-2 px-2 py-1">
           <Avatar className="h-8 w-8">
             <AvatarImage src={user?.profileImageUrl || undefined} alt={displayName} />

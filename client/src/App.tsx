@@ -26,6 +26,7 @@ const SharedNotes = lazy(() => import("@/pages/shared-notes"));
 const Analytics = lazy(() => import("@/pages/analytics"));
 const Notes = lazy(() => import("@/pages/notes"));
 const Guide = lazy(() => import("@/pages/guide"));
+const WhatsNew = lazy(() => import("@/pages/whats-new"));
 const EMRPatients = lazy(() => import("@/pages/emr/patients"));
 const EMRPatientDetail = lazy(() => import("@/pages/emr/patient-detail"));
 const EMRSchedule = lazy(() => import("@/pages/emr/schedule"));
@@ -77,6 +78,7 @@ function AuthenticatedLayout() {
               <Route path="/shared-notes" component={SharedNotes} />
               <Route path="/analytics" component={Analytics} />
               <Route path="/guide" component={Guide} />
+              <Route path="/whats-new" component={WhatsNew} />
               <Route path="/emr/patients" component={EMRPatients} />
               <Route path="/emr/patients/:id" component={EMRPatientDetail} />
               <Route path="/emr/schedule" component={EMRSchedule} />
