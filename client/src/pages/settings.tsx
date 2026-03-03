@@ -103,6 +103,11 @@ interface GlobalMedicalVocabulary {
   updatedBy: string | null;
 }
 
+interface MailboxDirectoryPreference {
+  listInDirectory: boolean;
+  updatedAt: string | null;
+}
+
 export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -123,6 +128,7 @@ export default function Settings() {
   const [transcriptionMode, setTranscriptionMode] = useState<TranscriptionMode>(DEFAULT_TRANSCRIPTION_MODE);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false);
   const [emailDigestTime, setEmailDigestTime] = useState("08:00");
+  const [listInMailboxDirectory, setListInMailboxDirectory] = useState(true);
   const [staySignedIn, setStaySignedIn] = useState(false);
   const [internalMessageSubject, setInternalMessageSubject] = useState("");
   const [internalMessageCategory, setInternalMessageCategory] = useState("general");
@@ -163,6 +169,10 @@ export default function Settings() {
 
   const { data: globalVocabulary } = useQuery<GlobalMedicalVocabulary>({
     queryKey: ["/api/medical-vocabulary"],
+  });
+
+  const { data: mailboxDirectoryPreference } = useQuery<MailboxDirectoryPreference>({
+    queryKey: ["/api/mailbox/directory-preference"],
   });
 
   const { data: templates = [] } = useQuery<Template[]>({
@@ -447,6 +457,11 @@ export default function Settings() {
   }, [globalVocabulary]);
 
   useEffect(() => {
+    if (!mailboxDirectoryPreference) return;
+    setListInMailboxDirectory(mailboxDirectoryPreference.listInDirectory);
+  }, [mailboxDirectoryPreference]);
+
+  useEffect(() => {
     setStaySignedIn(isStaySignedInEnabled());
   }, []);
 
@@ -520,6 +535,32 @@ export default function Settings() {
       toast({
         title: "Error",
         description: "Failed to save shared vocabulary",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const saveMailboxDirectoryPreferenceMutation = useMutation({
+    mutationFn: async (listInDirectory: boolean) => {
+      const response = await apiRequest("PUT", "/api/mailbox/directory-preference", {
+        listInDirectory,
+      });
+      return response.json();
+    },
+    onSuccess: (data: MailboxDirectoryPreference) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/directory-preference"] });
+      setListInMailboxDirectory(data.listInDirectory);
+      toast({
+        title: "Mailbox directory updated",
+        description: data.listInDirectory
+          ? "Your profile is visible in recipient lookup."
+          : "You are now hidden from recipient lookup results.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update mailbox directory preference",
         variant: "destructive",
       });
     },
@@ -1084,6 +1125,48 @@ export default function Settings() {
                   </p>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-primary" />
+                <CardTitle>Mailbox Directory</CardTitle>
+              </div>
+              <CardDescription>
+                Control whether your account appears in mailbox recipient lookup.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="mailbox-directory-visible">List me in recipient lookup</Label>
+                  <p className="text-sm text-muted-foreground">
+                    If disabled, your account is hidden from directory search results.
+                  </p>
+                </div>
+                <Switch
+                  id="mailbox-directory-visible"
+                  checked={listInMailboxDirectory}
+                  onCheckedChange={(checked) => setListInMailboxDirectory(checked)}
+                  data-testid="switch-mailbox-directory-visible"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => saveMailboxDirectoryPreferenceMutation.mutate(listInMailboxDirectory)}
+                  disabled={saveMailboxDirectoryPreferenceMutation.isPending}
+                  data-testid="button-save-mailbox-directory-preference"
+                >
+                  {saveMailboxDirectoryPreferenceMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : null}
+                  Save Mailbox Preference
+                </Button>
+              </div>
             </CardContent>
           </Card>
 

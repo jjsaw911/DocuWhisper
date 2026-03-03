@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
@@ -65,15 +65,15 @@ export default function Mailbox() {
       const response = await apiRequest("GET", `/api/mailbox/users/search?q=${encodeURIComponent(query)}`);
       return response.json();
     },
-    onSuccess: (data: MailboxRecipient[]) => {
+    onSuccess: (data: MailboxRecipient[], query: string) => {
       setSearchResults(data);
       setRecipient(null);
       setRecipientUserId("");
       setRecipientConfirmed(false);
-      if (data.length === 0) {
+      if (data.length === 0 && query.trim().length > 0) {
         toast({
-          title: "No matches found",
-          description: "Try full or partial first/last name, email, or user ID.",
+          title: "No users found",
+          description: "No visible users matched your search.",
         });
       }
     },
@@ -141,12 +141,18 @@ export default function Mailbox() {
     message.trim().length > 0 &&
     !sendMailboxMessageMutation.isPending;
 
+  useEffect(() => {
+    if (!user) return;
+    searchRecipientsMutation.mutate("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   return (
     <div className="flex flex-col h-full">
       <header className="border-b bg-background/95 backdrop-blur px-6 py-4">
         <div>
           <h1 className="text-2xl font-semibold">Mailbox</h1>
-          <p className="text-muted-foreground">Search users by name, confirm identity, and send internal messages</p>
+          <p className="text-muted-foreground">Browse the user directory, confirm identity, and send internal messages</p>
         </div>
       </header>
 
@@ -159,7 +165,7 @@ export default function Mailbox() {
                 <CardTitle>Compose Message</CardTitle>
               </div>
               <CardDescription>
-                Search by name, email, or User ID, then confirm the recipient before sending.
+                Lookup shows the full user directory alphabetically. Users who opt out are hidden.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -176,14 +182,14 @@ export default function Mailbox() {
                       setRecipientUserId("");
                       setRecipientConfirmed(false);
                     }}
-                    placeholder="Search by name, email, or User ID"
+                    placeholder="Optional: filter by name, email, or User ID"
                     data-testid="input-mailbox-recipient-user-id"
                   />
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => searchRecipientsMutation.mutate(recipientSearch.trim())}
-                    disabled={recipientSearch.trim().length < 2 || searchRecipientsMutation.isPending}
+                    disabled={searchRecipientsMutation.isPending}
                     data-testid="button-mailbox-lookup-user"
                   >
                     {searchRecipientsMutation.isPending ? (
@@ -191,12 +197,12 @@ export default function Mailbox() {
                     ) : (
                       <Search className="h-4 w-4 mr-2" />
                     )}
-                    Search
+                    Lookup
                   </Button>
                 </div>
                 {searchResults.length > 0 && (
                   <div className="rounded-md border p-3 space-y-2">
-                    <p className="text-sm font-medium">Search results</p>
+                    <p className="text-sm font-medium">Directory results</p>
                     <div className="space-y-2">
                       {searchResults.map((candidate) => (
                         <div

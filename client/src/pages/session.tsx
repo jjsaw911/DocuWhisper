@@ -90,6 +90,14 @@ type ResumeNoteData = {
   patientContext: string | null;
 };
 
+type InflightScribeRecovery = {
+  transcript: string;
+  patientName: string;
+  contextText: string;
+  savedAt: string;
+  reason?: string;
+};
+
 const getFallbackTitle = (patientName?: string) =>
   patientName ? `${patientName} - ${new Date().toLocaleDateString()}` : `Session - ${new Date().toLocaleDateString()}`;
 
@@ -277,7 +285,11 @@ export default function Session() {
   
   // Backup system - saves transcript to localStorage after each chunk
   const BACKUP_KEY = "docuwhisper_transcript_backup";
+  const INFLIGHT_SCRIBE_RECOVERY_KEY = user?.id
+    ? `docuwhisper_inflight_scribe_recovery:${user.id}`
+    : "docuwhisper_inflight_scribe_recovery";
   const [hasBackup, setHasBackup] = useState(false);
+  const [interruptedScribeRecovery, setInterruptedScribeRecovery] = useState<InflightScribeRecovery | null>(null);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(true);
   
   const saveBackup = useCallback((transcript: string, patientName: string, specialty: string) => {
@@ -309,6 +321,37 @@ export default function Session() {
     localStorage.removeItem(BACKUP_KEY);
     setHasBackup(false);
   }, []);
+
+  const saveInflightScribeRecovery = useCallback((payload: InflightScribeRecovery) => {
+    if (!payload.transcript.trim()) return;
+    localStorage.setItem(INFLIGHT_SCRIBE_RECOVERY_KEY, JSON.stringify(payload));
+  }, [INFLIGHT_SCRIBE_RECOVERY_KEY]);
+
+  const loadInflightScribeRecovery = useCallback((): InflightScribeRecovery | null => {
+    try {
+      const raw = localStorage.getItem(INFLIGHT_SCRIBE_RECOVERY_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<InflightScribeRecovery>;
+      if (!parsed || typeof parsed.transcript !== "string" || !parsed.transcript.trim()) {
+        return null;
+      }
+      return {
+        transcript: parsed.transcript,
+        patientName: typeof parsed.patientName === "string" ? parsed.patientName : "",
+        contextText: typeof parsed.contextText === "string" ? parsed.contextText : "",
+        savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : new Date().toISOString(),
+        reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+      };
+    } catch (error) {
+      console.error("[Recovery] Failed to parse interrupted scribe payload:", error);
+      return null;
+    }
+  }, [INFLIGHT_SCRIBE_RECOVERY_KEY]);
+
+  const clearInflightScribeRecovery = useCallback(() => {
+    localStorage.removeItem(INFLIGHT_SCRIBE_RECOVERY_KEY);
+    setInterruptedScribeRecovery(null);
+  }, [INFLIGHT_SCRIBE_RECOVERY_KEY]);
   
   // Check for existing backup on mount
   useEffect(() => {
@@ -317,6 +360,13 @@ export default function Session() {
       setHasBackup(true);
     }
   }, [loadBackup]);
+
+  useEffect(() => {
+    const inflight = loadInflightScribeRecovery();
+    if (inflight) {
+      setInterruptedScribeRecovery(inflight);
+    }
+  }, [loadInflightScribeRecovery]);
 
   // Load existing note data when in resume mode
   useEffect(() => {
@@ -1616,6 +1666,13 @@ export default function Session() {
       }
 
       const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(snapshot.transcript));
+      saveInflightScribeRecovery({
+        transcript: snapshot.transcript,
+        patientName: snapshot.patientName,
+        contextText: snapshot.contextText,
+        savedAt: new Date().toISOString(),
+        reason: "background-finalization",
+      });
       void finalizeSnapshotInBackground(snapshot).finally(() => {
         finishScribeGeneration(user?.id, generationId);
       });
@@ -1754,6 +1811,7 @@ export default function Session() {
       // Clear backup and refresh notes list.
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notes", savedNoteId.toString()] });
+      clearInflightScribeRecovery();
       clearBackup();
 
       if (background) {
@@ -1806,6 +1864,13 @@ export default function Session() {
         // Auto-generate SOAP and save in background for faster turnaround.
         addTranscriptEntry("Generating SOAP note in background...");
         const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(committedTextRef.current));
+        saveInflightScribeRecovery({
+          transcript: committedTextRef.current,
+          patientName,
+          contextText,
+          savedAt: new Date().toISOString(),
+          reason: "background-auto-save",
+        });
         void autoGenerateAndSave(committedTextRef.current, { background: true }).finally(() => {
           finishScribeGeneration(user?.id, generationId);
         });
@@ -1918,6 +1983,7 @@ export default function Session() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+      clearInflightScribeRecovery();
       clearBackup();
       toast({
         title: "Session saved",
@@ -2063,6 +2129,36 @@ ${noteContentSection}
   };
 
   useEffect(() => {
+    const persistDraftForRecovery = () => {
+      const transcriptFromEntries = transcriptEntries
+        .filter((entry) => entry.type === "content")
+        .map((entry) => entry.text)
+        .join(" ")
+        .trim();
+      const transcript = committedTextRef.current.trim() || transcriptFromEntries;
+      if (!transcript) return;
+
+      saveBackup(transcript, patientName, "general");
+      if (recordingState === "processing") {
+        saveInflightScribeRecovery({
+          transcript,
+          patientName,
+          contextText,
+          savedAt: new Date().toISOString(),
+          reason: "page-unload",
+        });
+      }
+    };
+
+    window.addEventListener("beforeunload", persistDraftForRecovery);
+    window.addEventListener("pagehide", persistDraftForRecovery);
+    return () => {
+      window.removeEventListener("beforeunload", persistDraftForRecovery);
+      window.removeEventListener("pagehide", persistDraftForRecovery);
+    };
+  }, [contextText, patientName, recordingState, saveBackup, saveInflightScribeRecovery, transcriptEntries]);
+
+  useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
@@ -2091,8 +2187,58 @@ ${noteContentSection}
     }
   };
 
+  const handleRecoverInterruptedScribe = () => {
+    if (!interruptedScribeRecovery?.transcript) return;
+
+    if (interruptedScribeRecovery.patientName) {
+      setPatientName(interruptedScribeRecovery.patientName);
+    }
+    if (interruptedScribeRecovery.contextText) {
+      setContextText(interruptedScribeRecovery.contextText);
+    }
+
+    addTranscriptEntry("--- Recovered interrupted background scribe ---", "system");
+    addTranscriptEntry(interruptedScribeRecovery.transcript, "content");
+    committedTextRef.current = interruptedScribeRecovery.transcript;
+    saveBackup(interruptedScribeRecovery.transcript, interruptedScribeRecovery.patientName, "general");
+    clearInflightScribeRecovery();
+
+    toast({
+      title: "Interrupted scribe recovered",
+      description: "Your transcript draft is restored. Generate SOAP to continue.",
+    });
+  };
+
   return (
     <div className="flex flex-col h-full">
+      {interruptedScribeRecovery && recordingState === "idle" && !hasTranscript && (
+        <div className="bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-red-800 dark:text-red-200 text-sm">
+            <AlertCircle className="h-4 w-4" />
+            <span>Previous background scribe was interrupted. Recover transcript draft?</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={clearInflightScribeRecovery}
+              className="h-7 text-xs"
+              data-testid="button-discard-interrupted-scribe"
+            >
+              Dismiss
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleRecoverInterruptedScribe}
+              className="h-7 text-xs"
+              data-testid="button-recover-interrupted-scribe"
+            >
+              Recover
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Recovery banner */}
       {hasBackup && recordingState === "idle" && !hasTranscript && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-between">

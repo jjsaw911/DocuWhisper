@@ -1,7 +1,7 @@
 import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, personalApiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey, type PersonalApiKey, type InsertPersonalApiKey } from "@shared/schema";
 import crypto from "crypto";
 import { db } from "./db";
-import { eq, desc, and, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
+import { eq, desc, and, asc, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
 
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
@@ -545,29 +545,29 @@ class DatabaseStorage implements IStorage {
 
   async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]> {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return [];
+    const safeLimit = Math.min(Math.max(limit, 1), 500);
+    const whereConditions = [];
+
+    if (normalized) {
+      const likePattern = `%${normalized}%`;
+      const textMatch = or(
+        sql`lower(coalesce(${users.firstName}, '')) like ${likePattern}`,
+        sql`lower(coalesce(${users.lastName}, '')) like ${likePattern}`,
+        sql`lower(trim(coalesce(${users.firstName}, '') || ' ' || coalesce(${users.lastName}, ''))) like ${likePattern}`,
+        sql`lower(coalesce(${users.email}, '')) like ${likePattern}`,
+        sql`lower(${users.id}) like ${likePattern}`
+      );
+
+      if (textMatch) {
+        whereConditions.push(textMatch);
+      }
     }
 
-    const safeLimit = Math.min(Math.max(limit, 1), 25);
-    const likePattern = `%${normalized}%`;
-    const textMatch = or(
-      sql`lower(coalesce(${users.firstName}, '')) like ${likePattern}`,
-      sql`lower(coalesce(${users.lastName}, '')) like ${likePattern}`,
-      sql`lower(trim(coalesce(${users.firstName}, '') || ' ' || coalesce(${users.lastName}, ''))) like ${likePattern}`,
-      sql`lower(coalesce(${users.email}, '')) like ${likePattern}`,
-      sql`lower(${users.id}) like ${likePattern}`
-    );
-
-    if (!textMatch) {
-      return [];
+    if (excludeUserId) {
+      whereConditions.push(sql`${users.id} <> ${excludeUserId}`);
     }
 
-    const whereClause = excludeUserId
-      ? and(textMatch, sql`${users.id} <> ${excludeUserId}`)
-      : textMatch;
-
-    return db
+    const baseQuery = db
       .select({
         id: users.id,
         email: users.email,
@@ -575,9 +575,19 @@ class DatabaseStorage implements IStorage {
         lastName: users.lastName,
         createdAt: users.createdAt,
       })
-      .from(users)
-      .where(whereClause)
-      .orderBy(desc(users.createdAt))
+      .from(users);
+
+    const filteredQuery = whereConditions.length > 0
+      ? baseQuery.where(and(...whereConditions))
+      : baseQuery;
+
+    return filteredQuery
+      .orderBy(
+        asc(sql`lower(coalesce(${users.lastName}, ''))`),
+        asc(sql`lower(coalesce(${users.firstName}, ''))`),
+        asc(sql`lower(coalesce(${users.email}, ''))`),
+        asc(sql`lower(${users.id})`)
+      )
       .limit(safeLimit);
   }
 

@@ -10,6 +10,11 @@ import {
   getGlobalMedicalVocabulary,
   updateGlobalMedicalVocabulary,
 } from "./medicalVocabulary";
+import {
+  getMailboxDirectoryPreference,
+  getMailboxDirectoryVisibilityMap,
+  updateMailboxDirectoryPreference,
+} from "./mailboxDirectory";
 import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -242,6 +247,33 @@ const sendMailboxMessageSchema = z.object({
   subject: z.string().trim().min(3, "Subject must be at least 3 characters").max(150, "Subject is too long"),
   message: z.string().trim().min(1, "Message is required").max(5000, "Message is too long"),
 });
+
+const updateMailboxDirectoryPreferenceSchema = z.object({
+  listInDirectory: z.boolean(),
+});
+
+const NUMERIC_IDENTIFIER_REGEX = /^[\d+\-().\s]+$/;
+
+const getMailboxDisplayName = (recipient: {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+}) => {
+  const fullName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
+  if (fullName) return fullName;
+
+  const emailLocalPart = recipient.email ? recipient.email.split("@")[0]?.trim() : "";
+  if (emailLocalPart && NUMERIC_IDENTIFIER_REGEX.test(emailLocalPart)) {
+    return emailLocalPart;
+  }
+
+  if (NUMERIC_IDENTIFIER_REGEX.test(recipient.id)) {
+    return recipient.id;
+  }
+
+  return recipient.email || recipient.id;
+};
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -1589,24 +1621,73 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  app.get("/api/mailbox/directory-preference", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const preference = await getMailboxDirectoryPreference(userId);
+      res.json(preference);
+    } catch (error) {
+      console.error("Error fetching mailbox directory preference:", error);
+      res.status(500).json({ error: "Failed to fetch mailbox directory preference" });
+    }
+  });
+
+  app.put("/api/mailbox/directory-preference", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = updateMailboxDirectoryPreferenceSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid mailbox directory preference" });
+      }
+
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const updated = await updateMailboxDirectoryPreference({
+        userId: req.user.claims.sub,
+        userEmail: req.user.claims.email,
+        listInDirectory: parsed.data.listInDirectory,
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating mailbox directory preference:", error);
+      res.status(500).json({ error: "Failed to update mailbox directory preference" });
+    }
+  });
+
   app.get("/api/mailbox/users/search", isAuthenticated, async (req: any, res: Response) => {
     try {
       const queryParam = typeof req.query.q === "string" ? req.query.q.trim() : "";
-      if (queryParam.length < 2) {
-        return res.status(400).json({ error: "Please enter at least 2 characters to search" });
-      }
+      const requestedLimitRaw = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : Number.NaN;
+      const defaultLimit = queryParam ? 100 : 300;
+      const safeLimit = Number.isFinite(requestedLimitRaw)
+        ? Math.min(Math.max(requestedLimitRaw, 1), 500)
+        : defaultLimit;
 
       const requesterUserId = req.user.claims.sub;
-      const matches = await storage.searchUsers(queryParam, requesterUserId, 10);
+      const [matches, visibilityMap] = await Promise.all([
+        storage.searchUsers(queryParam, requesterUserId, safeLimit),
+        getMailboxDirectoryVisibilityMap(),
+      ]);
 
-      const recipients = matches.map((recipient) => {
-        const displayName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
-        return {
-          userId: recipient.id,
-          email: recipient.email,
-          displayName: displayName || recipient.email || recipient.id,
-        };
-      });
+      const recipients = matches
+        .filter((recipient) => visibilityMap.get(recipient.id) !== false)
+        .map((recipient) => {
+          const fullName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
+          const displayName = getMailboxDisplayName(recipient);
+          return {
+            userId: recipient.id,
+            email: recipient.email,
+            displayName,
+            hasName: fullName.length > 0,
+            sortValue: (fullName || displayName).toLocaleLowerCase(),
+          };
+        })
+        .sort((a, b) => {
+          if (a.hasName !== b.hasName) return a.hasName ? -1 : 1;
+          return a.sortValue.localeCompare(b.sortValue, undefined, { sensitivity: "base", numeric: true });
+        })
+        .map(({ hasName: _hasName, sortValue: _sortValue, ...recipient }) => recipient);
 
       res.json(recipients);
     } catch (error) {
@@ -1627,11 +1708,10 @@ Focus only on clinically significant interactions. Do not include minor or theor
         return res.status(404).json({ error: "User not found" });
       }
 
-      const displayName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
       res.json({
         userId: recipient.id,
         email: recipient.email,
-        displayName: displayName || recipient.email || recipient.id,
+        displayName: getMailboxDisplayName(recipient),
       });
     } catch (error) {
       console.error("Error looking up mailbox recipient:", error);
@@ -1659,7 +1739,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
       const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
       const userAgent = req.headers["user-agent"];
-      const recipientDisplayName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
+      const recipientDisplayName = getMailboxDisplayName(recipient);
 
       await storage.createAuditLog({
         userId: senderUserId,
@@ -1669,7 +1749,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
         details: JSON.stringify({
           recipientUserId: recipient.id,
           recipientEmail: recipient.email,
-          recipientDisplayName: recipientDisplayName || recipient.email || recipient.id,
+          recipientDisplayName,
           subject: parsed.data.subject,
           message: parsed.data.message,
         }),
