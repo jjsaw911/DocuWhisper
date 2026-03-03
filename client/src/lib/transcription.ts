@@ -12,7 +12,7 @@ export const DEFAULT_TRANSCRIPTION_MODE: TranscriptionMode = "smart";
 
 export const TRANSCRIPTION_MODES: Record<TranscriptionMode, TranscriptionConfig> = {
   smart: {
-    label: "Smart (Heidi-style)",
+    label: "Smart (Balanced)",
     description: "Sends 5–15s chunks, flushes on silence for better accuracy and lower cost.",
     minSec: 5,
     maxSec: 15,
