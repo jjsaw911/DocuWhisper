@@ -61,6 +61,7 @@ export interface IStorage {
   getAllUserSettings(): Promise<UserSettings[]>;
   getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
   getUserById(userId: string): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null } | undefined>;
+  searchUsers(query: string, excludeUserId?: string, limit?: number): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
   deleteUserAndData(userId: string): Promise<void>;
   // Practice/Team functions
   createPractice(practice: InsertPractice): Promise<Practice>;
@@ -540,6 +541,44 @@ class DatabaseStorage implements IStorage {
       .where(eq(users.id, userId))
       .limit(1);
     return user;
+  }
+
+  async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]> {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      return [];
+    }
+
+    const safeLimit = Math.min(Math.max(limit, 1), 25);
+    const likePattern = `%${normalized}%`;
+    const textMatch = or(
+      sql`lower(coalesce(${users.firstName}, '')) like ${likePattern}`,
+      sql`lower(coalesce(${users.lastName}, '')) like ${likePattern}`,
+      sql`lower(trim(coalesce(${users.firstName}, '') || ' ' || coalesce(${users.lastName}, ''))) like ${likePattern}`,
+      sql`lower(coalesce(${users.email}, '')) like ${likePattern}`,
+      sql`lower(${users.id}) like ${likePattern}`
+    );
+
+    if (!textMatch) {
+      return [];
+    }
+
+    const whereClause = excludeUserId
+      ? and(textMatch, sql`${users.id} <> ${excludeUserId}`)
+      : textMatch;
+
+    return db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(whereClause)
+      .orderBy(desc(users.createdAt))
+      .limit(safeLimit);
   }
 
   async deleteUserAndData(userId: string): Promise<void> {

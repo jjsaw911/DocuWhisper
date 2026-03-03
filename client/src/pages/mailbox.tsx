@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, MessageSquare, Search, Send } from "lucide-react";
 
 interface MailboxRecipient {
@@ -43,8 +44,11 @@ export default function Mailbox() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientUserId, setRecipientUserId] = useState("");
   const [recipient, setRecipient] = useState<MailboxRecipient | null>(null);
+  const [searchResults, setSearchResults] = useState<MailboxRecipient[]>([]);
+  const [recipientConfirmed, setRecipientConfirmed] = useState(false);
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
 
@@ -56,27 +60,45 @@ export default function Mailbox() {
     queryKey: ["/api/mailbox/messages?folder=sent"],
   });
 
-  const lookupRecipientMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      const response = await apiRequest("GET", `/api/mailbox/users/${encodeURIComponent(userId)}`);
+  const searchRecipientsMutation = useMutation({
+    mutationFn: async (query: string) => {
+      const response = await apiRequest("GET", `/api/mailbox/users/search?q=${encodeURIComponent(query)}`);
       return response.json();
     },
-    onSuccess: (data: MailboxRecipient) => {
-      setRecipient(data);
-      toast({
-        title: "Recipient found",
-        description: `${data.displayName} (${data.userId})`,
-      });
+    onSuccess: (data: MailboxRecipient[]) => {
+      setSearchResults(data);
+      setRecipient(null);
+      setRecipientUserId("");
+      setRecipientConfirmed(false);
+      if (data.length === 0) {
+        toast({
+          title: "No matches found",
+          description: "Try full or partial first/last name, email, or user ID.",
+        });
+      }
     },
     onError: (error: any) => {
+      setSearchResults([]);
       setRecipient(null);
+      setRecipientUserId("");
+      setRecipientConfirmed(false);
       toast({
-        title: "User not found",
-        description: error?.message || "Check the User ID and try again",
+        title: "Search failed",
+        description: error?.message || "Please try again",
         variant: "destructive",
       });
     },
   });
+
+  const selectRecipient = (candidate: MailboxRecipient) => {
+    setRecipient(candidate);
+    setRecipientUserId(candidate.userId);
+    setRecipientConfirmed(false);
+    toast({
+      title: "Recipient selected",
+      description: `${candidate.displayName} (${candidate.userId})`,
+    });
+  };
 
   const sendMailboxMessageMutation = useMutation({
     mutationFn: async () => {
@@ -90,8 +112,11 @@ export default function Mailbox() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=inbox"] });
       queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=sent"] });
+      setRecipientSearch("");
       setRecipientUserId("");
       setRecipient(null);
+      setSearchResults([]);
+      setRecipientConfirmed(false);
       setSubject("");
       setMessage("");
       toast({
@@ -111,6 +136,7 @@ export default function Mailbox() {
   const canSend =
     !!recipient &&
     recipient.userId === recipientUserId.trim() &&
+    recipientConfirmed &&
     subject.trim().length >= 3 &&
     message.trim().length > 0 &&
     !sendMailboxMessageMutation.isPending;
@@ -120,7 +146,7 @@ export default function Mailbox() {
       <header className="border-b bg-background/95 backdrop-blur px-6 py-4">
         <div>
           <h1 className="text-2xl font-semibold">Mailbox</h1>
-          <p className="text-muted-foreground">Send internal messages to users by User ID</p>
+          <p className="text-muted-foreground">Search users by name, confirm identity, and send internal messages</p>
         </div>
       </header>
 
@@ -133,48 +159,92 @@ export default function Mailbox() {
                 <CardTitle>Compose Message</CardTitle>
               </div>
               <CardDescription>
-                Enter a recipient User ID, confirm identity, then send.
+                Search by name, email, or User ID, then confirm the recipient before sending.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="recipient-user-id">Recipient User ID</Label>
+                <Label htmlFor="recipient-search">Find Recipient</Label>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <Input
-                    id="recipient-user-id"
-                    value={recipientUserId}
+                    id="recipient-search"
+                    value={recipientSearch}
                     onChange={(e) => {
-                      setRecipientUserId(e.target.value);
+                      setRecipientSearch(e.target.value);
+                      setSearchResults([]);
                       setRecipient(null);
+                      setRecipientUserId("");
+                      setRecipientConfirmed(false);
                     }}
-                    placeholder="Paste the recipient User ID"
+                    placeholder="Search by name, email, or User ID"
                     data-testid="input-mailbox-recipient-user-id"
                   />
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => lookupRecipientMutation.mutate(recipientUserId.trim())}
-                    disabled={!recipientUserId.trim() || lookupRecipientMutation.isPending}
+                    onClick={() => searchRecipientsMutation.mutate(recipientSearch.trim())}
+                    disabled={recipientSearch.trim().length < 2 || searchRecipientsMutation.isPending}
                     data-testid="button-mailbox-lookup-user"
                   >
-                    {lookupRecipientMutation.isPending ? (
+                    {searchRecipientsMutation.isPending ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
                       <Search className="h-4 w-4 mr-2" />
                     )}
-                    Lookup
+                    Search
                   </Button>
                 </div>
+                {searchResults.length > 0 && (
+                  <div className="rounded-md border p-3 space-y-2">
+                    <p className="text-sm font-medium">Search results</p>
+                    <div className="space-y-2">
+                      {searchResults.map((candidate) => (
+                        <div
+                          key={candidate.userId}
+                          className="flex flex-col gap-2 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="text-sm">
+                            <p className="font-medium">{candidate.displayName}</p>
+                            <p className="text-muted-foreground">
+                              ID: {candidate.userId}
+                              {candidate.email ? ` · ${candidate.email}` : ""}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={recipient?.userId === candidate.userId ? "default" : "outline"}
+                            onClick={() => selectRecipient(candidate)}
+                            data-testid={`button-mailbox-select-${candidate.userId}`}
+                          >
+                            {recipient?.userId === candidate.userId ? "Selected" : "Select"}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {recipient && (
                   <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
                     <div className="flex items-center gap-2">
-                      <Badge variant="secondary">Recipient confirmed</Badge>
+                      <Badge variant="secondary">Recipient selected</Badge>
                       <span className="font-medium">{recipient.displayName}</span>
                     </div>
                     <p className="text-muted-foreground">
                       ID: {recipient.userId}
                       {recipient.email ? ` · ${recipient.email}` : ""}
                     </p>
+                    <div className="flex items-center gap-2 pt-2">
+                      <Checkbox
+                        id="confirm-mailbox-recipient"
+                        checked={recipientConfirmed}
+                        onCheckedChange={(checked) => setRecipientConfirmed(checked === true)}
+                        data-testid="checkbox-mailbox-confirm-recipient"
+                      />
+                      <Label htmlFor="confirm-mailbox-recipient" className="text-xs text-muted-foreground">
+                        I confirm this is the correct person.
+                      </Label>
+                    </div>
                   </div>
                 )}
               </div>

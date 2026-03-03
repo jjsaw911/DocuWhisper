@@ -1511,6 +1511,32 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  app.get("/api/mailbox/users/search", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const queryParam = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (queryParam.length < 2) {
+        return res.status(400).json({ error: "Please enter at least 2 characters to search" });
+      }
+
+      const requesterUserId = req.user.claims.sub;
+      const matches = await storage.searchUsers(queryParam, requesterUserId, 10);
+
+      const recipients = matches.map((recipient) => {
+        const displayName = `${recipient.firstName || ""} ${recipient.lastName || ""}`.trim();
+        return {
+          userId: recipient.id,
+          email: recipient.email,
+          displayName: displayName || recipient.email || recipient.id,
+        };
+      });
+
+      res.json(recipients);
+    } catch (error) {
+      console.error("Error searching mailbox recipients:", error);
+      res.status(500).json({ error: "Failed to search users" });
+    }
+  });
+
   app.get("/api/mailbox/users/:userId", isAuthenticated, async (req: any, res: Response) => {
     try {
       const lookupUserId = String(req.params.userId || "").trim();
