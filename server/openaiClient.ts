@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { storage } from "./storage";
+import { getRequestContext } from "./requestContext";
 
 export type AiProviderSource = "personal" | "replit";
 
@@ -123,12 +124,17 @@ const logAiUsage = (params: {
     totalTokens?: number;
   };
 }) => {
+  const requestContext = getRequestContext();
+  const actorUserId = requestContext?.userId || "ai_system";
+  const actorUserEmail = requestContext?.userEmail ?? null;
+
   void storage.createAuditLog({
-    userId: "ai_system",
-    userEmail: null,
+    userId: actorUserId,
+    userEmail: actorUserEmail,
     action: params.success ? "called" : "failed",
     resourceType: "ai_usage",
     details: JSON.stringify({
+      actorUserId,
       provider: params.provider,
       operation: params.operation,
       model: params.model || null,
@@ -136,6 +142,8 @@ const logAiUsage = (params: {
       durationMs: Math.max(0, Math.round(params.durationMs)),
       errorCode: params.errorCode || null,
       usage: params.usage || null,
+      method: requestContext?.method || null,
+      path: requestContext?.path || null,
     }),
   }).catch((error) => {
     console.error("Failed to persist AI usage event:", error);

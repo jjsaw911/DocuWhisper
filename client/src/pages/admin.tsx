@@ -142,6 +142,41 @@ interface AdminApiUsageResponse {
   }[];
 }
 
+interface AdminCustomerUsageResponse {
+  generatedAt: string;
+  windowHours: number;
+  includeInactive: boolean;
+  totals: {
+    activeCustomers: number;
+    listedCustomers: number;
+    requests: number;
+    errors: number;
+    errorRate: number;
+    totalTokens: number;
+  };
+  unattributed: {
+    requests: number;
+    totalTokens: number;
+  };
+  users: {
+    userId: string;
+    displayName: string;
+    email: string | null;
+    requests: number;
+    errors: number;
+    errorRate: number;
+    totalTokens: number;
+    requestShare: number;
+    tokenShare: number;
+    byProvider: {
+      personal: number;
+      replit: number;
+    };
+    byOperation: Record<string, number>;
+    lastActivityAt: string | null;
+  }[];
+}
+
 interface Organization {
   id: number;
   name: string;
@@ -296,6 +331,7 @@ export default function Admin() {
   const [preferredAiSource, setPreferredAiSource] = useState<"personal" | "replit">("personal");
   const [personalAiKeyInput, setPersonalAiKeyInput] = useState("");
   const [aiUsageWindowHours, setAiUsageWindowHours] = useState("24");
+  const [customerUsageWindowHours, setCustomerUsageWindowHours] = useState("168");
   const [apiUsageWindowHours, setApiUsageWindowHours] = useState("24");
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
@@ -332,6 +368,22 @@ export default function Admin() {
       const response = await apiRequest(
         "GET",
         `/api/admin/api-usage?hours=${encodeURIComponent(apiUsageWindowHours)}&limit=12`,
+      );
+      return response.json();
+    },
+  });
+
+  const {
+    data: adminCustomerUsage,
+    isLoading: customerUsageLoading,
+    refetch: refetchCustomerUsage,
+  } = useQuery<AdminCustomerUsageResponse>({
+    queryKey: ["/api/admin/customer-usage", customerUsageWindowHours],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/admin/customer-usage?hours=${encodeURIComponent(customerUsageWindowHours)}&limit=200`,
       );
       return response.json();
     },
@@ -2111,6 +2163,128 @@ export default function Admin() {
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">No AI usage data yet.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Customer Usage (PHI-safe)
+                </CardTitle>
+                <CardDescription>
+                  Compare customer AI usage without viewing any patient or note content.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-2">
+                    <Label>Window</Label>
+                    <Select value={customerUsageWindowHours} onValueChange={setCustomerUsageWindowHours}>
+                      <SelectTrigger className="w-[160px]" data-testid="select-admin-customer-usage-window">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="24">Last 24 hours</SelectItem>
+                        <SelectItem value="72">Last 3 days</SelectItem>
+                        <SelectItem value="168">Last 7 days</SelectItem>
+                        <SelectItem value="336">Last 14 days</SelectItem>
+                        <SelectItem value="720">Last 30 days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => refetchCustomerUsage()}
+                    disabled={customerUsageLoading}
+                    data-testid="button-refresh-admin-customer-usage"
+                  >
+                    {customerUsageLoading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Refresh
+                  </Button>
+                </div>
+
+                {customerUsageLoading ? (
+                  <Skeleton className="h-28 w-full" />
+                ) : adminCustomerUsage ? (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Active Customers</p>
+                        <p className="text-xl font-semibold">
+                          {adminCustomerUsage.totals.activeCustomers.toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">AI Requests</p>
+                        <p className="text-xl font-semibold">{adminCustomerUsage.totals.requests.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">AI Tokens</p>
+                        <p className="text-xl font-semibold">{adminCustomerUsage.totals.totalTokens.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Error Rate</p>
+                        <p className="text-xl font-semibold">
+                          {(adminCustomerUsage.totals.errorRate * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                    </div>
+
+                    {adminCustomerUsage.unattributed.requests > 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {adminCustomerUsage.unattributed.requests.toLocaleString()} historical usage events are unattributed
+                        (from before per-customer tracking was enabled).
+                      </p>
+                    ) : null}
+
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Customer</TableHead>
+                            <TableHead className="text-right">Requests</TableHead>
+                            <TableHead className="text-right">Req %</TableHead>
+                            <TableHead className="text-right">Tokens</TableHead>
+                            <TableHead className="text-right">Token %</TableHead>
+                            <TableHead className="text-right">Error %</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {adminCustomerUsage.users.length > 0 ? (
+                            adminCustomerUsage.users.map((row) => (
+                              <TableRow key={row.userId}>
+                                <TableCell>
+                                  <div className="font-medium">{row.displayName}</div>
+                                  <div className="text-xs text-muted-foreground truncate max-w-[280px]">
+                                    {row.email || row.userId}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right">{row.requests.toLocaleString()}</TableCell>
+                                <TableCell className="text-right">{(row.requestShare * 100).toFixed(1)}%</TableCell>
+                                <TableCell className="text-right">{row.totalTokens.toLocaleString()}</TableCell>
+                                <TableCell className="text-right">{(row.tokenShare * 100).toFixed(1)}%</TableCell>
+                                <TableCell className="text-right">{(row.errorRate * 100).toFixed(1)}%</TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
+                                No customer AI usage data yet.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No customer usage data yet.</p>
                 )}
               </CardContent>
             </Card>

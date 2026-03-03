@@ -9,6 +9,7 @@ import { getStripeSync } from "./stripeClient";
 import { WebhookHandlers } from "./webhookHandlers";
 import { setupWebSocket } from "./websocket";
 import { recordApiUsage } from "./apiUsageMonitor";
+import { runWithRequestContext } from "./requestContext";
 
 const app = express();
 const httpServer = createServer(app);
@@ -191,6 +192,20 @@ async function initStripe() {
     })
   );
   app.use(express.urlencoded({ extended: false }));
+
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+    const claims = user?.claims;
+    runWithRequestContext(
+      {
+        userId: claims?.sub || user?.id || undefined,
+        userEmail: claims?.email || null,
+        method: req.method,
+        path: req.path,
+      },
+      () => next(),
+    );
+  });
 
   app.use((req, res, next) => {
     const start = Date.now();

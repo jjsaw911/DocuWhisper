@@ -2269,6 +2269,171 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  app.get("/api/admin/customer-usage", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const requestedHours = typeof req.query.hours === "string" ? Number.parseInt(req.query.hours, 10) : Number.NaN;
+      const requestedLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : Number.NaN;
+      const includeInactive = req.query.includeInactive === "true";
+      const windowHours = Number.isFinite(requestedHours)
+        ? Math.min(Math.max(requestedHours, 1), 24 * 30)
+        : 24;
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 1), 500)
+        : 200;
+
+      const startDate = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+      const [usageLogs, allUsers] = await Promise.all([
+        storage.getAuditLogs({ resourceType: "ai_usage", startDate }),
+        storage.getAllUsers(),
+      ]);
+
+      const userDirectory = new Map(
+        allUsers.map((user) => [user.id, user]),
+      );
+
+      type Provider = "personal" | "replit";
+      type UserUsage = {
+        userId: string;
+        displayName: string;
+        email: string | null;
+        requests: number;
+        errors: number;
+        totalTokens: number;
+        byProvider: Record<Provider, number>;
+        byOperation: Record<string, number>;
+        lastActivityAt: string | null;
+      };
+
+      const byUser = new Map<string, UserUsage>();
+      let unattributedRequests = 0;
+      let unattributedTokens = 0;
+
+      const getDisplayName = (userId: string) => {
+        const user = userDirectory.get(userId);
+        if (!user) return userId;
+        const fullName = `${user.firstName || ""} ${user.lastName || ""}`.trim();
+        if (fullName) return fullName;
+        if (user.email) return user.email;
+        return user.id;
+      };
+
+      for (const log of usageLogs) {
+        const userId = log.userId || "";
+        let details: any = {};
+        try {
+          details = log.details ? JSON.parse(log.details) : {};
+        } catch {
+          details = {};
+        }
+
+        const eventTokens =
+          typeof details?.usage?.totalTokens === "number"
+            ? details.usage.totalTokens
+            : typeof details?.usage?.total_tokens === "number"
+              ? details.usage.total_tokens
+              : 0;
+
+        if (!userId || userId === "ai_system") {
+          unattributedRequests += 1;
+          unattributedTokens += eventTokens;
+          continue;
+        }
+
+        const provider: Provider =
+          details?.provider === "personal" || details?.provider === "replit"
+            ? details.provider
+            : "replit";
+        const operation = typeof details?.operation === "string" ? details.operation : "unknown";
+        const success = details?.success !== false;
+
+        if (!byUser.has(userId)) {
+          byUser.set(userId, {
+            userId,
+            displayName: getDisplayName(userId),
+            email: userDirectory.get(userId)?.email || null,
+            requests: 0,
+            errors: 0,
+            totalTokens: 0,
+            byProvider: { personal: 0, replit: 0 },
+            byOperation: {},
+            lastActivityAt: null,
+          });
+        }
+
+        const usage = byUser.get(userId)!;
+        usage.requests += 1;
+        usage.totalTokens += eventTokens;
+        usage.byProvider[provider] += 1;
+        usage.byOperation[operation] = (usage.byOperation[operation] || 0) + 1;
+        usage.lastActivityAt = log.timestamp?.toISOString?.() || new Date(log.timestamp).toISOString();
+        if (!success) usage.errors += 1;
+      }
+
+      if (includeInactive) {
+        for (const user of allUsers) {
+          if (byUser.has(user.id)) continue;
+          byUser.set(user.id, {
+            userId: user.id,
+            displayName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || user.id,
+            email: user.email || null,
+            requests: 0,
+            errors: 0,
+            totalTokens: 0,
+            byProvider: { personal: 0, replit: 0 },
+            byOperation: {},
+            lastActivityAt: null,
+          });
+        }
+      }
+
+      const totals = Array.from(byUser.values()).reduce(
+        (acc, row) => {
+          acc.requests += row.requests;
+          acc.errors += row.errors;
+          acc.totalTokens += row.totalTokens;
+          return acc;
+        },
+        { requests: 0, errors: 0, totalTokens: 0 },
+      );
+
+      const users = Array.from(byUser.values())
+        .sort((a, b) => {
+          if (b.requests !== a.requests) return b.requests - a.requests;
+          if (b.totalTokens !== a.totalTokens) return b.totalTokens - a.totalTokens;
+          return a.displayName.localeCompare(b.displayName);
+        })
+        .slice(0, limit)
+        .map((row) => ({
+          ...row,
+          errorRate: row.requests > 0 ? row.errors / row.requests : 0,
+          requestShare: totals.requests > 0 ? row.requests / totals.requests : 0,
+          tokenShare: totals.totalTokens > 0 ? row.totalTokens / totals.totalTokens : 0,
+        }));
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        windowHours,
+        includeInactive,
+        totals: {
+          activeCustomers: Array.from(byUser.values()).filter((row) => row.requests > 0).length,
+          listedCustomers: users.length,
+          requests: totals.requests,
+          errors: totals.errors,
+          errorRate: totals.requests > 0 ? totals.errors / totals.requests : 0,
+          totalTokens: totals.totalTokens,
+        },
+        unattributed: {
+          requests: unattributedRequests,
+          totalTokens: unattributedTokens,
+        },
+        users,
+      });
+    } catch (error) {
+      console.error("Error fetching customer usage summary:", error);
+      res.status(500).json({ error: "Failed to fetch customer usage summary" });
+    }
+  });
+
   app.get("/api/admin/api-usage", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
       const requestedHours = typeof req.query.hours === "string" ? Number.parseInt(req.query.hours, 10) : Number.NaN;
