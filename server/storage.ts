@@ -1,4 +1,4 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, apiKeys, personalApiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type ApiKey, type InsertApiKey, type PersonalApiKey, type InsertPersonalApiKey } from "@shared/schema";
+import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, transcriptionMetrics, apiKeys, personalApiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type TranscriptionMetric, type InsertTranscriptionMetric, type ApiKey, type InsertApiKey, type PersonalApiKey, type InsertPersonalApiKey } from "@shared/schema";
 import crypto from "crypto";
 import { db } from "./db";
 import { eq, desc, and, asc, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
@@ -145,6 +145,9 @@ export interface IStorage {
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
+  // Transcription telemetry
+  createTranscriptionMetric(metric: InsertTranscriptionMetric): Promise<TranscriptionMetric>;
+  getTranscriptionMetrics(filters?: { startDate?: Date; endDate?: Date; channel?: string; limit?: number }): Promise<TranscriptionMetric[]>;
   // External API Keys
   createApiKey(data: { practiceId: number; name: string; scopes: string[]; createdBy: string; rateLimitPerMinute?: number; expiresAt?: Date }): Promise<{ apiKey: ApiKey; rawKey: string }>;
   getApiKeyByHash(keyHash: string): Promise<ApiKey | undefined>;
@@ -1152,6 +1155,46 @@ class DatabaseStorage implements IStorage {
     }
     
     return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.timestamp)).limit(1000);
+  }
+
+  async createTranscriptionMetric(metric: InsertTranscriptionMetric): Promise<TranscriptionMetric> {
+    const [created] = await db.insert(transcriptionMetrics).values(metric).returning();
+    return created;
+  }
+
+  async getTranscriptionMetrics(filters?: {
+    startDate?: Date;
+    endDate?: Date;
+    channel?: string;
+    limit?: number;
+  }): Promise<TranscriptionMetric[]> {
+    const conditions = [];
+    const limit = Math.min(Math.max(filters?.limit ?? 1000, 1), 10000);
+
+    if (filters?.startDate) {
+      conditions.push(gte(transcriptionMetrics.createdAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(transcriptionMetrics.createdAt, filters.endDate));
+    }
+    if (filters?.channel) {
+      conditions.push(eq(transcriptionMetrics.channel, filters.channel));
+    }
+
+    if (conditions.length === 0) {
+      return db
+        .select()
+        .from(transcriptionMetrics)
+        .orderBy(desc(transcriptionMetrics.createdAt))
+        .limit(limit);
+    }
+
+    return db
+      .select()
+      .from(transcriptionMetrics)
+      .where(and(...conditions))
+      .orderBy(desc(transcriptionMetrics.createdAt))
+      .limit(limit);
   }
 
   // Vitals methods

@@ -470,9 +470,27 @@ export async function registerRoutes(
   }, 60_000);
 
   const parseOptionalInt = (value: unknown): number | undefined => {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? Math.trunc(value) : undefined;
+    }
     if (typeof value !== "string") return undefined;
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const parseOptionalText = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const parseOptionalBool = (value: unknown): boolean | undefined => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      if (value.toLowerCase() === "true") return true;
+      if (value.toLowerCase() === "false") return false;
+    }
+    return undefined;
   };
 
   const classifyTranscriptionError = (error: unknown): string => {
@@ -483,8 +501,36 @@ export async function registerRoutes(
     return "provider_error";
   };
 
+  const persistTranscriptionMetric = (payload: Record<string, unknown>) => {
+    void storage
+      .createTranscriptionMetric({
+        userId: parseOptionalText(payload.user_id) ?? null,
+        channel: "web",
+        eventType: parseOptionalText(payload.event) ?? "unknown",
+        provider: parseOptionalText(payload.provider) ?? null,
+        configuredProvider: parseOptionalText(payload.configured_provider) ?? null,
+        fallbackProvider: parseOptionalText(payload.fallback_provider) ?? null,
+        chunkId: parseOptionalInt(payload.chunk_id) ?? null,
+        sessionId: parseOptionalText(payload.session_id) ?? null,
+        fallbackUsed: parseOptionalBool(payload.fallback_used) ?? false,
+        retryAttempt: parseOptionalInt(payload.retry_attempt) ?? null,
+        maxRetries: parseOptionalInt(payload.max_retries) ?? null,
+        errorType: parseOptionalText(payload.error_type) ?? null,
+        statusCode: parseOptionalInt(payload.status_code) ?? null,
+        latencyMs: parseOptionalInt(payload.latency_ms) ?? null,
+        audioBytes: parseOptionalInt(payload.audio_bytes) ?? null,
+        transcriptChars: parseOptionalInt(payload.transcript_chars) ?? null,
+        language: parseOptionalText(payload.language) ?? null,
+        details: JSON.stringify(payload),
+      })
+      .catch((error) => {
+        console.warn("[transcribe-metric] failed to persist metric:", error);
+      });
+  };
+
   const logTranscriptionMetric = (payload: Record<string, unknown>) => {
     console.log("[transcribe-metric]", JSON.stringify(payload));
+    persistTranscriptionMetric(payload);
   };
 
   app.get("/api/transcription-provider", isAuthenticated, async (_req: any, res: Response) => {
@@ -2568,6 +2614,152 @@ Focus only on clinically significant interactions. Do not include minor or theor
     } catch (error) {
       console.error("Error fetching API usage summary:", error);
       res.status(500).json({ error: "Failed to fetch API usage summary" });
+    }
+  });
+
+  app.get("/api/admin/transcription-metrics", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const requestedHours = typeof req.query.hours === "string" ? Number.parseInt(req.query.hours, 10) : Number.NaN;
+      const requestedLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : Number.NaN;
+      const windowHours = Number.isFinite(requestedHours)
+        ? Math.min(Math.max(requestedHours, 1), 24 * 30)
+        : 24;
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 100), 5000)
+        : 2000;
+
+      const startDate = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+      const metrics = await storage.getTranscriptionMetrics({ startDate, limit });
+
+      const percentile = (values: number[], p: number): number => {
+        if (values.length === 0) return 0;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = Math.ceil((p / 100) * sorted.length) - 1;
+        const clampedIdx = Math.min(Math.max(idx, 0), sorted.length - 1);
+        return sorted[clampedIdx];
+      };
+
+      type Bucket = {
+        requests: number;
+        successes: number;
+        errors: number;
+        fallbacks: number;
+        latencies: number[];
+      };
+
+      const createBucket = (): Bucket => ({
+        requests: 0,
+        successes: 0,
+        errors: 0,
+        fallbacks: 0,
+        latencies: [],
+      });
+
+      const totals = createBucket();
+      const byProvider: Record<"local" | "openai" | "unknown", Bucket> = {
+        local: createBucket(),
+        openai: createBucket(),
+        unknown: createBucket(),
+      };
+      const byChannel: Record<"web" | "mobile" | "unknown", Bucket> = {
+        web: createBucket(),
+        mobile: createBucket(),
+        unknown: createBucket(),
+      };
+
+      const configuredProviders: Record<string, number> = {};
+      const errorTypes: Record<string, number> = {};
+
+      for (const row of metrics) {
+        const provider: "local" | "openai" | "unknown" =
+          row.provider === "local" || row.provider === "openai" ? row.provider : "unknown";
+        const channel: "web" | "mobile" | "unknown" =
+          row.channel === "web" || row.channel === "mobile" ? row.channel : "unknown";
+        const event = row.eventType;
+        const latency = typeof row.latencyMs === "number" ? row.latencyMs : null;
+
+        if (row.configuredProvider) {
+          configuredProviders[row.configuredProvider] = (configuredProviders[row.configuredProvider] || 0) + 1;
+        }
+
+        if (event === "request") {
+          totals.requests += 1;
+          byProvider[provider].requests += 1;
+          byChannel[channel].requests += 1;
+        } else if (event === "success") {
+          totals.successes += 1;
+          byProvider[provider].successes += 1;
+          byChannel[channel].successes += 1;
+        } else if (event === "error") {
+          totals.errors += 1;
+          byProvider[provider].errors += 1;
+          byChannel[channel].errors += 1;
+          const errorType = row.errorType || "unknown";
+          errorTypes[errorType] = (errorTypes[errorType] || 0) + 1;
+        } else if (event === "fallback") {
+          totals.fallbacks += 1;
+          byProvider[provider].fallbacks += 1;
+          byChannel[channel].fallbacks += 1;
+        }
+
+        if ((event === "success" || event === "error") && latency !== null && Number.isFinite(latency)) {
+          totals.latencies.push(latency);
+          byProvider[provider].latencies.push(latency);
+          byChannel[channel].latencies.push(latency);
+        }
+      }
+
+      const finalizeBucket = (bucket: Bucket) => ({
+        requests: bucket.requests,
+        successes: bucket.successes,
+        errors: bucket.errors,
+        fallbacks: bucket.fallbacks,
+        errorRate: bucket.requests > 0 ? bucket.errors / bucket.requests : 0,
+        fallbackRate: bucket.requests > 0 ? bucket.fallbacks / bucket.requests : 0,
+        avgLatencyMs:
+          bucket.latencies.length > 0
+            ? Math.round(bucket.latencies.reduce((sum, value) => sum + value, 0) / bucket.latencies.length)
+            : 0,
+        p95LatencyMs: Math.round(percentile(bucket.latencies, 95)),
+      });
+
+      const recent = metrics.slice(0, 50).map((row) => ({
+        id: row.id,
+        createdAt: row.createdAt,
+        channel: row.channel || "unknown",
+        eventType: row.eventType,
+        provider: row.provider || "unknown",
+        configuredProvider: row.configuredProvider || null,
+        fallbackProvider: row.fallbackProvider || null,
+        fallbackUsed: row.fallbackUsed,
+        errorType: row.errorType || null,
+        statusCode: row.statusCode || null,
+        latencyMs: row.latencyMs || null,
+        chunkId: row.chunkId || null,
+      }));
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        windowHours,
+        eventsCaptured: metrics.length,
+        totals: finalizeBucket(totals),
+        byProvider: {
+          local: finalizeBucket(byProvider.local),
+          openai: finalizeBucket(byProvider.openai),
+          unknown: finalizeBucket(byProvider.unknown),
+        },
+        byChannel: {
+          web: finalizeBucket(byChannel.web),
+          mobile: finalizeBucket(byChannel.mobile),
+          unknown: finalizeBucket(byChannel.unknown),
+        },
+        configuredProviders,
+        errorTypes,
+        recent,
+      });
+    } catch (error) {
+      console.error("Error fetching transcription metrics:", error);
+      res.status(500).json({ error: "Failed to fetch transcription metrics" });
     }
   });
 

@@ -581,6 +581,38 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 
+// Transcription Metrics - operational telemetry for STT diagnostics
+export const transcriptionMetrics = pgTable("transcription_metrics", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id"),
+  channel: text("channel").notNull().default("web"), // 'web' | 'mobile'
+  eventType: text("event_type").notNull(), // 'request' | 'success' | 'error' | 'fallback'
+  provider: text("provider"), // 'local' | 'openai'
+  configuredProvider: text("configured_provider"),
+  fallbackProvider: text("fallback_provider"),
+  chunkId: integer("chunk_id"),
+  sessionId: text("session_id"),
+  fallbackUsed: boolean("fallback_used").notNull().default(false),
+  retryAttempt: integer("retry_attempt"),
+  maxRetries: integer("max_retries"),
+  errorType: text("error_type"),
+  statusCode: integer("status_code"),
+  latencyMs: integer("latency_ms"),
+  audioBytes: integer("audio_bytes"),
+  transcriptChars: integer("transcript_chars"),
+  language: text("language"),
+  details: text("details"), // JSON payload snapshot for diagnostics
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertTranscriptionMetricSchema = createInsertSchema(transcriptionMetrics).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type TranscriptionMetric = typeof transcriptionMetrics.$inferSelect;
+export type InsertTranscriptionMetric = z.infer<typeof insertTranscriptionMetricSchema>;
+
 // External API Keys - for third-party integrations (e.g., urgent care websites)
 export const apiKeys = pgTable("api_keys", {
   id: serial("id").primaryKey(),

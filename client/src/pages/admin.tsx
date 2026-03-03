@@ -142,6 +142,50 @@ interface AdminApiUsageResponse {
   }[];
 }
 
+interface TranscriptionMetricSummaryBucket {
+  requests: number;
+  successes: number;
+  errors: number;
+  fallbacks: number;
+  errorRate: number;
+  fallbackRate: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+}
+
+interface AdminTranscriptionMetricsResponse {
+  generatedAt: string;
+  windowHours: number;
+  eventsCaptured: number;
+  totals: TranscriptionMetricSummaryBucket;
+  byProvider: {
+    local: TranscriptionMetricSummaryBucket;
+    openai: TranscriptionMetricSummaryBucket;
+    unknown: TranscriptionMetricSummaryBucket;
+  };
+  byChannel: {
+    web: TranscriptionMetricSummaryBucket;
+    mobile: TranscriptionMetricSummaryBucket;
+    unknown: TranscriptionMetricSummaryBucket;
+  };
+  configuredProviders: Record<string, number>;
+  errorTypes: Record<string, number>;
+  recent: {
+    id: number;
+    createdAt: string;
+    channel: string;
+    eventType: string;
+    provider: string;
+    configuredProvider: string | null;
+    fallbackProvider: string | null;
+    fallbackUsed: boolean;
+    errorType: string | null;
+    statusCode: number | null;
+    latencyMs: number | null;
+    chunkId: number | null;
+  }[];
+}
+
 interface AdminCustomerUsageResponse {
   generatedAt: string;
   windowHours: number;
@@ -333,6 +377,7 @@ export default function Admin() {
   const [aiUsageWindowHours, setAiUsageWindowHours] = useState("24");
   const [customerUsageWindowHours, setCustomerUsageWindowHours] = useState("168");
   const [apiUsageWindowHours, setApiUsageWindowHours] = useState("24");
+  const [transcriptionUsageWindowHours, setTranscriptionUsageWindowHours] = useState("24");
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -368,6 +413,22 @@ export default function Admin() {
       const response = await apiRequest(
         "GET",
         `/api/admin/api-usage?hours=${encodeURIComponent(apiUsageWindowHours)}&limit=12`,
+      );
+      return response.json();
+    },
+  });
+
+  const {
+    data: adminTranscriptionMetrics,
+    isLoading: transcriptionMetricsLoading,
+    refetch: refetchTranscriptionMetrics,
+  } = useQuery<AdminTranscriptionMetricsResponse>({
+    queryKey: ["/api/admin/transcription-metrics", transcriptionUsageWindowHours],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/admin/transcription-metrics?hours=${encodeURIComponent(transcriptionUsageWindowHours)}&limit=3000`,
       );
       return response.json();
     },
@@ -2387,6 +2448,164 @@ export default function Admin() {
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">No API traffic data yet.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5" />
+                  Transcription Diagnostics
+                </CardTitle>
+                <CardDescription>
+                  Provider health for speech-to-text including fallback rate and latency percentiles.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-2">
+                    <Label>Window</Label>
+                    <Select value={transcriptionUsageWindowHours} onValueChange={setTranscriptionUsageWindowHours}>
+                      <SelectTrigger className="w-[160px]" data-testid="select-admin-transcription-usage-window">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Last 1 hour</SelectItem>
+                        <SelectItem value="6">Last 6 hours</SelectItem>
+                        <SelectItem value="24">Last 24 hours</SelectItem>
+                        <SelectItem value="72">Last 3 days</SelectItem>
+                        <SelectItem value="168">Last 7 days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => refetchTranscriptionMetrics()}
+                    disabled={transcriptionMetricsLoading}
+                    data-testid="button-refresh-admin-transcription-metrics"
+                  >
+                    {transcriptionMetricsLoading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Refresh
+                  </Button>
+                </div>
+
+                {transcriptionMetricsLoading ? (
+                  <Skeleton className="h-28 w-full" />
+                ) : adminTranscriptionMetrics ? (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Requests</p>
+                        <p className="text-xl font-semibold">{adminTranscriptionMetrics.totals.requests.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Fallbacks</p>
+                        <p className="text-xl font-semibold">{adminTranscriptionMetrics.totals.fallbacks.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Fallback Rate</p>
+                        <p className="text-xl font-semibold">
+                          {(adminTranscriptionMetrics.totals.fallbackRate * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">P95 Latency</p>
+                        <p className="text-xl font-semibold">
+                          {adminTranscriptionMetrics.totals.p95LatencyMs.toLocaleString()} ms
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-md border p-3">
+                        <p className="text-sm font-medium">Provider split</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Local: {adminTranscriptionMetrics.byProvider.local.requests.toLocaleString()} req ·{" "}
+                          {(adminTranscriptionMetrics.byProvider.local.fallbackRate * 100).toFixed(1)}% fallback ·{" "}
+                          {adminTranscriptionMetrics.byProvider.local.p95LatencyMs.toLocaleString()} ms p95
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          OpenAI: {adminTranscriptionMetrics.byProvider.openai.requests.toLocaleString()} req ·{" "}
+                          {(adminTranscriptionMetrics.byProvider.openai.errorRate * 100).toFixed(1)}% error ·{" "}
+                          {adminTranscriptionMetrics.byProvider.openai.p95LatencyMs.toLocaleString()} ms p95
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-sm font-medium">Channel split</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Web: {adminTranscriptionMetrics.byChannel.web.requests.toLocaleString()} req ·{" "}
+                          {(adminTranscriptionMetrics.byChannel.web.errorRate * 100).toFixed(1)}% error
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Mobile: {adminTranscriptionMetrics.byChannel.mobile.requests.toLocaleString()} req ·{" "}
+                          {(adminTranscriptionMetrics.byChannel.mobile.errorRate * 100).toFixed(1)}% error
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border p-3">
+                      <p className="text-sm font-medium">Top error types</p>
+                      {Object.keys(adminTranscriptionMetrics.errorTypes).length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {Object.entries(adminTranscriptionMetrics.errorTypes)
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, 6)
+                            .map(([errorType, count]) => (
+                              <Badge key={errorType} variant="outline">
+                                {errorType}: {count.toLocaleString()}
+                              </Badge>
+                            ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-1">No errors recorded in this window.</p>
+                      )}
+                    </div>
+
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Time</TableHead>
+                            <TableHead>Channel</TableHead>
+                            <TableHead>Event</TableHead>
+                            <TableHead>Provider</TableHead>
+                            <TableHead className="text-right">Latency</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {adminTranscriptionMetrics.recent.length > 0 ? (
+                            adminTranscriptionMetrics.recent.slice(0, 12).map((event) => (
+                              <TableRow key={event.id}>
+                                <TableCell className="text-xs">{formatDate(event.createdAt)}</TableCell>
+                                <TableCell className="capitalize">{event.channel}</TableCell>
+                                <TableCell className="capitalize">
+                                  {event.eventType}
+                                  {event.fallbackUsed ? " (fallback)" : ""}
+                                </TableCell>
+                                <TableCell className="capitalize">{event.provider}</TableCell>
+                                <TableCell className="text-right">
+                                  {event.latencyMs ? `${event.latencyMs.toLocaleString()} ms` : "—"}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                                No transcription diagnostics data yet.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No transcription diagnostics data yet.</p>
                 )}
               </CardContent>
             </Card>

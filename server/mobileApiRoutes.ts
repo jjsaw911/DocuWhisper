@@ -26,9 +26,27 @@ function isRedirectAllowed(uri: string): boolean {
 }
 
 const parseOptionalInt = (value: unknown): number | undefined => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.trunc(value) : undefined;
+  }
   if (typeof value !== "string") return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const parseOptionalText = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const parseOptionalBool = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value.toLowerCase() === "true") return true;
+    if (value.toLowerCase() === "false") return false;
+  }
+  return undefined;
 };
 
 const classifyTranscriptionError = (error: unknown): string => {
@@ -39,8 +57,36 @@ const classifyTranscriptionError = (error: unknown): string => {
   return "provider_error";
 };
 
+const persistTranscriptionMetric = (payload: Record<string, unknown>) => {
+  void storage
+    .createTranscriptionMetric({
+      userId: parseOptionalText(payload.user_id) ?? null,
+      channel: "mobile",
+      eventType: parseOptionalText(payload.event) ?? "unknown",
+      provider: parseOptionalText(payload.provider) ?? null,
+      configuredProvider: parseOptionalText(payload.configured_provider) ?? null,
+      fallbackProvider: parseOptionalText(payload.fallback_provider) ?? null,
+      chunkId: parseOptionalInt(payload.chunk_id) ?? null,
+      sessionId: parseOptionalText(payload.session_id) ?? null,
+      fallbackUsed: parseOptionalBool(payload.fallback_used) ?? false,
+      retryAttempt: parseOptionalInt(payload.retry_attempt) ?? null,
+      maxRetries: parseOptionalInt(payload.max_retries) ?? null,
+      errorType: parseOptionalText(payload.error_type) ?? null,
+      statusCode: parseOptionalInt(payload.status_code) ?? null,
+      latencyMs: parseOptionalInt(payload.latency_ms) ?? null,
+      audioBytes: parseOptionalInt(payload.audio_bytes) ?? null,
+      transcriptChars: parseOptionalInt(payload.transcript_chars) ?? null,
+      language: parseOptionalText(payload.language) ?? null,
+      details: JSON.stringify(payload),
+    })
+    .catch((error) => {
+      console.warn("[mobile-transcribe-metric] failed to persist metric:", error);
+    });
+};
+
 const logTranscriptionMetric = (payload: Record<string, unknown>) => {
   console.log("[mobile-transcribe-metric]", JSON.stringify(payload));
+  persistTranscriptionMetric(payload);
 };
 
 // Docs endpoint is public (no auth needed)
