@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useLocation } from "wouter";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   ArrowLeft,
   Users,
@@ -69,6 +69,15 @@ interface Invite {
 
 interface AdminCheckData {
   isAdmin: boolean;
+}
+
+interface AdminAiSettings {
+  preferredSource: "personal" | "replit";
+  effectiveSource: "personal" | "replit";
+  hasPersonalKey: boolean;
+  hasReplitKey: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 interface Organization {
@@ -222,10 +231,16 @@ export default function Admin() {
   const [showNewApiKeyDialog, setShowNewApiKeyDialog] = useState(false);
   const [newlyCreatedApiKey, setNewlyCreatedApiKey] = useState<string | null>(null);
   const [copiedApiKey, setCopiedApiKey] = useState(false);
+  const [preferredAiSource, setPreferredAiSource] = useState<"personal" | "replit">("personal");
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
     enabled: !!user,
+  });
+
+  const { data: adminAiSettings, isLoading: aiSettingsLoading } = useQuery<AdminAiSettings>({
+    queryKey: ["/api/admin/ai-settings"],
+    enabled: !!user && adminCheck?.isAdmin === true,
   });
 
   const { data: subscribers, isLoading: subLoading } = useQuery<Subscription[]>({
@@ -256,6 +271,35 @@ export default function Admin() {
   const { data: internalMessages, isLoading: internalMessagesLoading } = useQuery<InternalMessage[]>({
     queryKey: ["/api/admin/internal-messages"],
     enabled: !!user && adminCheck?.isAdmin === true,
+  });
+
+  useEffect(() => {
+    if (!adminAiSettings) return;
+    setPreferredAiSource(adminAiSettings.preferredSource);
+  }, [adminAiSettings]);
+
+  const saveAiSettingsMutation = useMutation({
+    mutationFn: async (preferredSource: "personal" | "replit") => {
+      const response = await apiRequest("PUT", "/api/admin/ai-settings", { preferredSource });
+      return response.json();
+    },
+    onSuccess: (data: AdminAiSettings) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-settings"] });
+      setPreferredAiSource(data.preferredSource);
+      toast({
+        title: "AI settings updated",
+        description:
+          data.effectiveSource === data.preferredSource
+            ? `Now using ${data.effectiveSource === "personal" ? "personal OpenAI key" : "Replit AI key"}.`
+            : `Preferred source unavailable. Using ${data.effectiveSource === "personal" ? "personal OpenAI key" : "Replit AI key"} as fallback.`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to update AI settings",
+        variant: "destructive",
+      });
+    },
   });
 
   const fetchApiKeys = async (orgId: number) => {
@@ -780,6 +824,10 @@ export default function Admin() {
             <TabsTrigger value="api-keys" data-testid="tab-api-keys">
               <Key className="mr-2 h-4 w-4" />
               API Keys
+            </TabsTrigger>
+            <TabsTrigger value="ai-control" data-testid="tab-ai-control">
+              <Settings className="mr-2 h-4 w-4" />
+              AI Control
             </TabsTrigger>
             <TabsTrigger value="internal-inbox" data-testid="tab-internal-inbox">
               <MessageSquare className="mr-2 h-4 w-4" />
@@ -1714,6 +1762,79 @@ export default function Admin() {
                     <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <p>Select an organization to manage API keys</p>
                   </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="ai-control" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  AI Provider Control
+                </CardTitle>
+                <CardDescription>
+                  Choose which credential source powers AI generation for this deployment.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {aiSettingsLoading ? (
+                  <Skeleton className="h-28 w-full" />
+                ) : (
+                  <>
+                    <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant={adminAiSettings?.hasPersonalKey ? "default" : "outline"}>
+                          Personal key: {adminAiSettings?.hasPersonalKey ? "Available" : "Missing"}
+                        </Badge>
+                        <Badge variant={adminAiSettings?.hasReplitKey ? "default" : "outline"}>
+                          Replit key: {adminAiSettings?.hasReplitKey ? "Available" : "Missing"}
+                        </Badge>
+                        <Badge variant="secondary">
+                          Effective source: {adminAiSettings?.effectiveSource === "personal" ? "Personal" : "Replit"}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Preferred source will automatically fall back if its key is not configured.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-md border p-4">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="admin-ai-source-toggle">Use personal OpenAI key</Label>
+                        <p className="text-sm text-muted-foreground">
+                          ON: personal `OPENAI_API_KEY` · OFF: Replit integration key
+                        </p>
+                      </div>
+                      <Switch
+                        id="admin-ai-source-toggle"
+                        checked={preferredAiSource === "personal"}
+                        onCheckedChange={(checked) => setPreferredAiSource(checked ? "personal" : "replit")}
+                        data-testid="switch-admin-ai-source-toggle"
+                      />
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={() => saveAiSettingsMutation.mutate(preferredAiSource)}
+                        disabled={saveAiSettingsMutation.isPending}
+                        data-testid="button-save-admin-ai-settings"
+                      >
+                        {saveAiSettingsMutation.isPending ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : null}
+                        Save AI Setting
+                      </Button>
+                    </div>
+
+                    {adminAiSettings?.updatedAt ? (
+                      <p className="text-xs text-muted-foreground">
+                        Last updated {formatDate(adminAiSettings.updatedAt)}
+                        {adminAiSettings.updatedBy ? ` by ${adminAiSettings.updatedBy}` : ""}.
+                      </p>
+                    ) : null}
+                  </>
                 )}
               </CardContent>
             </Card>

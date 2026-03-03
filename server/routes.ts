@@ -11,13 +11,18 @@ import {
   updateGlobalMedicalVocabulary,
 } from "./medicalVocabulary";
 import {
+  getAiProviderPreference,
+  initializeAiProviderPreference,
+  updateAiProviderPreference,
+} from "./aiProviderPreference";
+import {
   getMailboxDirectoryPreference,
   getMailboxDirectoryVisibilityMap,
   updateMailboxDirectoryPreference,
 } from "./mailboxDirectory";
 import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
-import OpenAI from "openai";
+import { openai, type AiProviderSource } from "./openaiClient";
 import multer from "multer";
 import { Resend } from "resend";
 import externalApiRoutes from "./externalApiRoutes";
@@ -252,6 +257,10 @@ const updateMailboxDirectoryPreferenceSchema = z.object({
   listInDirectory: z.boolean(),
 });
 
+const updateAdminAiSettingsSchema = z.object({
+  preferredSource: z.enum(["personal", "replit"]),
+});
+
 const NUMERIC_IDENTIFIER_REGEX = /^[\d+\-().\s]+$/;
 
 const getMailboxDisplayName = (recipient: {
@@ -275,11 +284,6 @@ const getMailboxDisplayName = (recipient: {
   return recipient.email || recipient.id;
 };
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
-
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -288,6 +292,12 @@ export async function registerRoutes(
   // Register external API routes (for third-party integrations like urgent care)
   app.use("/api/external/v1", externalApiRoutes);
   app.use("/api/mobile", mobileApiRoutes);
+
+  try {
+    await initializeAiProviderPreference();
+  } catch (error) {
+    console.error("Failed to initialize AI provider preference:", error);
+  }
   
   app.get("/api/notes", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -2057,6 +2067,39 @@ Focus only on clinically significant interactions. Do not include minor or theor
       isAdmin: isAdmin(req),
       userEmail: req.user?.claims?.email,
     });
+  });
+
+  app.get("/api/admin/ai-settings", isAuthenticated, requireAdmin, async (_req: any, res: Response) => {
+    try {
+      const settings = await getAiProviderPreference();
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching admin AI settings:", error);
+      res.status(500).json({ error: "Failed to fetch AI settings" });
+    }
+  });
+
+  app.put("/api/admin/ai-settings", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const parsed = updateAdminAiSettingsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid AI settings payload" });
+      }
+
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const updated = await updateAiProviderPreference({
+        preferredSource: parsed.data.preferredSource as AiProviderSource,
+        userId: req.user.claims.sub,
+        userEmail: req.user.claims.email,
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating admin AI settings:", error);
+      res.status(500).json({ error: "Failed to update AI settings" });
+    }
   });
 
   // Get internal inbox submissions (admin only)

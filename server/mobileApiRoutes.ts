@@ -3,8 +3,8 @@ import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
 import { storage } from "./storage";
 import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
 import { z } from "zod";
-import OpenAI from "openai";
 import multer from "multer";
+import { openai } from "./openaiClient";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -399,7 +399,6 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
     if (useLocal) {
       transcript = await transcribeLocal(req.file.buffer, language);
     } else {
-      const openai = new OpenAI();
       const audioFile = new File([req.file.buffer], req.file.originalname || "audio.m4a", {
         type: req.file.mimetype || "audio/m4a",
       });
@@ -499,7 +498,6 @@ ${contextSection}${aiInstructionsSection}${languageInstruction}
 Return valid JSON: {"subjective": "...", "objective": "...", "assessment": "...", "plan": "..."}`;
     }
 
-    const openai = new OpenAI();
     const completion = await openai.chat.completions.create({
       model: "gpt-5.1",
       messages: [
@@ -531,7 +529,6 @@ router.post("/generate-title", requireMobileScope("generate"), async (req: Reque
   try {
     const { transcript } = z.object({ transcript: z.string().min(1) }).parse(req.body);
     
-    const openai = new OpenAI();
     const completion = await openai.chat.completions.create({
       model: "gpt-5.1",
       messages: [
@@ -576,7 +573,6 @@ router.post("/generate-codes", requireMobileScope("generate"), async (req: Reque
       return res.status(400).json({ error: "validation_error", message: "At least one clinical section required" });
     }
 
-    const openai = new OpenAI();
     const completion = await openai.chat.completions.create({
       model: "gpt-5.1",
       messages: [
