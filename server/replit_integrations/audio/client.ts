@@ -338,17 +338,19 @@ prn, bid, tid, qid, qd, hs, ac, pc, po, IV, IM, subq, topical.`;
  * OpenAI has a 25MB file limit, so this ensures large files are processed correctly.
  * @param language - ISO 639-1 language code (e.g., "en", "es", "fr")
  * @param useMedicalPrompt - Whether to use medical vocabulary prompt (default: false - can cause echo on silent audio)
+ * @param customPrompt - Optional custom vocabulary prompt (used when provided)
  */
 export async function transcribeLongAudio(
   audioBuffer: Buffer,
   language?: string,
-  useMedicalPrompt: boolean = false
+  useMedicalPrompt: boolean = false,
+  customPrompt?: string
 ): Promise<string> {
   // First convert to WAV format
   const wavBuffer = await convertToWav(audioBuffer);
   
   // Medical prompt disabled by default - OpenAI can echo it on silent/quiet audio
-  const prompt = useMedicalPrompt ? MEDICAL_VOCABULARY_PROMPT : undefined;
+  const prompt = customPrompt?.trim() || (useMedicalPrompt ? MEDICAL_VOCABULARY_PROMPT : undefined);
   
   // Check size - if under 20MB, transcribe directly (leave buffer for API limit)
   const MAX_DIRECT_SIZE = 20 * 1024 * 1024; // 20MB

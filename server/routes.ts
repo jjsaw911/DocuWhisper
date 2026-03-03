@@ -5,6 +5,11 @@ import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
 import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
+import {
+  buildMedicalVocabularyPrompt,
+  getGlobalMedicalVocabulary,
+  updateGlobalMedicalVocabulary,
+} from "./medicalVocabulary";
 import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -64,6 +69,10 @@ const updateNoteSchema = z.object({
   patientId: z.number().nullable().optional(),
   templateId: z.number().nullable().optional(),
   icdCodes: z.string().nullable().optional(),
+});
+
+const updateMedicalVocabularySchema = z.object({
+  customTerms: z.array(z.string()).max(1500),
 });
 
 const translateNoteSchema = z.object({
@@ -429,10 +438,13 @@ export async function registerRoutes(
       const audioBuffer = req.file.buffer;
       const useLocal = isLocalSttEnabled();
       console.log(`Processing audio for transcription via ${useLocal ? "local faster-whisper" : "OpenAI"}...`);
-      
+
+      const vocabulary = await getGlobalMedicalVocabulary();
+      const vocabularyPrompt = buildMedicalVocabularyPrompt(vocabulary.terms, 260);
+
       const transcript = useLocal
-        ? await transcribeLocal(audioBuffer, language)
-        : await transcribeLongAudio(audioBuffer, language);
+        ? await transcribeLocal(audioBuffer, language, vocabularyPrompt || undefined)
+        : await transcribeLongAudio(audioBuffer, language, !!vocabularyPrompt, vocabularyPrompt || undefined);
       console.log("Transcription successful, length:", transcript.length);
 
       res.json({ text: transcript, transcript, chunk_id: chunkId, session_id: sessionId });
@@ -464,6 +476,11 @@ export async function registerRoutes(
       
       const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context, noDefaultTemplate, speakerSegments } = validationResult.data;
       const userId = req.user.claims.sub;
+      const vocabulary = await getGlobalMedicalVocabulary();
+      const vocabularyPrompt = buildMedicalVocabularyPrompt(vocabulary.terms, 220);
+      const vocabularySection = vocabularyPrompt
+        ? `\n\nSPELLING GUIDANCE:\n${vocabularyPrompt}`
+        : "";
       
       console.log("SOAP generation request - transcript length:", transcript.length);
       console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
@@ -546,7 +563,7 @@ SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use
 
 TEMPLATE INSTRUCTIONS (follow these exactly):
 ${customPrompt}
-${aiInstructionsSection}${languageInstruction}
+${aiInstructionsSection}${languageInstruction}${vocabularySection}
 
 REQUIRED OUTPUT FORMAT - You MUST return valid JSON with BOTH fields:
 {
@@ -573,7 +590,7 @@ SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use
 
 TEMPLATE INSTRUCTIONS (follow these exactly):
 ${customPrompt}
-${aiInstructionsSection}${languageInstruction}
+${aiInstructionsSection}${languageInstruction}${vocabularySection}
 
 Based on the transcript and the formatting instructions above, return ONLY valid JSON.
 
@@ -603,7 +620,7 @@ Generate a SOAP note with these sections:
 - Assessment: Clinical diagnosis or differential diagnoses based on the transcript content
 - Plan: Treatment plan, medications, follow-up instructions discussed in the transcript
 
-Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."${languageInstruction}`;
+Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."${languageInstruction}${vocabularySection}`;
 
         systemPrompt = `${basePrompt}${aiInstructionsSection}
 
@@ -668,10 +685,23 @@ Return a JSON object with arrays of suggested codes:
       "description": "E/M level description",
       "rationale": "Brief rationale for this level"
     }
+  ],
+  "priorAuthDxCodes": [
+    {
+      "code": "ICD-10 code that supports prior authorization when applicable",
+      "description": "Diagnosis description",
+      "medication": "Related medication or therapy if mentioned",
+      "rationale": "Why this code may support PA documentation",
+      "confidence": "high" | "medium" | "low"
+    }
   ]
 }
 
-Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.`
+Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.
+
+If medications/biologics likely requiring prior authorization are documented or implied, include supporting ICD-10 codes in "priorAuthDxCodes". If not applicable, return an empty array.
+
+${vocabularyPrompt ? `Spelling guidance:\n${vocabularyPrompt}` : ""}`
             },
             { role: "user", content: clinicalContent }
           ],
@@ -918,6 +948,8 @@ Keep the letter concise but comprehensive.`
         return res.status(400).json({ error: "Validation failed", details: validationResult.error.flatten().fieldErrors });
       }
       const { subjective, objective, assessment, plan } = validationResult.data;
+      const vocabulary = await getGlobalMedicalVocabulary();
+      const vocabularyPrompt = buildMedicalVocabularyPrompt(vocabulary.terms, 220);
       
       const clinicalContent = `
 SUBJECTIVE: ${subjective || ""}
@@ -949,10 +981,23 @@ Return a JSON object with an array of suggested codes:
       "description": "E/M level description",
       "rationale": "Brief rationale for this level"
     }
+  ],
+  "priorAuthDxCodes": [
+    {
+      "code": "ICD-10 code that supports prior authorization when applicable",
+      "description": "Diagnosis description",
+      "medication": "Related medication or therapy if mentioned",
+      "rationale": "Why this code may support PA documentation",
+      "confidence": "high" | "medium" | "low"
+    }
   ]
 }
 
-Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.`
+Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.
+
+If medications/biologics likely requiring prior authorization are documented or implied, include supporting ICD-10 codes in "priorAuthDxCodes". If not applicable, return an empty array.
+
+${vocabularyPrompt ? `Spelling guidance:\n${vocabularyPrompt}` : ""}`
           },
           { role: "user", content: clinicalContent }
         ],
@@ -1474,6 +1519,39 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
       console.error("Error saving settings:", error);
       res.status(500).json({ error: "Failed to save settings" });
+    }
+  });
+
+  app.get("/api/medical-vocabulary", isAuthenticated, async (_req: any, res: Response) => {
+    try {
+      const vocabulary = await getGlobalMedicalVocabulary();
+      res.json(vocabulary);
+    } catch (error) {
+      console.error("Error fetching medical vocabulary:", error);
+      res.status(500).json({ error: "Failed to fetch medical vocabulary" });
+    }
+  });
+
+  app.put("/api/medical-vocabulary", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = updateMedicalVocabularySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid medical vocabulary data" });
+      }
+
+      const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+      const updated = await updateGlobalMedicalVocabulary({
+        customTerms: parsed.data.customTerms,
+        userId: req.user.claims.sub,
+        userEmail: req.user.claims.email,
+        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating medical vocabulary:", error);
+      res.status(500).json({ error: "Failed to update medical vocabulary" });
     }
   });
 

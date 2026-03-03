@@ -107,9 +107,18 @@ type SuggestedCptCode = {
   rationale: string;
 };
 
+type PriorAuthDiagnosisSuggestion = {
+  code: string;
+  description: string;
+  medication: string;
+  rationale: string;
+  confidence: string;
+};
+
 type SuggestedCodesPayload = {
   codes: SuggestedDiagnosisCode[];
   cptCodes: SuggestedCptCode[];
+  priorAuthDxCodes?: PriorAuthDiagnosisSuggestion[];
   visitTimeMinutes?: number;
 };
 
@@ -185,6 +194,26 @@ const normalizeSuggestedCodes = (value: unknown): SuggestedCodesPayload | null =
     })
     .filter((code) => code.code.trim().length > 0);
 
+  const rawPriorAuthCodes = Array.isArray(source.priorAuthDxCodes)
+    ? source.priorAuthDxCodes
+    : Array.isArray(source.paDiagnosisCodes)
+      ? source.paDiagnosisCodes
+      : [];
+
+  const priorAuthDxCodes: PriorAuthDiagnosisSuggestion[] = rawPriorAuthCodes
+    .filter((code) => code && typeof code === "object")
+    .map((code) => {
+      const entry = code as Record<string, unknown>;
+      return {
+        code: typeof entry.code === "string" ? entry.code : "",
+        description: typeof entry.description === "string" ? entry.description : "",
+        medication: typeof entry.medication === "string" ? entry.medication : "",
+        rationale: typeof entry.rationale === "string" ? entry.rationale : "",
+        confidence: typeof entry.confidence === "string" ? entry.confidence : "medium",
+      };
+    })
+    .filter((code) => code.code.trim().length > 0);
+
   const explicitMinutes =
     parsePositiveMinutes(source.visitTimeMinutes) ??
     parsePositiveMinutes(source.timeSpentMinutes) ??
@@ -196,6 +225,7 @@ const normalizeSuggestedCodes = (value: unknown): SuggestedCodesPayload | null =
   const normalized: SuggestedCodesPayload = {
     codes,
     cptCodes,
+    ...(priorAuthDxCodes.length > 0 ? { priorAuthDxCodes } : {}),
   };
 
   if (inferredMinutes) {
@@ -1471,6 +1501,11 @@ export default function NoteDetail() {
       ...(suggestedCodes?.cptCodes || []).map(code => `<strong>${code.code}</strong> - ${code.description}`),
       ...(suggestedCodes?.visitTimeMinutes ? [`<strong>Total time</strong> - ${suggestedCodes.visitTimeMinutes} minutes`] : []),
     ];
+
+    const priorAuthItems = (suggestedCodes?.priorAuthDxCodes || []).map((code) => {
+      const medicationPart = code.medication ? ` (Medication: ${code.medication})` : "";
+      return `<strong>${code.code}</strong> - ${code.description}${medicationPart}`;
+    });
     
     const taskItems = (noteTasks || []).map(task => `${task.title} (${task.category}) - ${task.status === 'completed' ? 'Completed' : 'Pending'}`);
 
@@ -1492,6 +1527,7 @@ export default function NoteDetail() {
         <div style="white-space: pre-wrap; line-height: 1.6;">${formData.soapNote}</div>
         ${buildSectionHtml("Diagnoses", diagnosesItems)}
         ${buildSectionHtml("Billing Codes", cptItems)}
+        ${buildSectionHtml("Prior Authorization Dx Support", priorAuthItems)}
         ${buildSectionHtml("Tasks", taskItems)}
         ${referralSections}
       </div>
@@ -2216,6 +2252,33 @@ Treatment plan..."
                               <Badge variant="outline">{code.code}</Badge>
                               <div className="flex-1 min-w-0">
                                 <p>{code.description}</p>
+                              </div>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copyToClipboard(code.code)}>
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {suggestedCodes.priorAuthDxCodes && suggestedCodes.priorAuthDxCodes.length > 0 && (
+                        <div className="space-y-2">
+                          <h5 className="text-sm font-medium">Likely Prior Authorization Dx Codes</h5>
+                          {suggestedCodes.priorAuthDxCodes.map((code, i) => (
+                            <div key={`pa-${i}`} className="flex items-start gap-2 p-3 bg-amber-50/60 dark:bg-amber-950/20 rounded border text-sm">
+                              <Badge variant="outline">{code.code}</Badge>
+                              <div className="flex-1 min-w-0 space-y-1">
+                                <p>{code.description}</p>
+                                {code.medication ? (
+                                  <p className="text-xs text-muted-foreground">
+                                    Medication: {code.medication}
+                                  </p>
+                                ) : null}
+                                {code.rationale ? (
+                                  <p className="text-xs text-muted-foreground">
+                                    {code.rationale}
+                                  </p>
+                                ) : null}
                               </div>
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copyToClipboard(code.code)}>
                                 <Copy className="h-3 w-3" />

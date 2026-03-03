@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
@@ -95,6 +95,14 @@ const LANGUAGES = [
   { value: "zh", label: "Chinese" },
 ];
 
+interface GlobalMedicalVocabulary {
+  defaultTerms: string[];
+  customTerms: string[];
+  terms: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
 export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -119,6 +127,8 @@ export default function Settings() {
   const [internalMessageSubject, setInternalMessageSubject] = useState("");
   const [internalMessageCategory, setInternalMessageCategory] = useState("general");
   const [internalMessageBody, setInternalMessageBody] = useState("");
+  const [customVocabularyText, setCustomVocabularyText] = useState("");
+  const [vocabularySearch, setVocabularySearch] = useState("");
 
   // EMR Credentials state
   const [emrRole, setEmrRole] = useState<string>("");
@@ -149,6 +159,10 @@ export default function Settings() {
 
   const { data: settings, isLoading: settingsLoading } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
+  });
+
+  const { data: globalVocabulary } = useQuery<GlobalMedicalVocabulary>({
+    queryKey: ["/api/medical-vocabulary"],
   });
 
   const { data: templates = [] } = useQuery<Template[]>({
@@ -425,6 +439,14 @@ export default function Settings() {
   }, [settings]);
 
   useEffect(() => {
+    if (!globalVocabulary) return;
+    setCustomVocabularyText((prev) => {
+      const next = globalVocabulary.customTerms.join("\n");
+      return prev === next ? prev : next;
+    });
+  }, [globalVocabulary]);
+
+  useEffect(() => {
     setStaySignedIn(isStaySignedInEnabled());
   }, []);
 
@@ -474,6 +496,41 @@ export default function Settings() {
       });
     },
   });
+
+  const saveVocabularyMutation = useMutation({
+    mutationFn: async () => {
+      const customTerms = customVocabularyText
+        .split("\n")
+        .map((term) => term.trim())
+        .filter(Boolean);
+
+      const response = await apiRequest("PUT", "/api/medical-vocabulary", {
+        customTerms,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/medical-vocabulary"] });
+      toast({
+        title: "Shared vocabulary saved",
+        description: "All users will now benefit from the updated spelling dictionary.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to save shared vocabulary",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const filteredVocabularyTerms = useMemo(() => {
+    const terms = globalVocabulary?.terms || [];
+    const query = vocabularySearch.trim().toLowerCase();
+    if (!query) return terms.slice(0, 200);
+    return terms.filter((term) => term.toLowerCase().includes(query)).slice(0, 200);
+  }, [globalVocabulary?.terms, vocabularySearch]);
 
   const sendInternalMessageMutation = useMutation({
     mutationFn: async () => {
@@ -852,6 +909,80 @@ export default function Settings() {
                     Lower values are more sensitive but may pick up ambient sounds.
                   </p>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Stethoscope className="h-5 w-5 text-primary" />
+                <CardTitle>Shared Medical Vocabulary</CardTitle>
+              </div>
+              <CardDescription>
+                Global spelling dictionary used across users for transcription and note generation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
+                <p>Total terms available: <span className="font-medium text-foreground">{globalVocabulary?.terms?.length || 0}</span></p>
+                <p>Built-in terms: <span className="font-medium text-foreground">{globalVocabulary?.defaultTerms?.length || 0}</span></p>
+                <p>Custom shared terms: <span className="font-medium text-foreground">{globalVocabulary?.customTerms?.length || 0}</span></p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="custom-vocabulary">Custom Shared Terms (one per line)</Label>
+                <Textarea
+                  id="custom-vocabulary"
+                  value={customVocabularyText}
+                  onChange={(e) => setCustomVocabularyText(e.target.value)}
+                  className="min-h-[180px] font-mono text-xs"
+                  placeholder="Add terms like brand names, biologics, uncommon terminology, and abbreviations..."
+                  data-testid="textarea-custom-medical-vocabulary"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Edit carefully. These terms affect spelling guidance for all users.
+                </p>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => saveVocabularyMutation.mutate()}
+                  disabled={saveVocabularyMutation.isPending}
+                  data-testid="button-save-shared-vocabulary"
+                >
+                  {saveVocabularyMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : null}
+                  Save Shared Vocabulary
+                </Button>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t">
+                <Label htmlFor="vocabulary-search">Browse Vocabulary</Label>
+                <Input
+                  id="vocabulary-search"
+                  value={vocabularySearch}
+                  onChange={(e) => setVocabularySearch(e.target.value)}
+                  placeholder="Search terms (drug, biologic, specialty, terminology...)"
+                  data-testid="input-vocabulary-search"
+                />
+                <div className="max-h-48 overflow-auto rounded-md border bg-muted/10 p-2">
+                  {filteredVocabularyTerms.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No matching terms.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {filteredVocabularyTerms.map((term) => (
+                        <Badge key={term} variant="outline" className="text-[10px]">
+                          {term}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Showing up to 200 terms. Refine search to find specific entries.
+                </p>
               </div>
             </CardContent>
           </Card>

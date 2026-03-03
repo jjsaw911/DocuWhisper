@@ -28,14 +28,15 @@ async function sleep(ms: number): Promise<void> {
 
 async function transcribeChunkWithRetry(
   wavBuffer: Buffer,
-  language?: string
+  language?: string,
+  prompt?: string
 ): Promise<string> {
   const backoffDelays = [250, 750];
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= backoffDelays.length; attempt++) {
     try {
-      return await transcribeChunkLocal(wavBuffer, language);
+      return await transcribeChunkLocal(wavBuffer, language, prompt);
     } catch (error: any) {
       if (error instanceof SttAuthError) {
         throw error;
@@ -54,7 +55,8 @@ async function transcribeChunkWithRetry(
 
 async function transcribeChunkLocal(
   wavBuffer: Buffer,
-  language?: string
+  language?: string,
+  prompt?: string
 ): Promise<string> {
   const url = LOCAL_STT_URL();
   if (!url) throw new Error("LOCAL_STT_URL not configured");
@@ -67,6 +69,9 @@ async function transcribeChunkLocal(
   formData.append("response_format", "json");
   if (language) {
     formData.append("language", language);
+  }
+  if (prompt) {
+    formData.append("prompt", prompt);
   }
 
   const headers: Record<string, string> = {};
@@ -102,7 +107,8 @@ async function transcribeChunkLocal(
 
 export async function transcribeLocal(
   audioBuffer: Buffer,
-  language?: string
+  language?: string,
+  prompt?: string
 ): Promise<string> {
   const wavBuffer = await convertToWav(audioBuffer);
 
@@ -113,7 +119,7 @@ export async function transcribeLocal(
       "[local-stt] Audio under 20MB, transcribing directly",
       language ? `(language: ${language})` : ""
     );
-    return await transcribeChunkWithRetry(wavBuffer, language);
+    return await transcribeChunkWithRetry(wavBuffer, language, prompt);
   }
 
   console.log(
@@ -127,7 +133,7 @@ export async function transcribeLocal(
   for (let i = 0; i < chunks.length; i++) {
     console.log(`[local-stt] Transcribing chunk ${i + 1}/${chunks.length}...`);
     try {
-      const transcript = await transcribeChunkWithRetry(chunks[i], language);
+      const transcript = await transcribeChunkWithRetry(chunks[i], language, prompt);
       transcripts.push(transcript);
     } catch (error: any) {
       if (error instanceof SttAuthError) throw error;

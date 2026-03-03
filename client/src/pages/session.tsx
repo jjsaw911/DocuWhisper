@@ -149,9 +149,24 @@ export default function Session() {
     icdCodes?: {
       codes?: { code: string; description: string; category: string; confidence: string }[];
       cptCodes?: { code: string; description: string; rationale: string }[];
+      priorAuthDxCodes?: {
+        code: string;
+        description: string;
+        medication?: string;
+        rationale?: string;
+        confidence?: string;
+      }[];
       visitTimeMinutes?: number;
     };
-    [key: string]: string | { codes?: unknown[]; cptCodes?: unknown[]; visitTimeMinutes?: number } | undefined;
+    [key: string]:
+      | string
+      | {
+          codes?: unknown[];
+          cptCodes?: unknown[];
+          priorAuthDxCodes?: unknown[];
+          visitTimeMinutes?: number;
+        }
+      | undefined;
   } | null>(null);
   
   // New features: Visit mode, Context, AI command
@@ -2594,7 +2609,7 @@ ${noteContentSection}
                     )}
                     
                     {/* ICD-10 & CPT Codes Section */}
-                    {soapNote.icdCodes && (soapNote.icdCodes.codes?.length || soapNote.icdCodes.cptCodes?.length) ? (
+                    {soapNote.icdCodes && (soapNote.icdCodes.codes?.length || soapNote.icdCodes.cptCodes?.length || soapNote.icdCodes.priorAuthDxCodes?.length) ? (
                       <div className="mt-6 border-t pt-4">
                         <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
                           <FileText className="h-4 w-4" />
@@ -2649,6 +2664,32 @@ ${noteContentSection}
                                     <span className="text-sm">{cpt.description}</span>
                                   </div>
                                   <p className="text-xs text-muted-foreground mt-1">{cpt.rationale}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {soapNote.icdCodes.priorAuthDxCodes && soapNote.icdCodes.priorAuthDxCodes.length > 0 && (
+                          <div className="mt-4">
+                            <h4 className="font-medium text-xs text-muted-foreground mb-2">Likely Prior Authorization Dx Codes</h4>
+                            <div className="space-y-2">
+                              {soapNote.icdCodes.priorAuthDxCodes.map((paCode, i) => (
+                                <div key={`pa-${i}`} className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-3">
+                                  <div className="flex items-start gap-2">
+                                    <span className="font-mono text-sm font-bold text-amber-700 dark:text-amber-300">{paCode.code}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm">{paCode.description}</p>
+                                      {paCode.medication ? (
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          Medication: {paCode.medication}
+                                        </p>
+                                      ) : null}
+                                      {paCode.rationale ? (
+                                        <p className="text-xs text-muted-foreground mt-1">{paCode.rationale}</p>
+                                      ) : null}
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
