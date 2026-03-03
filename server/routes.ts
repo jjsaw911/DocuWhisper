@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
-import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
+import { getTranscriptionProviderStatus, transcribeLocal } from "./sttClient";
 import {
   buildMedicalVocabularyPrompt,
   getGlobalMedicalVocabulary,
@@ -469,7 +469,38 @@ export async function registerRoutes(
     });
   }, 60_000);
 
+  const parseOptionalInt = (value: unknown): number | undefined => {
+    if (typeof value !== "string") return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const classifyTranscriptionError = (error: unknown): string => {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (message.includes("timeout") || message.includes("abort")) return "timeout";
+    if (message.includes("401") || message.includes("403") || message.includes("auth")) return "auth";
+    if (message.includes("network") || message.includes("fetch")) return "network";
+    return "provider_error";
+  };
+
+  const logTranscriptionMetric = (payload: Record<string, unknown>) => {
+    console.log("[transcribe-metric]", JSON.stringify(payload));
+  };
+
+  app.get("/api/transcription-provider", isAuthenticated, async (_req: any, res: Response) => {
+    const status = getTranscriptionProviderStatus();
+    res.json(status);
+  });
+
   app.post("/api/transcribe", isAuthenticated, upload.single("audio"), async (req: any, res: Response) => {
+    const startedAt = Date.now();
+    let chunkId: number | undefined;
+    let sessionId: string | undefined;
+    let retryAttempt = 0;
+    let maxRetries = 0;
+    let providerUsed: "local" | "openai" = "openai";
+    let fallbackUsed = false;
+
     try {
       const userId = req.user?.claims?.sub || req.user?.id || req.sessionID || "unknown";
       if (!checkTranscribeRateLimit(String(userId))) {
@@ -481,8 +512,12 @@ export async function registerRoutes(
       }
 
       const language = req.body?.language;
-      const chunkId = req.body?.chunk_id ? parseInt(req.body.chunk_id, 10) : undefined;
-      const sessionId = req.body?.session_id || undefined;
+      chunkId = req.body?.chunk_id ? parseInt(req.body.chunk_id, 10) : undefined;
+      sessionId = req.body?.session_id || undefined;
+      retryAttempt = parseOptionalInt(req.body?.retry_attempt) ?? 0;
+      maxRetries = parseOptionalInt(req.body?.max_retries) ?? 0;
+      const providerStatus = getTranscriptionProviderStatus();
+      providerUsed = providerStatus.provider;
 
       console.log("Transcription request received:", {
         fileName: req.file.originalname,
@@ -491,28 +526,113 @@ export async function registerRoutes(
         language: language || "auto-detect",
         chunk_id: chunkId,
         session_id: sessionId ? sessionId.slice(0, 8) + "..." : undefined,
+        retry_attempt: retryAttempt,
+        max_retries: maxRetries,
+        configured_provider: providerStatus.configuredProvider,
+        provider: providerUsed,
+      });
+
+      if (providerStatus.reason) {
+        console.warn(`[transcribe] ${providerStatus.reason}`);
+      }
+
+      logTranscriptionMetric({
+        event: "request",
+        user_id: String(userId),
+        chunk_id: chunkId ?? null,
+        session_id: sessionId || null,
+        provider: providerUsed,
+        configured_provider: providerStatus.configuredProvider,
+        fallback_used: false,
+        retry_attempt: retryAttempt,
+        max_retries: maxRetries,
+        language: language || "auto-detect",
+        audio_bytes: req.file.size,
       });
 
       const audioBuffer = req.file.buffer;
-      const useLocal = isLocalSttEnabled();
-      console.log(`Processing audio for transcription via ${useLocal ? "local faster-whisper" : "OpenAI"}...`);
 
       const vocabulary = await getGlobalMedicalVocabulary();
       const vocabularyPrompt = buildMedicalVocabularyPrompt(vocabulary.terms, 260);
 
-      const transcript = useLocal
-        ? await transcribeLocal(audioBuffer, language, vocabularyPrompt || undefined)
-        : await transcribeLongAudio(audioBuffer, language, !!vocabularyPrompt, vocabularyPrompt || undefined);
+      let transcript: string;
+      if (providerUsed === "local") {
+        try {
+          transcript = await transcribeLocal(audioBuffer, language, vocabularyPrompt || undefined);
+        } catch (localError: unknown) {
+          fallbackUsed = true;
+          const fallbackErrorType = classifyTranscriptionError(localError);
+          const fallbackMessage = localError instanceof Error ? localError.message : String(localError);
+          providerUsed = "openai";
+
+          console.warn(`[transcribe] Local STT failed, falling back to OpenAI: ${fallbackMessage}`);
+          logTranscriptionMetric({
+            event: "fallback",
+            chunk_id: chunkId ?? null,
+            session_id: sessionId || null,
+            provider: "local",
+            fallback_provider: "openai",
+            error_type: fallbackErrorType,
+            retry_attempt: retryAttempt,
+            max_retries: maxRetries,
+          });
+
+          transcript = await transcribeLongAudio(audioBuffer, language, !!vocabularyPrompt, vocabularyPrompt || undefined);
+        }
+      } else {
+        transcript = await transcribeLongAudio(audioBuffer, language, !!vocabularyPrompt, vocabularyPrompt || undefined);
+      }
       console.log("Transcription successful, length:", transcript.length);
 
-      res.json({ text: transcript, transcript, chunk_id: chunkId, session_id: sessionId });
+      const latencyMs = Date.now() - startedAt;
+      logTranscriptionMetric({
+        event: "success",
+        chunk_id: chunkId ?? null,
+        session_id: sessionId || null,
+        provider: providerUsed,
+        fallback_used: fallbackUsed,
+        latency_ms: latencyMs,
+        retry_attempt: retryAttempt,
+        max_retries: maxRetries,
+        transcript_chars: transcript.length,
+      });
+
+      res.json({
+        text: transcript,
+        transcript,
+        chunk_id: chunkId,
+        session_id: sessionId,
+        provider: providerUsed,
+        fallback_used: fallbackUsed,
+      });
     } catch (error: any) {
+      const latencyMs = Date.now() - startedAt;
+      const errorType = classifyTranscriptionError(error);
       console.error("Error transcribing audio:", error);
       console.error("Error details:", {
         message: error?.message,
         status: error?.status,
         code: error?.code,
         response: error?.response?.data,
+        chunk_id: chunkId,
+        session_id: sessionId,
+        provider: providerUsed,
+        fallback_used: fallbackUsed,
+        retry_attempt: retryAttempt,
+        max_retries: maxRetries,
+        error_type: errorType,
+        latency_ms: latencyMs,
+      });
+      logTranscriptionMetric({
+        event: "error",
+        chunk_id: chunkId ?? null,
+        session_id: sessionId || null,
+        provider: providerUsed,
+        fallback_used: fallbackUsed,
+        retry_attempt: retryAttempt,
+        max_retries: maxRetries,
+        error_type: errorType,
+        latency_ms: latencyMs,
       });
       res.status(500).json({ 
         error: "Failed to transcribe audio",

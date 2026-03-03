@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
 import { storage } from "./storage";
-import { isLocalSttEnabled, transcribeLocal } from "./sttClient";
+import { getTranscriptionProviderStatus, transcribeLocal } from "./sttClient";
 import { z } from "zod";
 import multer from "multer";
 import { openai } from "./openaiClient";
@@ -24,6 +24,24 @@ function isRedirectAllowed(uri: string): boolean {
   const allowed = getAllowedRedirectUris();
   return allowed.some(pattern => uri.startsWith(pattern));
 }
+
+const parseOptionalInt = (value: unknown): number | undefined => {
+  if (typeof value !== "string") return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const classifyTranscriptionError = (error: unknown): string => {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (message.includes("timeout") || message.includes("abort")) return "timeout";
+  if (message.includes("401") || message.includes("403") || message.includes("auth")) return "auth";
+  if (message.includes("network") || message.includes("fetch")) return "network";
+  return "provider_error";
+};
+
+const logTranscriptionMetric = (payload: Record<string, unknown>) => {
+  console.log("[mobile-transcribe-metric]", JSON.stringify(payload));
+};
 
 // Docs endpoint is public (no auth needed)
 router.get("/docs", async (_req: Request, res: Response) => {
@@ -386,33 +404,95 @@ router.delete("/notes/:id", requireMobileScope("notes:write"), async (req: Reque
 
 // ===== TRANSCRIPTION =====
 router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audio"), async (req: Request, res: Response) => {
+  const startedAt = Date.now();
+  const chunkId = parseOptionalInt(req.body?.chunk_id);
+  const providerStatus = getTranscriptionProviderStatus();
+  let providerUsed: "local" | "openai" = providerStatus.provider;
+  let fallbackUsed = false;
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: "validation_error", message: "Audio file is required" });
     }
 
+    const file = req.file;
     const language = req.body?.language;
-    const useLocal = isLocalSttEnabled();
 
     let transcript: string;
-
-    if (useLocal) {
-      transcript = await transcribeLocal(req.file.buffer, language);
-    } else {
-      const audioFile = new File([req.file.buffer], req.file.originalname || "audio.m4a", {
-        type: req.file.mimetype || "audio/m4a",
+    const transcribeWithOpenAi = async () => {
+      const audioFile = new File([file.buffer], file.originalname || "audio.m4a", {
+        type: file.mimetype || "audio/m4a",
       });
       const transcription = await openai.audio.transcriptions.create({
         file: audioFile,
         model: "gpt-4o-mini-transcribe",
         response_format: "text",
       });
-      transcript = typeof transcription === "string" ? transcription : (transcription as any).text || "";
+      return typeof transcription === "string" ? transcription : (transcription as any).text || "";
+    };
+
+    logTranscriptionMetric({
+      event: "request",
+      user_id: req.mobileUserId || null,
+      chunk_id: chunkId ?? null,
+      provider: providerUsed,
+      configured_provider: providerStatus.configuredProvider,
+      fallback_used: false,
+      language: language || "auto-detect",
+      audio_bytes: file.size,
+    });
+
+    if (providerStatus.reason) {
+      console.warn(`[mobile-transcribe] ${providerStatus.reason}`);
     }
 
-    res.json({ success: true, data: { transcript } });
+    if (providerUsed === "local") {
+      try {
+        transcript = await transcribeLocal(file.buffer, language);
+      } catch (localError: unknown) {
+        fallbackUsed = true;
+        const fallbackMessage = localError instanceof Error ? localError.message : String(localError);
+        providerUsed = "openai";
+        console.warn(`[mobile-transcribe] Local STT failed, falling back to OpenAI: ${fallbackMessage}`);
+        logTranscriptionMetric({
+          event: "fallback",
+          user_id: req.mobileUserId || null,
+          chunk_id: chunkId ?? null,
+          provider: "local",
+          fallback_provider: "openai",
+          error_type: classifyTranscriptionError(localError),
+        });
+        transcript = await transcribeWithOpenAi();
+      }
+    } else {
+      transcript = await transcribeWithOpenAi();
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    logTranscriptionMetric({
+      event: "success",
+      user_id: req.mobileUserId || null,
+      chunk_id: chunkId ?? null,
+      provider: providerUsed,
+      fallback_used: fallbackUsed,
+      latency_ms: latencyMs,
+      transcript_chars: transcript.length,
+    });
+
+    res.json({ success: true, data: { transcript, provider: providerUsed, fallback_used: fallbackUsed } });
   } catch (error: any) {
+    const latencyMs = Date.now() - startedAt;
+    const errorType = classifyTranscriptionError(error);
     console.error("Mobile API transcription error:", error);
+    logTranscriptionMetric({
+      event: "error",
+      user_id: req.mobileUserId || null,
+      chunk_id: chunkId ?? null,
+      provider: providerUsed,
+      fallback_used: fallbackUsed,
+      error_type: errorType,
+      latency_ms: latencyMs,
+    });
     res.status(500).json({ error: "internal_error", message: "Transcription failed" });
   }
 });

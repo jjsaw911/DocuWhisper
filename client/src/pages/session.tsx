@@ -98,6 +98,14 @@ type InflightScribeRecovery = {
   reason?: string;
 };
 
+type TranscriptionProviderStatus = {
+  provider: "local" | "openai";
+  configuredProvider: string;
+  localUrlConfigured: boolean;
+  localApiKeyConfigured: boolean;
+  reason?: string;
+};
+
 const getFallbackTitle = (patientName?: string) =>
   patientName ? `${patientName} - ${new Date().toLocaleDateString()}` : `Session - ${new Date().toLocaleDateString()}`;
 
@@ -460,6 +468,11 @@ export default function Session() {
     queryKey: ["/api/templates"],
   });
 
+  const { data: transcriptionProvider } = useQuery<TranscriptionProviderStatus>({
+    queryKey: ["/api/transcription-provider"],
+    refetchInterval: 30_000,
+  });
+
   // Fetch user settings for language preference and noise threshold
   const { data: userSettings } = useQuery<{
     language?: string;
@@ -572,7 +585,16 @@ export default function Session() {
     setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
   };
 
-  type TranscribeResult = { ok: true; transcript: string; chunk_id: number; session_id: string } | { ok: false; error: "api_error" | "timeout" | "network" };
+  type TranscribeResult =
+    | {
+        ok: true;
+        transcript: string;
+        chunk_id: number;
+        session_id: string;
+        provider?: "local" | "openai";
+        fallback_used?: boolean;
+      }
+    | { ok: false; error: "api_error" | "timeout" | "network" };
 
   const transcribeChunk = async (
     audioBlob: Blob,
@@ -586,6 +608,7 @@ export default function Session() {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const requestStartedAt = Date.now();
       
       try {
         const formData = new FormData();
@@ -593,6 +616,8 @@ export default function Session() {
         formData.append("language", language);
         formData.append("chunk_id", String(chunkId));
         formData.append("session_id", sessionId);
+        formData.append("retry_attempt", String(attempt));
+        formData.append("max_retries", String(maxRetries));
 
         console.log(`[transcribeChunk] chunk_id=${chunkId} session=${sessionId.slice(0,8)} attempt ${attempt + 1}/${maxRetries + 1}, ${audioBlob.size} bytes`);
         
@@ -609,6 +634,20 @@ export default function Session() {
         
         if (!response.ok) {
           console.error(`[transcribeChunk] Failed with status ${response.status} (attempt ${attempt + 1})`);
+          console.log(
+            "[transcribe-chunk-metric]",
+            JSON.stringify({
+              event: "error",
+              chunk_id: chunkId,
+              session_id: sessionId,
+              error_type: "api_error",
+              status_code: response.status,
+              retry_attempt: attempt,
+              max_retries: maxRetries,
+              latency_ms: Date.now() - requestStartedAt,
+              audio_bytes: audioBlob.size,
+            }),
+          );
           if (attempt < maxRetries) {
             await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
             continue;
@@ -618,14 +657,48 @@ export default function Session() {
 
         const data = await response.json();
         console.log(`[transcribeChunk] chunk_id=${data.chunk_id} completed, got ${data.text?.length || data.transcript?.length || 0} chars`);
+        console.log(
+          "[transcribe-chunk-metric]",
+          JSON.stringify({
+            event: "success",
+            chunk_id: data.chunk_id ?? chunkId,
+            session_id: data.session_id ?? sessionId,
+            provider: typeof data.provider === "string" ? data.provider : "unknown",
+            fallback_used: Boolean(data.fallback_used),
+            retry_attempt: attempt,
+            max_retries: maxRetries,
+            latency_ms: Date.now() - requestStartedAt,
+            audio_bytes: audioBlob.size,
+          }),
+        );
         
         dispatchActivityEvent();
         
-        return { ok: true, transcript: data.text || data.transcript || "", chunk_id: data.chunk_id ?? chunkId, session_id: data.session_id ?? sessionId };
+        return {
+          ok: true,
+          transcript: data.text || data.transcript || "",
+          chunk_id: data.chunk_id ?? chunkId,
+          session_id: data.session_id ?? sessionId,
+          provider: data.provider === "local" || data.provider === "openai" ? data.provider : undefined,
+          fallback_used: Boolean(data.fallback_used),
+        };
       } catch (error: unknown) {
         clearTimeout(timeoutId);
         const isTimeout = error instanceof Error && error.name === 'AbortError';
         console.error(`[transcribeChunk] ${isTimeout ? 'Timeout' : 'Error'} (attempt ${attempt + 1}):`, isTimeout ? '' : error);
+        console.log(
+          "[transcribe-chunk-metric]",
+          JSON.stringify({
+            event: "error",
+            chunk_id: chunkId,
+            session_id: sessionId,
+            error_type: isTimeout ? "timeout" : "network",
+            retry_attempt: attempt,
+            max_retries: maxRetries,
+            latency_ms: Date.now() - requestStartedAt,
+            audio_bytes: audioBlob.size,
+          }),
+        );
         if (attempt < maxRetries) {
           await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
           continue;
@@ -2290,6 +2363,17 @@ ${noteContentSection}
               <Globe className="h-4 w-4" />
               <span>English</span>
             </div>
+
+            {transcriptionProvider && (
+              <Badge
+                variant={transcriptionProvider.provider === "local" ? "default" : "secondary"}
+                className="h-6 text-[11px] uppercase tracking-wide"
+                title={transcriptionProvider.reason || `Configured provider: ${transcriptionProvider.configuredProvider}`}
+                data-testid="badge-transcription-provider"
+              >
+                STT: {transcriptionProvider.provider === "local" ? "Local" : "OpenAI"}
+              </Badge>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

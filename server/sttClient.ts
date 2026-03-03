@@ -5,14 +5,59 @@ const LOCAL_STT_URL = () => process.env.LOCAL_STT_URL;
 const LOCAL_STT_API_KEY = () => process.env.LOCAL_STT_API_KEY;
 const TRANSCRIPTION_PROVIDER = () => process.env.TRANSCRIPTION_PROVIDER;
 
-export function isLocalSttEnabled(): boolean {
-  if (TRANSCRIPTION_PROVIDER() === "local") {
-    if (!LOCAL_STT_URL()) {
-      throw new Error("TRANSCRIPTION_PROVIDER is set to 'local' but LOCAL_STT_URL is not configured.");
+export type TranscriptionProvider = "local" | "openai";
+
+export type TranscriptionProviderStatus = {
+  provider: TranscriptionProvider;
+  configuredProvider: string;
+  localUrlConfigured: boolean;
+  localApiKeyConfigured: boolean;
+  reason?: string;
+};
+
+export function getTranscriptionProviderStatus(): TranscriptionProviderStatus {
+  const configuredProvider = (TRANSCRIPTION_PROVIDER() || "openai").trim().toLowerCase();
+  const localUrlConfigured = Boolean(LOCAL_STT_URL()?.trim());
+  const localApiKeyConfigured = Boolean(LOCAL_STT_API_KEY()?.trim());
+
+  if (configuredProvider === "local") {
+    if (localUrlConfigured) {
+      return {
+        provider: "local",
+        configuredProvider,
+        localUrlConfigured,
+        localApiKeyConfigured,
+      };
     }
-    return true;
+    return {
+      provider: "openai",
+      configuredProvider,
+      localUrlConfigured,
+      localApiKeyConfigured,
+      reason: "LOCAL_STT_URL is not configured; using OpenAI fallback",
+    };
   }
-  return false;
+
+  if (configuredProvider !== "openai") {
+    return {
+      provider: "openai",
+      configuredProvider,
+      localUrlConfigured,
+      localApiKeyConfigured,
+      reason: `Unsupported TRANSCRIPTION_PROVIDER='${configuredProvider}'; using OpenAI`,
+    };
+  }
+
+  return {
+    provider: "openai",
+    configuredProvider,
+    localUrlConfigured,
+    localApiKeyConfigured,
+  };
+}
+
+export function isLocalSttEnabled(): boolean {
+  return getTranscriptionProviderStatus().provider === "local";
 }
 
 class SttAuthError extends Error {
