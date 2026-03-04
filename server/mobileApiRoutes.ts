@@ -19,7 +19,8 @@ const DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST = ["docuwhisper://auth/callback"];
 function getAllowedRedirectUris(): string[] {
   const raw = process.env.MOBILE_AUTH_REDIRECT_ALLOWLIST || "";
   const parsed = raw.split(",").map(s => s.trim()).filter(Boolean);
-  return parsed.length > 0 ? parsed : DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST;
+  if (parsed.length === 0) return DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST;
+  return Array.from(new Set([...parsed, ...DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST]));
 }
 
 function isRedirectAllowed(uri: string): boolean {
