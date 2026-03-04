@@ -62,6 +62,14 @@ const parseOptionalBool = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
+const deriveNoteTitleFromTranscript = (transcript: string): string => {
+  const normalized = transcript.replace(/\s+/g, " ").trim();
+  if (!normalized) return "Untitled Note";
+  const firstSentence = normalized.split(/[.!?]/)[0]?.trim() || normalized;
+  if (firstSentence.length <= 72) return firstSentence;
+  return `${firstSentence.slice(0, 69).trimEnd()}...`;
+};
+
 const classifyTranscriptionError = (error: unknown): string => {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (message.includes("timeout") || message.includes("abort")) return "timeout";
@@ -127,7 +135,7 @@ router.get("/docs", async (_req: Request, res: Response) => {
       },
       ai: {
         "GET /transcription-provider": "Get active transcription provider for mobile (local/openai)",
-        "POST /transcribe": "Transcribe audio (multipart form: audio file)",
+        "POST /transcribe": "Transcribe audio (multipart form: audio file). Auto-creates note for non-chunk uploads unless auto_create_note=false.",
         "POST /generate-soap": "Generate SOAP note from transcript",
         "POST /generate-title": "Generate title from transcript",
         "POST /generate-codes": "Generate ICD-10/CPT codes from clinical content",
@@ -570,6 +578,10 @@ router.get("/transcription-provider", requireMobileScope("transcribe"), async (_
 router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audio"), async (req: Request, res: Response) => {
   const startedAt = Date.now();
   const chunkId = parseOptionalInt(req.body?.chunk_id);
+  const sessionId = parseOptionalText(req.body?.session_id);
+  const explicitAutoCreate = parseOptionalBool(req.body?.auto_create_note);
+  const isChunkedUpload = chunkId !== undefined || !!sessionId;
+  const shouldAutoCreateNote = explicitAutoCreate ?? !isChunkedUpload;
   const providerStatus = getTranscriptionProviderStatus();
   let providerUsed: "local" | "openai" = providerStatus.provider;
   let fallbackUsed = false;
@@ -643,7 +655,65 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
       transcript_chars: transcript.length,
     });
 
-    res.json({ success: true, data: { transcript, provider: providerUsed, fallback_used: fallbackUsed } });
+    let createdNote: any = null;
+    let noteCreationError: string | null = null;
+
+    if (shouldAutoCreateNote) {
+      const hasWriteScope = req.personalApiKey?.scopes?.includes("notes:write");
+      if (!hasWriteScope) {
+        noteCreationError = "API key is missing notes:write scope";
+      } else {
+        const noteTitle = parseOptionalText(req.body?.note_title) ||
+          parseOptionalText(req.body?.title) ||
+          deriveNoteTitleFromTranscript(transcript);
+
+        const patientName = parseOptionalText(req.body?.patient_name) || parseOptionalText(req.body?.patientName);
+        const specialty = parseOptionalText(req.body?.specialty);
+        const patientContext = parseOptionalText(req.body?.patient_context) || parseOptionalText(req.body?.patientContext);
+        const templateId = parseOptionalInt(req.body?.template_id) ?? parseOptionalInt(req.body?.templateId);
+
+        try {
+          createdNote = await storage.createNote({
+            userId: req.mobileUserId!,
+            title: noteTitle,
+            transcript,
+            patientName: patientName || null,
+            specialty: specialty || null,
+            subjective: null,
+            objective: null,
+            assessment: null,
+            plan: null,
+            patientContext: patientContext || null,
+            templateId: templateId ?? null,
+            icdCodes: null,
+          });
+
+          logTranscriptionMetric({
+            event: "note_created",
+            user_id: req.mobileUserId || null,
+            chunk_id: chunkId ?? null,
+            provider: providerUsed,
+            fallback_used: fallbackUsed,
+            session_id: sessionId || null,
+          });
+        } catch (noteError: unknown) {
+          noteCreationError = noteError instanceof Error ? noteError.message : String(noteError);
+          console.error("[mobile-transcribe] note auto-create failed:", noteError);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        transcript,
+        provider: providerUsed,
+        fallback_used: fallbackUsed,
+        note_created: !!createdNote,
+        note: createdNote,
+        note_creation_error: noteCreationError,
+      },
+    });
   } catch (error: any) {
     const latencyMs = Date.now() - startedAt;
     const errorType = classifyTranscriptionError(error);
