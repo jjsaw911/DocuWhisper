@@ -71,6 +71,56 @@ const deriveNoteTitleFromTranscript = (transcript: string): string => {
   return `${firstSentence.slice(0, 69).trimEnd()}...`;
 };
 
+type SoapSections = {
+  subjective: string | null;
+  objective: string | null;
+  assessment: string | null;
+  plan: string | null;
+};
+
+const normalizeSoapSection = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const generateSoapSections = async (params: {
+  transcript: string;
+  patientName?: string;
+  specialty?: string;
+  context?: string;
+}): Promise<SoapSections> => {
+  const systemPrompt = `You are a medical documentation assistant creating SOAP notes.
+${params.specialty ? `Specialty: ${params.specialty}` : ""}
+${params.patientName ? `Patient: ${params.patientName}` : ""}
+${params.context ? `Context: ${params.context}` : ""}
+
+Return valid JSON only:
+{"subjective":"...","objective":"...","assessment":"...","plan":"..."}
+
+If a section is unavailable, return an empty string for that section.`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-5.1",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Transcript:\n${params.transcript}` },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.3,
+  });
+
+  const content = completion.choices[0]?.message?.content || "{}";
+  const parsed = JSON.parse(content);
+
+  const subjective = normalizeSoapSection(parsed.subjective ?? parsed.hpi);
+  const objective = normalizeSoapSection(parsed.objective);
+  const assessment = normalizeSoapSection(parsed.assessment);
+  const plan = normalizeSoapSection(parsed.plan);
+
+  return { subjective, objective, assessment, plan };
+};
+
 const classifyTranscriptionError = (error: unknown): string => {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (message.includes("timeout") || message.includes("abort")) return "timeout";
@@ -598,6 +648,8 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
   const explicitAutoCreate = parseOptionalBool(req.body?.auto_create_note);
   const isChunkedUpload = chunkId !== undefined || !!sessionId;
   const shouldAutoCreateNote = explicitAutoCreate ?? !isChunkedUpload;
+  const explicitAutoGenerateSoap = parseOptionalBool(req.body?.auto_generate_soap);
+  const shouldAutoGenerateSoap = shouldAutoCreateNote && (explicitAutoGenerateSoap ?? true);
   const providerStatus = getTranscriptionProviderStatus();
   let providerUsed: "local" | "openai" = providerStatus.provider;
   let fallbackUsed = false;
@@ -673,6 +725,8 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
 
     let createdNote: any = null;
     let noteCreationError: string | null = null;
+    let soapGenerationError: string | null = null;
+    let soapGenerated = false;
 
     if (shouldAutoCreateNote) {
       const hasWriteScope = req.personalApiKey?.scopes?.includes("notes:write");
@@ -687,6 +741,32 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
         const specialty = parseOptionalText(req.body?.specialty);
         const patientContext = parseOptionalText(req.body?.patient_context) || parseOptionalText(req.body?.patientContext);
         const templateId = parseOptionalInt(req.body?.template_id) ?? parseOptionalInt(req.body?.templateId);
+        let soapSections: SoapSections = {
+          subjective: null,
+          objective: null,
+          assessment: null,
+          plan: null,
+        };
+
+        if (shouldAutoGenerateSoap) {
+          const hasGenerateScope = req.personalApiKey?.scopes?.includes("generate");
+          if (!hasGenerateScope) {
+            soapGenerationError = "API key is missing generate scope";
+          } else {
+            try {
+              soapSections = await generateSoapSections({
+                transcript,
+                patientName: patientName || undefined,
+                specialty: specialty || undefined,
+                context: patientContext || undefined,
+              });
+              soapGenerated = !!(soapSections.subjective || soapSections.objective || soapSections.assessment || soapSections.plan);
+            } catch (soapError: unknown) {
+              soapGenerationError = soapError instanceof Error ? soapError.message : String(soapError);
+              console.error("[mobile-transcribe] SOAP auto-generate failed:", soapError);
+            }
+          }
+        }
 
         try {
           createdNote = await storage.createNote({
@@ -695,10 +775,10 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
             transcript,
             patientName: patientName || null,
             specialty: specialty || null,
-            subjective: null,
-            objective: null,
-            assessment: null,
-            plan: null,
+            subjective: soapSections.subjective,
+            objective: soapSections.objective,
+            assessment: soapSections.assessment,
+            plan: soapSections.plan,
             patientContext: patientContext || null,
             templateId: templateId ?? null,
             icdCodes: null,
@@ -711,6 +791,7 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
             provider: providerUsed,
             fallback_used: fallbackUsed,
             session_id: sessionId || null,
+            details: JSON.stringify({ soap_generated: soapGenerated }),
           });
         } catch (noteError: unknown) {
           noteCreationError = noteError instanceof Error ? noteError.message : String(noteError);
@@ -725,6 +806,8 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
         transcript,
         provider: providerUsed,
         fallback_used: fallbackUsed,
+        soap_generated: soapGenerated,
+        soap_generation_error: soapGenerationError,
         note_created: !!createdNote,
         note: createdNote,
         note_creation_error: noteCreationError,
