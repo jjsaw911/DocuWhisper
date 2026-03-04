@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { mobileApiAuth, requireMobileScope } from "./mobileApiMiddleware";
-import { storage } from "./storage";
+import { hashApiKey, storage } from "./storage";
 import { getTranscriptionProviderStatus, transcribeLocal } from "./sttClient";
 import { z } from "zod";
 import multer from "multer";
@@ -113,8 +113,9 @@ router.get("/docs", async (_req: Request, res: Response) => {
     rateLimit: "30 requests/minute",
     endpoints: {
       auth: {
-        "GET /auth/start?redirect_uri=<uri>": "Start web-based sign-in (ASWebAuthenticationSession). Redirects through login, then back to redirect_uri with api_key param.",
+        "GET /auth/start?redirect_uri=<uri>": "Start web-based sign-in (ASWebAuthenticationSession). Redirects through login, then back to redirect_uri with api_key and code params.",
         "GET /auth/callback": "Internal callback after login completes. Auto-generates API key and redirects to app.",
+        "POST /auth/exchange": "Compatibility endpoint: exchange code for API key payload.",
       },
       user: { "GET /me": "Get user info, settings, and subscription status" },
       notes: {
@@ -294,6 +295,7 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
     const separator = redirectUri.includes("?") ? "&" : "?";
     const callbackParams = new URLSearchParams({
       api_key: rawKey,
+      code: rawKey,
       user_id: userId,
       email: userEmail,
     });
@@ -317,6 +319,54 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
     }
     res.status(500).json({ error: "internal_error", message: "Authentication callback failed" });
   }
+});
+
+const MobileAuthExchangeSchema = z.object({
+  code: z.string().min(1),
+});
+
+router.post("/auth/exchange", async (req: Request, res: Response) => {
+  const parsed = MobileAuthExchangeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "validation_error",
+      message: "Missing or invalid auth code",
+      details: parsed.error.errors,
+    });
+  }
+
+  const code = parsed.data.code.trim();
+  if (!code.startsWith("dw_pk_")) {
+    return res.status(400).json({
+      error: "invalid_code",
+      message: "Invalid auth code format",
+    });
+  }
+
+  const apiKey = await storage.getPersonalApiKeyByHash(hashApiKey(code));
+  if (!apiKey || apiKey.status !== "active") {
+    return res.status(400).json({
+      error: "invalid_code",
+      message: "Auth code is invalid or expired",
+    });
+  }
+
+  if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+    return res.status(400).json({
+      error: "invalid_code",
+      message: "Auth code is invalid or expired",
+    });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      api_key: code,
+      user_id: apiKey.userId,
+      scopes: apiKey.scopes,
+      key_name: apiKey.name,
+    },
+  });
 });
 
 // All other routes require API key auth
