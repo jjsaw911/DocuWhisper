@@ -178,6 +178,7 @@ router.get("/docs", async (_req: Request, res: Response) => {
 router.get("/auth/start", (req: Request, res: Response) => {
   const redirectUri = req.query.redirect_uri as string;
   const state = typeof req.query.state === "string" ? req.query.state : undefined;
+  const session = (req as any).session as any | undefined;
 
   if (!redirectUri) {
     return res.status(400).json({
@@ -195,20 +196,27 @@ router.get("/auth/start", (req: Request, res: Response) => {
 
   res.cookie("mobile_auth_redirect", redirectUri, getMobileAuthCookieOptions(req));
 
+  if (!session || typeof session.save !== "function") {
+    return res.status(500).json({
+      error: "session_unavailable",
+      message: "Authentication session is unavailable. Please try again.",
+    });
+  }
+
   const callbackParams = new URLSearchParams({ redirect_uri: redirectUri });
   if (state) callbackParams.set("state", state);
-  (req.session as any).returnTo = `/api/mobile/auth/callback?${callbackParams.toString()}`;
-  (req.session as any).mobileAuthRedirect = redirectUri;
-  (req.session as any).mobileAuthState = state;
+  session.returnTo = `/api/mobile/auth/callback?${callbackParams.toString()}`;
+  session.mobileAuthRedirect = redirectUri;
+  session.mobileAuthState = state;
 
   const user = req.user as any;
   if (req.isAuthenticated?.() && user?.claims?.sub) {
-    return req.session.save(() => {
+    return session.save(() => {
       res.redirect(`/api/mobile/auth/callback?${callbackParams.toString()}`);
     });
   }
 
-  req.session.save(() => {
+  session.save(() => {
     res.redirect(`/api/login`);
   });
 });
@@ -218,12 +226,13 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
     const user = req.user as any;
     const userId = user?.claims?.sub;
     const userEmail = user?.claims?.email || "";
+    const session = (req as any).session as any | undefined;
 
     const queryRedirect = typeof req.query.redirect_uri === "string" ? req.query.redirect_uri : undefined;
     const queryState = typeof req.query.state === "string" ? req.query.state : undefined;
     const cookieRedirect = (req as any).cookies?.mobile_auth_redirect;
-    const sessionRedirect = (req.session as any).mobileAuthRedirect;
-    const sessionState = (req.session as any).mobileAuthState;
+    const sessionRedirect = session?.mobileAuthRedirect;
+    const sessionState = session?.mobileAuthState;
     const redirectUri = cookieRedirect || sessionRedirect || queryRedirect;
     const state = sessionState || queryState;
 
@@ -241,12 +250,15 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
       if (redirectUri) {
         const callbackParams = new URLSearchParams({ redirect_uri: redirectUri });
         if (state) callbackParams.set("state", state);
-        (req.session as any).returnTo = `/api/mobile/auth/callback?${callbackParams.toString()}`;
-        (req.session as any).mobileAuthRedirect = redirectUri;
-        (req.session as any).mobileAuthState = state;
-        return req.session.save(() => {
-          res.redirect("/api/login");
-        });
+        if (session && typeof session.save === "function") {
+          session.returnTo = `/api/mobile/auth/callback?${callbackParams.toString()}`;
+          session.mobileAuthRedirect = redirectUri;
+          session.mobileAuthState = state;
+          return session.save(() => {
+            res.redirect("/api/login");
+          });
+        }
+        return res.redirect("/api/login");
       }
       return res.status(401).json({ error: "unauthorized", message: "Not authenticated. Start the flow from /api/mobile/auth/start" });
     }
@@ -257,8 +269,10 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
       secure: cookieOptions.secure,
       sameSite: cookieOptions.sameSite,
     });
-    delete (req.session as any).mobileAuthRedirect;
-    delete (req.session as any).mobileAuthState;
+    if (session) {
+      delete session.mobileAuthRedirect;
+      delete session.mobileAuthState;
+    }
 
     if (!redirectUri || !isRedirectAllowed(redirectUri)) {
       console.log("[mobile-auth] No valid redirect URI found, returning 400");
@@ -315,7 +329,8 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("[mobile-auth] Callback error:", error);
     const queryRedirect = typeof req.query.redirect_uri === "string" ? req.query.redirect_uri : undefined;
-    const redirectUri = (req as any).cookies?.mobile_auth_redirect || (req.session as any).mobileAuthRedirect || queryRedirect;
+    const session = (req as any).session as any | undefined;
+    const redirectUri = (req as any).cookies?.mobile_auth_redirect || session?.mobileAuthRedirect || queryRedirect;
     const cookieOptions = getMobileAuthCookieOptions(req);
     res.clearCookie("mobile_auth_redirect", {
       httpOnly: true,

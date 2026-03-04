@@ -99,11 +99,12 @@ async function initStripe() {
   app.use("/api/callback", (req: Request, _res: Response, next: NextFunction) => {
     const mobileRedirect = req.cookies?.mobile_auth_redirect;
     const sid = req.cookies?.["connect.sid"];
+    const session = (req as any).session as any | undefined;
     if (mobileRedirect && sid) {
       console.log("[mobile-auth] Preserving redirect URI before OAuth callback, sid prefix:", sid.substring(0, 12));
       pendingMobileAuths.set(sid, {
         redirectUri: decodeURIComponent(mobileRedirect),
-        state: (req.session as any).mobileAuthState,
+        state: session?.mobileAuthState,
         createdAt: Date.now(),
       });
     }
@@ -119,7 +120,8 @@ async function initStripe() {
     const sameSite = secureCookie ? ("none" as const) : ("lax" as const);
 
     const mobileRedirect = req.cookies?.mobile_auth_redirect;
-    const mobileAuthState = (req.session as any).mobileAuthState as string | undefined;
+    const session = (req as any).session as any | undefined;
+    const mobileAuthState = session?.mobileAuthState as string | undefined;
     const isAuthed = (req as any).isAuthenticated?.();
     const isExcluded = req.path.startsWith("/api/mobile/auth/") ||
       req.path.startsWith("/api/login") ||
@@ -136,8 +138,8 @@ async function initStripe() {
         const pending = pendingMobileAuths.get(sid);
         if (pending) {
           console.log("[mobile-auth] Recovered redirect from pre-auth capture for sid prefix:", sid.substring(0, 12));
-          if (pending.state) {
-            (req.session as any).mobileAuthState = pending.state;
+          if (pending.state && session) {
+            session.mobileAuthState = pending.state;
           }
           res.cookie("mobile_auth_redirect", pending.redirectUri, {
             httpOnly: true,
@@ -162,8 +164,8 @@ async function initStripe() {
         });
         if (foundKey && foundVal) {
           console.log("[mobile-auth] Recovered redirect from recent pending auth for user:", userId);
-          if (foundVal.state) {
-            (req.session as any).mobileAuthState = foundVal.state;
+          if (foundVal.state && session) {
+            session.mobileAuthState = foundVal.state;
           }
           res.cookie("mobile_auth_redirect", foundVal.redirectUri, {
             httpOnly: true,
