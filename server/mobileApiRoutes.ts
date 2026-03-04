@@ -322,7 +322,9 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
 });
 
 const MobileAuthExchangeSchema = z.object({
-  code: z.string().min(1),
+  code: z.string().min(1).optional(),
+  apiKey: z.string().min(1).optional(),
+  api_key: z.string().min(1).optional(),
 });
 
 router.post("/auth/exchange", async (req: Request, res: Response) => {
@@ -335,7 +337,15 @@ router.post("/auth/exchange", async (req: Request, res: Response) => {
     });
   }
 
-  const code = parsed.data.code.trim();
+  const rawCode = parsed.data.code ?? parsed.data.apiKey ?? parsed.data.api_key;
+  if (!rawCode) {
+    return res.status(400).json({
+      error: "validation_error",
+      message: "Missing or invalid auth code",
+    });
+  }
+
+  const code = rawCode.trim();
   if (!code.startsWith("dw_pk_")) {
     return res.status(400).json({
       error: "invalid_code",
@@ -358,14 +368,20 @@ router.post("/auth/exchange", async (req: Request, res: Response) => {
     });
   }
 
+  res.setHeader("Cache-Control", "no-store");
   return res.json({
     success: true,
     data: {
+      apiKey: code,
+      keyPrefix: apiKey.keyPrefix,
+      scopes: apiKey.scopes,
       api_key: code,
       user_id: apiKey.userId,
-      scopes: apiKey.scopes,
       key_name: apiKey.name,
     },
+    apiKey: code,
+    keyPrefix: apiKey.keyPrefix,
+    scopes: apiKey.scopes,
   });
 });
 
