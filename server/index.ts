@@ -104,6 +104,10 @@ async function initStripe() {
   registerAuthRoutes(app);
 
   app.use((req: Request, res: Response, next: NextFunction) => {
+    const forwardedProto = req.get("x-forwarded-proto");
+    const secureCookie = req.secure || forwardedProto === "https";
+    const sameSite = secureCookie ? ("none" as const) : ("lax" as const);
+
     const mobileRedirect = req.cookies?.mobile_auth_redirect;
     const isAuthed = (req as any).isAuthenticated?.();
     const isExcluded = req.path.startsWith("/api/mobile/auth/") ||
@@ -123,9 +127,9 @@ async function initStripe() {
           console.log("[mobile-auth] Recovered redirect from pre-auth capture for sid prefix:", sid.substring(0, 12));
           res.cookie("mobile_auth_redirect", pending.redirectUri, {
             httpOnly: true,
-            secure: true,
+            secure: secureCookie,
             maxAge: 5 * 60 * 1000,
-            sameSite: "none",
+            sameSite,
           });
           pendingMobileAuths.delete(sid);
           return res.redirect("/api/mobile/auth/callback");
@@ -146,9 +150,9 @@ async function initStripe() {
           console.log("[mobile-auth] Recovered redirect from recent pending auth for user:", userId);
           res.cookie("mobile_auth_redirect", (foundVal as any).redirectUri, {
             httpOnly: true,
-            secure: true,
+            secure: secureCookie,
             maxAge: 5 * 60 * 1000,
-            sameSite: "none",
+            sameSite,
           });
           pendingMobileAuths.delete(foundKey);
           return res.redirect("/api/mobile/auth/callback");
