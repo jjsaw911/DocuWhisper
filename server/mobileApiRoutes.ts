@@ -14,10 +14,12 @@ const DEFAULT_MOBILE_SCOPES = [
   "tasks:read", "tasks:write", "transcribe", "generate",
   "settings:read", "settings:write",
 ];
+const DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST = ["docuwhisper://auth/callback"];
 
 function getAllowedRedirectUris(): string[] {
   const raw = process.env.MOBILE_AUTH_REDIRECT_ALLOWLIST || "";
-  return raw.split(",").map(s => s.trim()).filter(Boolean);
+  const parsed = raw.split(",").map(s => s.trim()).filter(Boolean);
+  return parsed.length > 0 ? parsed : DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST;
 }
 
 function isRedirectAllowed(uri: string): boolean {
@@ -26,7 +28,7 @@ function isRedirectAllowed(uri: string): boolean {
 }
 
 function getMobileAuthCookieOptions(req: Request) {
-  const forwardedProto = req.get("x-forwarded-proto");
+  const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
   const secure = req.secure || forwardedProto === "https";
   return {
     httpOnly: true,

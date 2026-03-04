@@ -81,7 +81,7 @@ async function initStripe() {
 
   app.use(cookieParser());
 
-  const pendingMobileAuths = new Map<string, { redirectUri: string; createdAt: number }>();
+  const pendingMobileAuths = new Map<string, { redirectUri: string; state?: string; createdAt: number }>();
 
   setInterval(() => {
     const now = Date.now();
@@ -90,12 +90,22 @@ async function initStripe() {
     });
   }, 60 * 1000);
 
+  const buildMobileAuthCallbackPath = (redirectUri: string, state?: string) => {
+    const params = new URLSearchParams({ redirect_uri: redirectUri });
+    if (state) params.set("state", state);
+    return `/api/mobile/auth/callback?${params.toString()}`;
+  };
+
   app.use("/api/callback", (req: Request, _res: Response, next: NextFunction) => {
     const mobileRedirect = req.cookies?.mobile_auth_redirect;
     const sid = req.cookies?.["connect.sid"];
     if (mobileRedirect && sid) {
       console.log("[mobile-auth] Preserving redirect URI before OAuth callback, sid prefix:", sid.substring(0, 12));
-      pendingMobileAuths.set(sid, { redirectUri: decodeURIComponent(mobileRedirect), createdAt: Date.now() });
+      pendingMobileAuths.set(sid, {
+        redirectUri: decodeURIComponent(mobileRedirect),
+        state: (req.session as any).mobileAuthState,
+        createdAt: Date.now(),
+      });
     }
     next();
   });
@@ -104,11 +114,12 @@ async function initStripe() {
   registerAuthRoutes(app);
 
   app.use((req: Request, res: Response, next: NextFunction) => {
-    const forwardedProto = req.get("x-forwarded-proto");
+    const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
     const secureCookie = req.secure || forwardedProto === "https";
     const sameSite = secureCookie ? ("none" as const) : ("lax" as const);
 
     const mobileRedirect = req.cookies?.mobile_auth_redirect;
+    const mobileAuthState = (req.session as any).mobileAuthState as string | undefined;
     const isAuthed = (req as any).isAuthenticated?.();
     const isExcluded = req.path.startsWith("/api/mobile/auth/") ||
       req.path.startsWith("/api/login") ||
@@ -116,7 +127,7 @@ async function initStripe() {
 
     if (mobileRedirect && isAuthed && !isExcluded) {
       console.log("[mobile-auth] Middleware intercepting authenticated request at", req.path, "→ redirecting to /api/mobile/auth/callback");
-      return res.redirect("/api/mobile/auth/callback");
+      return res.redirect(buildMobileAuthCallbackPath(mobileRedirect, mobileAuthState));
     }
 
     if (!mobileRedirect && isAuthed && !isExcluded) {
@@ -125,6 +136,9 @@ async function initStripe() {
         const pending = pendingMobileAuths.get(sid);
         if (pending) {
           console.log("[mobile-auth] Recovered redirect from pre-auth capture for sid prefix:", sid.substring(0, 12));
+          if (pending.state) {
+            (req.session as any).mobileAuthState = pending.state;
+          }
           res.cookie("mobile_auth_redirect", pending.redirectUri, {
             httpOnly: true,
             secure: secureCookie,
@@ -132,14 +146,14 @@ async function initStripe() {
             sameSite,
           });
           pendingMobileAuths.delete(sid);
-          return res.redirect("/api/mobile/auth/callback");
+          return res.redirect(buildMobileAuthCallbackPath(pending.redirectUri, pending.state));
         }
       }
 
       const userId = (req.user as any)?.claims?.sub;
       if (userId) {
         let foundKey: string | null = null;
-        let foundVal: { redirectUri: string; createdAt: number } | null = null;
+        let foundVal: { redirectUri: string; state?: string; createdAt: number } | null = null;
         pendingMobileAuths.forEach((val, key) => {
           if (!foundKey && Date.now() - val.createdAt < 60 * 1000) {
             foundKey = key;
@@ -148,14 +162,17 @@ async function initStripe() {
         });
         if (foundKey && foundVal) {
           console.log("[mobile-auth] Recovered redirect from recent pending auth for user:", userId);
-          res.cookie("mobile_auth_redirect", (foundVal as any).redirectUri, {
+          if (foundVal.state) {
+            (req.session as any).mobileAuthState = foundVal.state;
+          }
+          res.cookie("mobile_auth_redirect", foundVal.redirectUri, {
             httpOnly: true,
             secure: secureCookie,
             maxAge: 5 * 60 * 1000,
             sameSite,
           });
           pendingMobileAuths.delete(foundKey);
-          return res.redirect("/api/mobile/auth/callback");
+          return res.redirect(buildMobileAuthCallbackPath(foundVal.redirectUri, foundVal.state));
         }
       }
     }
