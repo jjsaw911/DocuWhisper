@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmrConsentDialog } from "@/components/emr-consent-dialog";
 import {
   Select,
@@ -186,16 +187,6 @@ export default function PatientsPage() {
     return new Date(date).toLocaleDateString();
   };
 
-  const getGenderLabel = (gender: string | null | undefined) => {
-    const labels: Record<string, string> = {
-      male: "Male",
-      female: "Female",
-      other: "Other",
-      prefer_not_to_say: "Prefer not to say",
-    };
-    return labels[gender || ""] || "Not set";
-  };
-
   const formatChartNumber = (patientId: number) => `CH-${patientId.toString().padStart(6, "0")}`;
 
   const getPatientType = (patient: Patient) => {
@@ -323,52 +314,65 @@ export default function PatientsPage() {
 
         {isPatientsLoading ? (
           <div className="rounded-md border overflow-hidden">
-            <div className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] gap-3 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40 border-b">
-              <span>Patient Name</span>
-              <span>Chart # / DOB</span>
-              <span>Type</span>
-            </div>
             <div className="max-h-[62vh] overflow-y-auto">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] gap-3 px-4 py-3 border-b last:border-b-0">
-                  <Skeleton className="h-4 w-40" />
-                  <Skeleton className="h-4 w-44" />
-                  <Skeleton className="h-6 w-28" />
-                </div>
-              ))}
+              <Table className="table-fixed">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[42%] sticky top-0 z-10 bg-muted/50">Patient Name</TableHead>
+                    <TableHead className="w-[34%] sticky top-0 z-10 bg-muted/50">Chart # / DOB</TableHead>
+                    <TableHead className="w-[24%] sticky top-0 z-10 bg-muted/50">Type</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...Array(6)].map((_, i) => (
+                    <TableRow key={i}>
+                      <TableCell><Skeleton className="h-4 w-40" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-44" /></TableCell>
+                      <TableCell><Skeleton className="h-6 w-28" /></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           </div>
         ) : displayedPatients.length > 0 ? (
           <div className="rounded-md border overflow-hidden">
-            <div className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] gap-3 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40 border-b">
-              <span>Patient Name</span>
-              <span>Chart # / DOB</span>
-              <span>Type</span>
-            </div>
             <div className="max-h-[62vh] overflow-y-auto">
-              {displayedPatients.map((patient) => (
-                <Link key={patient.id} href={`/emr/patients/${patient.id}`}>
-                  <div
-                    className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] items-center gap-3 px-4 py-3 border-b last:border-b-0 hover:bg-muted/30 cursor-pointer"
-                    data-testid={`row-patient-${patient.id}`}
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{patient.lastName}, {patient.firstName}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {patient.phone || patient.email || getGenderLabel(patient.gender)}
-                      </p>
-                    </div>
-                    <div className="min-w-0 text-sm">
-                      <p className="font-mono text-xs text-foreground">{formatChartNumber(patient.id)}</p>
-                      <p className="text-xs text-muted-foreground">DOB: {formatDate(patient.dateOfBirth)}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{getPatientType(patient)}</Badge>
-                      {!patient.isActive && <Badge variant="secondary">Inactive</Badge>}
-                    </div>
-                  </div>
-                </Link>
-              ))}
+              <Table className="table-fixed">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[42%] sticky top-0 z-10 bg-muted/50">Patient Name</TableHead>
+                    <TableHead className="w-[34%] sticky top-0 z-10 bg-muted/50">Chart # / DOB</TableHead>
+                    <TableHead className="w-[24%] sticky top-0 z-10 bg-muted/50">Type</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {displayedPatients.map((patient) => (
+                    <TableRow
+                      key={patient.id}
+                      className="cursor-pointer"
+                      data-testid={`row-patient-${patient.id}`}
+                      onClick={() => setLocation(`/emr/patients/${patient.id}`)}
+                    >
+                      <TableCell className="font-medium">
+                        {patient.lastName}, {patient.firstName}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-xs font-mono">{formatChartNumber(patient.id)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          DOB: {patient.dateOfBirth ? formatDate(patient.dateOfBirth) : "Not set"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">{getPatientType(patient)}</Badge>
+                          {!patient.isActive && <Badge variant="secondary">Inactive</Badge>}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           </div>
         ) : (
