@@ -87,11 +87,13 @@ export interface IStorage {
   getTrendingDiagnoses(userId: string, fromDate?: Date, toDate?: Date): Promise<{ diagnosis: string; count: number }[]>;
   // EMR - Patient functions
   getPatientsByUser(userId: string): Promise<Patient[]>;
+  getRecentlySeenPatientsByUser(userId: string, since: Date): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, data: Partial<InsertPatient>): Promise<Patient | undefined>;
   deletePatient(id: number): Promise<void>;
   searchPatients(userId: string, query: string): Promise<Patient[]>;
+  searchPatientsByOrganization(organizationId: number, query: string): Promise<Patient[]>;
   // EMR - Appointment functions
   getAppointmentsByUser(userId: string): Promise<Appointment[]>;
   getAppointmentsByPatient(patientId: number): Promise<Appointment[]>;
@@ -123,6 +125,7 @@ export interface IStorage {
   getUserEmrOrganizations(userId: string): Promise<{ practice: Practice; emrRole: string | null }[]>;
   // Organization-scoped EMR data
   getPatientsByOrganization(organizationId: number): Promise<Patient[]>;
+  getRecentlySeenPatientsByOrganization(organizationId: number, since: Date): Promise<Patient[]>;
   getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]>;
   getUpcomingAppointmentsByOrganization(organizationId: number, days?: number): Promise<Appointment[]>;
   // EMR - Vitals functions
@@ -841,6 +844,24 @@ class DatabaseStorage implements IStorage {
     return db.select().from(patients).where(eq(patients.userId, userId)).orderBy(desc(patients.createdAt));
   }
 
+  async getRecentlySeenPatientsByUser(userId: string, since: Date): Promise<Patient[]> {
+    return db
+      .select()
+      .from(patients)
+      .where(
+        and(
+          eq(patients.userId, userId),
+          sql`EXISTS (
+            SELECT 1
+            FROM ${patientEncounters}
+            WHERE ${patientEncounters.patientId} = ${patients.id}
+              AND ${patientEncounters.encounterDate} >= ${since}
+          )`,
+        ),
+      )
+      .orderBy(patients.lastName, patients.firstName);
+  }
+
   async getPatient(id: number): Promise<Patient | undefined> {
     const [patient] = await db.select().from(patients).where(eq(patients.id, id));
     return patient;
@@ -869,6 +890,21 @@ class DatabaseStorage implements IStorage {
     return db.select().from(patients).where(
       and(
         eq(patients.userId, userId),
+        or(
+          sql`LOWER(${patients.firstName}) LIKE ${searchPattern}`,
+          sql`LOWER(${patients.lastName}) LIKE ${searchPattern}`,
+          sql`LOWER(${patients.email}) LIKE ${searchPattern}`,
+          sql`${patients.phone} LIKE ${searchPattern}`
+        )
+      )
+    ).orderBy(patients.lastName, patients.firstName);
+  }
+
+  async searchPatientsByOrganization(organizationId: number, query: string): Promise<Patient[]> {
+    const searchPattern = `%${query.toLowerCase()}%`;
+    return db.select().from(patients).where(
+      and(
+        eq(patients.organizationId, organizationId),
         or(
           sql`LOWER(${patients.firstName}) LIKE ${searchPattern}`,
           sql`LOWER(${patients.lastName}) LIKE ${searchPattern}`,
@@ -1110,6 +1146,24 @@ class DatabaseStorage implements IStorage {
   // Organization-scoped patient methods
   async getPatientsByOrganization(organizationId: number): Promise<Patient[]> {
     return db.select().from(patients).where(eq(patients.organizationId, organizationId)).orderBy(desc(patients.createdAt));
+  }
+
+  async getRecentlySeenPatientsByOrganization(organizationId: number, since: Date): Promise<Patient[]> {
+    return db
+      .select()
+      .from(patients)
+      .where(
+        and(
+          eq(patients.organizationId, organizationId),
+          sql`EXISTS (
+            SELECT 1
+            FROM ${patientEncounters}
+            WHERE ${patientEncounters.patientId} = ${patients.id}
+              AND ${patientEncounters.encounterDate} >= ${since}
+          )`,
+        ),
+      )
+      .orderBy(patients.lastName, patients.firstName);
   }
 
   async getAppointmentsByOrganization(organizationId: number): Promise<Appointment[]> {

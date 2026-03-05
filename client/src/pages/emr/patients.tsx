@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmrConsentDialog } from "@/components/emr-consent-dialog";
@@ -18,10 +18,6 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus,
   Search,
-  User,
-  Phone,
-  Mail,
-  Calendar,
   Users,
   Building2,
   Shield,
@@ -84,17 +80,41 @@ export default function PatientsPage() {
     }
   }, [emrAccess, isCheckingAccess, setLocation, toast, emrOrganizations, selectedOrgId]);
 
-  const { data: patients = [], isLoading } = useQuery<Patient[]>({
-    queryKey: ["/api/emr/patients", selectedOrgId],
+  const trimmedSearch = search.trim();
+
+  const { data: recentPatients = [], isLoading: isLoadingRecent } = useQuery<Patient[]>({
+    queryKey: ["/api/emr/patients/recent", selectedOrgId],
     queryFn: async () => {
-      const url = selectedOrgId 
-        ? `/api/emr/patients?organizationId=${selectedOrgId}` 
-        : "/api/emr/patients";
+      const params = new URLSearchParams();
+      params.set("seenWithinDays", "2");
+      if (selectedOrgId) {
+        params.set("organizationId", selectedOrgId.toString());
+      }
+      const url = `/api/emr/patients?${params.toString()}`;
       const response = await fetch(url, { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch patients");
       return response.json();
     },
     enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
+  });
+
+  const { data: searchedPatients = [], isLoading: isSearching } = useQuery<Patient[]>({
+    queryKey: ["/api/emr/patients/search", selectedOrgId, trimmedSearch],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("q", trimmedSearch);
+      if (selectedOrgId) {
+        params.set("organizationId", selectedOrgId.toString());
+      }
+      const response = await fetch(`/api/emr/patients/search?${params.toString()}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to search patients");
+      return response.json();
+    },
+    enabled:
+      emrAccess?.hasAccess === true &&
+      emrAccess?.consentAcknowledged === true &&
+      trimmedSearch.length > 0 &&
+      (isVendor ? selectedOrgId !== null : true),
   });
 
   if (isCheckingAccess || !emrAccess?.hasAccess) {
@@ -115,16 +135,9 @@ export default function PatientsPage() {
     );
   }
 
-  const filteredPatients = patients.filter((patient) => {
-    if (!search) return true;
-    const searchLower = search.toLowerCase();
-    const fullName = `${patient.firstName} ${patient.lastName}`.toLowerCase();
-    return (
-      fullName.includes(searchLower) ||
-      patient.email?.toLowerCase().includes(searchLower) ||
-      patient.phone?.includes(search)
-    );
-  });
+  const isSearchMode = trimmedSearch.length > 0;
+  const displayedPatients = isSearchMode ? searchedPatients : recentPatients;
+  const isPatientsLoading = isSearchMode ? isSearching : isLoadingRecent;
 
   const formatDate = (date: Date | string | null | undefined) => {
     if (!date) return "Not set";
@@ -187,7 +200,8 @@ export default function PatientsPage() {
             onOpenChange={setIsDialogOpen}
             onPatientCreated={(patient) => {
               queryClient.invalidateQueries({ queryKey: ["/api/emr/patients"] });
-              queryClient.invalidateQueries({ queryKey: ["/api/emr/patients", selectedOrgId] });
+              queryClient.invalidateQueries({ queryKey: ["/api/emr/patients/recent", selectedOrgId] });
+              queryClient.invalidateQueries({ queryKey: ["/api/emr/patients/search", selectedOrgId] });
               setLocation("/emr/patients/" + patient.id);
             }}
             organizationId={selectedOrgId}
@@ -197,7 +211,7 @@ export default function PatientsPage() {
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search patients by name, email, or phone..."
+            placeholder="Search all patients by name, email, or phone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-10"
@@ -205,126 +219,97 @@ export default function PatientsPage() {
           />
         </div>
 
-        {isLoading ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <p className="text-sm text-muted-foreground mb-4">
+          {isSearchMode
+            ? `Showing search results for "${trimmedSearch}"`
+            : "Showing patients seen in the last 2 days. Search to find older patient records."}
+        </p>
+
+        {isPatientsLoading ? (
+          <div className="rounded-lg border">
             {[...Array(6)].map((_, i) => (
-              <Card key={i}>
-                <CardHeader>
-                  <Skeleton className="h-5 w-3/4" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-4 w-full mb-2" />
-                  <Skeleton className="h-4 w-2/3" />
-                </CardContent>
-              </Card>
+              <div key={i} className="p-4 border-b last:border-b-0">
+                <Skeleton className="h-4 w-40 mb-2" />
+                <Skeleton className="h-3 w-full" />
+              </div>
             ))}
           </div>
-        ) : filteredPatients.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredPatients.map((patient) => (
-              <Link
-                key={patient.id}
-                href={`/emr/patients/${patient.id}`}
-              >
-                <Card
-                  className="hover-elevate cursor-pointer h-full"
-                  data-testid={`card-patient-${patient.id}`}
+        ) : displayedPatients.length > 0 ? (
+          <div className="rounded-lg border overflow-hidden bg-card">
+            {displayedPatients.map((patient) => (
+              <Link key={patient.id} href={`/emr/patients/${patient.id}`}>
+                <div
+                  className="px-4 py-3 border-b last:border-b-0 hover:bg-muted/40 cursor-pointer"
+                  data-testid={`row-patient-${patient.id}`}
                 >
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <CardTitle className="text-base">
-                        {patient.firstName} {patient.lastName}
-                      </CardTitle>
-                      {!patient.isActive && (
-                        <Badge variant="secondary">Inactive</Badge>
-                      )}
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm text-muted-foreground">
-                      {patient.dateOfBirth && (
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
-                          <span>DOB: {formatDate(patient.dateOfBirth)}</span>
-                        </div>
-                      )}
-                      {patient.phone && (
-                        <div className="flex items-center gap-2">
-                          <Phone className="h-4 w-4" />
-                          <span>{patient.phone}</span>
-                        </div>
-                      )}
-                      {patient.email && (
-                        <div className="flex items-center gap-2">
-                          <Mail className="h-4 w-4" />
-                          <span className="truncate">{patient.email}</span>
-                        </div>
-                      )}
-                      {patient.gender && (
-                        <div className="flex items-center gap-2">
-                          <User className="h-4 w-4" />
-                          <span>{getGenderLabel(patient.gender)}</span>
-                        </div>
-                      )}
-                      {patient.insuranceProvider && (
-                        <div className="flex items-center gap-2">
-                          <Shield className="h-4 w-4" />
-                          <span className="truncate">{patient.insuranceProvider}</span>
-                        </div>
-                      )}
-                    </div>
-                    {(patient.allergies || patient.medications) && (
-                      <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t">
-                        {patient.allergies && (() => {
-                          try {
-                            const parsed = JSON.parse(patient.allergies);
-                            if (Array.isArray(parsed) && parsed.length > 0) {
-                              return (
-                                <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
-                                  <AlertCircle className="h-3 w-3 mr-1" />
-                                  {parsed.length} {parsed.length === 1 ? 'Allergy' : 'Allergies'}
-                                </Badge>
-                              );
-                            }
-                          } catch {
-                            if (patient.allergies.trim()) {
-                              return (
-                                <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
-                                  <AlertCircle className="h-3 w-3 mr-1" />
-                                  Allergies noted
-                                </Badge>
-                              );
-                            }
-                          }
-                          return null;
-                        })()}
-                        {patient.medications && (() => {
-                          try {
-                            const parsed = JSON.parse(patient.medications);
-                            if (Array.isArray(parsed) && parsed.length > 0) {
-                              return (
-                                <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
-                                  <Pill className="h-3 w-3 mr-1" />
-                                  {parsed.length} {parsed.length === 1 ? 'Medication' : 'Medications'}
-                                </Badge>
-                              );
-                            }
-                          } catch {
-                            if (patient.medications.trim()) {
-                              return (
-                                <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
-                                  <Pill className="h-3 w-3 mr-1" />
-                                  Medications noted
-                                </Badge>
-                              );
-                            }
-                          }
-                          return null;
-                        })()}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium truncate">
+                          {patient.firstName} {patient.lastName}
+                        </p>
+                        {!patient.isActive && (
+                          <Badge variant="secondary">Inactive</Badge>
+                        )}
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {patient.dateOfBirth && <span>DOB: {formatDate(patient.dateOfBirth)}</span>}
+                        {patient.phone && <span>{patient.phone}</span>}
+                        {patient.email && <span className="truncate">{patient.email}</span>}
+                        {patient.gender && <span>{getGenderLabel(patient.gender)}</span>}
+                        {patient.insuranceProvider && <span>{patient.insuranceProvider}</span>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      {patient.allergies && (() => {
+                        try {
+                          const parsed = JSON.parse(patient.allergies);
+                          if (Array.isArray(parsed) && parsed.length > 0) {
+                            return (
+                              <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                {parsed.length} {parsed.length === 1 ? "Allergy" : "Allergies"}
+                              </Badge>
+                            );
+                          }
+                        } catch {
+                          if (patient.allergies.trim()) {
+                            return (
+                              <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                Allergies
+                              </Badge>
+                            );
+                          }
+                        }
+                        return null;
+                      })()}
+                      {patient.medications && (() => {
+                        try {
+                          const parsed = JSON.parse(patient.medications);
+                          if (Array.isArray(parsed) && parsed.length > 0) {
+                            return (
+                              <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
+                                <Pill className="h-3 w-3 mr-1" />
+                                {parsed.length} {parsed.length === 1 ? "Medication" : "Medications"}
+                              </Badge>
+                            );
+                          }
+                        } catch {
+                          if (patient.medications.trim()) {
+                            return (
+                              <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
+                                <Pill className="h-3 w-3 mr-1" />
+                                Medications
+                              </Badge>
+                            );
+                          }
+                        }
+                        return null;
+                      })()}
+                    </div>
+                  </div>
+                </div>
               </Link>
             ))}
           </div>
@@ -333,14 +318,14 @@ export default function PatientsPage() {
             <CardContent className="pt-12 pb-12 text-center">
               <Users className="h-16 w-16 mx-auto text-muted-foreground/40 mb-4" />
               <h3 className="text-lg font-semibold mb-2">
-                {search ? "No patients found" : "No patients yet"}
+                {isSearchMode ? "No patients found" : "No recent patients"}
               </h3>
               <p className="text-sm text-muted-foreground mb-6">
-                {search
-                  ? "Try a different search term"
-                  : "Add your first patient to get started"}
+                {isSearchMode
+                  ? "Try a different search term."
+                  : "No patients were seen in the last 2 days. Use search to find older records."}
               </p>
-              {!search && (
+              {!isSearchMode && (
                 <Button onClick={() => setIsDialogOpen(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Patient

@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic, MessageSquare, Upload } from "lucide-react";
+import { Loader2, User, Stethoscope, Globe, FileText, Save, Bell, Clock, Users, Plus, Trash2, UserPlus, Crown, Shield, Copy, IdCard, Building2, Mic, MessageSquare, Upload, Database, Download } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -297,6 +297,47 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ["/api/personal-api-keys"] });
       toast({
         title: "API key deleted",
+      });
+    },
+  });
+
+  const downloadBackupMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/backup/export", { credentials: "include" });
+      if (!response.ok) {
+        const message = (await response.text()) || "Failed to export backup data";
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("content-disposition") || "";
+      const filenameMatch = contentDisposition.match(/filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?/i);
+      const filename = filenameMatch?.[1]
+        ? decodeURIComponent(filenameMatch[1].trim())
+        : `docuwhisper-backup-${new Date().toISOString().slice(0, 10)}.json`;
+
+      return { blob, filename };
+    },
+    onSuccess: ({ blob, filename }) => {
+      const blobUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = blobUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(blobUrl);
+
+      toast({
+        title: "Backup downloaded",
+        description: "Scribe and EMR backup file downloaded successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Backup failed",
+        description: error?.message || "Could not download backup data.",
+        variant: "destructive",
       });
     },
   });
@@ -1079,6 +1120,35 @@ export default function Settings() {
                   data-testid="switch-stay-signed-in"
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Database className="h-5 w-5 text-primary" />
+                <CardTitle>Data Backup</CardTitle>
+              </div>
+              <CardDescription>Export your Scribe and EMR data into a downloadable JSON file.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Includes notes, templates, tasks, patients, appointments, encounters, vitals, documents, and linked notes.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => downloadBackupMutation.mutate()}
+                disabled={downloadBackupMutation.isPending}
+                data-testid="button-download-backup"
+              >
+                {downloadBackupMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Download Backup
+              </Button>
             </CardContent>
           </Card>
 

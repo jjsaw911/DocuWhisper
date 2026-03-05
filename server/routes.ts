@@ -446,6 +446,138 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/backup/export", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email ?? null;
+      const exportedAt = new Date();
+      const filenameTimestamp = exportedAt.toISOString().replace(/[:.]/g, "-");
+
+      const [
+        settings,
+        subscription,
+        scribeNotes,
+        templates,
+        tasks,
+        ownedPatients,
+        ownedAppointments,
+        emrOrganizations,
+      ] = await Promise.all([
+        storage.getUserSettings(userId),
+        storage.getSubscription(userId),
+        storage.getNotesByUser(userId),
+        storage.getTemplatesByUser(userId),
+        storage.getTasksByUser(userId),
+        storage.getPatientsByUser(userId),
+        storage.getAppointmentsByUser(userId),
+        storage.getUserEmrOrganizations(userId),
+      ]);
+
+      const organizationIds = Array.from(new Set(emrOrganizations.map((org) => org.practice.id)));
+
+      const [organizationPatients, organizationAppointments] = await Promise.all([
+        Promise.all(organizationIds.map((organizationId) => storage.getPatientsByOrganization(organizationId))),
+        Promise.all(organizationIds.map((organizationId) => storage.getAppointmentsByOrganization(organizationId))),
+      ]);
+
+      const patientMap = new Map<number, any>();
+      for (const patient of ownedPatients) {
+        patientMap.set(patient.id, patient);
+      }
+      for (const patientsForOrg of organizationPatients) {
+        for (const patient of patientsForOrg) {
+          patientMap.set(patient.id, patient);
+        }
+      }
+      const allPatients = Array.from(patientMap.values());
+
+      const appointmentMap = new Map<number, any>();
+      for (const appointment of ownedAppointments) {
+        appointmentMap.set(appointment.id, appointment);
+      }
+      for (const appointmentsForOrg of organizationAppointments) {
+        for (const appointment of appointmentsForOrg) {
+          appointmentMap.set(appointment.id, appointment);
+        }
+      }
+      const allAppointments = Array.from(appointmentMap.values());
+
+      const perPatientData = await Promise.all(
+        allPatients.map(async (patient) => {
+          const [vitals, encounters, documents, linkedNotes] = await Promise.all([
+            storage.getVitalsByPatient(patient.id),
+            storage.getEncountersByPatient(patient.id),
+            storage.getDocumentsByPatient(patient.id),
+            storage.getNotesByPatient(patient.id),
+          ]);
+
+          return {
+            vitals,
+            encounters,
+            documents,
+            linkedNotes,
+          };
+        }),
+      );
+
+      const allVitals = perPatientData.flatMap((entry) => entry.vitals);
+      const allEncounters = perPatientData.flatMap((entry) => entry.encounters);
+      const allDocuments = perPatientData.flatMap((entry) => entry.documents);
+      const linkedNoteMap = new Map<number, any>();
+      for (const note of perPatientData.flatMap((entry) => entry.linkedNotes)) {
+        linkedNoteMap.set(note.id, note);
+      }
+      const allLinkedEmrNotes = Array.from(linkedNoteMap.values());
+
+      const backupPayload = {
+        version: 1,
+        exportedAt: exportedAt.toISOString(),
+        account: {
+          userId,
+          email: userEmail,
+          settings,
+          subscription,
+          emrOrganizations,
+        },
+        scribe: {
+          notes: scribeNotes,
+          templates,
+          tasks,
+        },
+        emr: {
+          patients: allPatients,
+          appointments: allAppointments,
+          encounters: allEncounters,
+          vitals: allVitals,
+          documents: allDocuments,
+          linkedNotes: allLinkedEmrNotes,
+        },
+      };
+
+      await logAudit(req, "export", "backup", undefined, undefined, {
+        scope: "scribe_emr",
+        counts: {
+          scribeNotes: scribeNotes.length,
+          templates: templates.length,
+          tasks: tasks.length,
+          patients: allPatients.length,
+          appointments: allAppointments.length,
+          encounters: allEncounters.length,
+          vitals: allVitals.length,
+          documents: allDocuments.length,
+          linkedNotes: allLinkedEmrNotes.length,
+        },
+      });
+
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename=\"docuwhisper-backup-${filenameTimestamp}.json\"`);
+      res.status(200).send(JSON.stringify(backupPayload, null, 2));
+    } catch (error) {
+      console.error("Error exporting backup data:", error);
+      res.status(500).json({ error: "Failed to export backup data" });
+    }
+  });
+
   const transcribeRateLimit = new Map<string, number[]>();
   const TRANSCRIBE_WINDOW_MS = 10_000;
   const TRANSCRIBE_MAX_REQUESTS = 5;
@@ -4651,6 +4783,11 @@ Focus only on clinically significant interactions. Do not include minor or theor
     try {
       const userId = req.user.claims.sub;
       const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
+      const seenWithinDaysRaw = req.query.seenWithinDays as string | undefined;
+      const seenWithinDays = seenWithinDaysRaw ? parseInt(seenWithinDaysRaw, 10) : NaN;
+      const sinceDate = Number.isFinite(seenWithinDays) && seenWithinDays > 0
+        ? new Date(Date.now() - seenWithinDays * 24 * 60 * 60 * 1000)
+        : null;
       
       // Check if user is owner (vendor)
       const ownerEmail = process.env.OWNER_EMAIL;
@@ -4659,21 +4796,27 @@ Focus only on clinically significant interactions. Do not include minor or theor
       
       if (isVendor && organizationId) {
         // Vendor can access any organization's patients
-        const patients = await storage.getPatientsByOrganization(organizationId);
+        const patients = sinceDate
+          ? await storage.getRecentlySeenPatientsByOrganization(organizationId, sinceDate)
+          : await storage.getPatientsByOrganization(organizationId);
         res.json(patients);
       } else if (organizationId) {
         // Check if user has access to this organization
         const members = await storage.getPracticeMembers(organizationId);
         const isMember = members.some((m: { userId: string }) => m.userId === userId);
         if (isMember) {
-          const patients = await storage.getPatientsByOrganization(organizationId);
+          const patients = sinceDate
+            ? await storage.getRecentlySeenPatientsByOrganization(organizationId, sinceDate)
+            : await storage.getPatientsByOrganization(organizationId);
           res.json(patients);
         } else {
           res.status(403).json({ error: "Access denied to this organization" });
         }
       } else {
         // Default: get patients by user
-        const patients = await storage.getPatientsByUser(userId);
+        const patients = sinceDate
+          ? await storage.getRecentlySeenPatientsByUser(userId, sinceDate)
+          : await storage.getPatientsByUser(userId);
         res.json(patients);
       }
     } catch (error) {
@@ -4686,14 +4829,34 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.get("/api/emr/patients/search", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const query = req.query.q as string || "";
+      const query = (req.query.q as string || "").trim();
+      const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
+      const ownerEmail = process.env.OWNER_EMAIL;
+      const userEmail = req.user.claims.email;
+      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
       
-      if (query.length < 2) {
+      if (query.length < 1) {
         return res.json([]);
       }
-      
+
+      if (organizationId) {
+        if (isVendor) {
+          const patients = await storage.searchPatientsByOrganization(organizationId, query);
+          return res.json(patients);
+        }
+
+        const members = await storage.getPracticeMembers(organizationId);
+        const isMember = members.some((m: { userId: string }) => m.userId === userId);
+        if (!isMember) {
+          return res.status(403).json({ error: "Access denied to this organization" });
+        }
+
+        const patients = await storage.searchPatientsByOrganization(organizationId, query);
+        return res.json(patients);
+      }
+
       const patients = await storage.searchPatients(userId, query);
-      res.json(patients);
+      return res.json(patients);
     } catch (error) {
       console.error("Error searching patients:", error);
       res.status(500).json({ error: "Failed to search patients" });
