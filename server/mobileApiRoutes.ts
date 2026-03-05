@@ -5,6 +5,8 @@ import { getTranscriptionProviderStatus, transcribeLocal } from "./sttClient";
 import { z } from "zod";
 import multer from "multer";
 import { openai } from "./openaiClient";
+import { timingSafeEqual } from "crypto";
+import { authStorage } from "./replit_integrations/auth/storage";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -37,6 +39,92 @@ function getMobileAuthCookieOptions(req: Request) {
     sameSite: secure ? ("none" as const) : ("lax" as const),
     maxAge: 10 * 60 * 1000,
   };
+}
+
+function buildMobileAuthCallbackPath(redirectUri: string, state?: string): string {
+  const params = new URLSearchParams({ redirect_uri: redirectUri });
+  if (state) params.set("state", state);
+  return `/api/mobile/auth/callback?${params.toString()}`;
+}
+
+function buildReviewLoginPath(redirectUri: string, state?: string, error?: string): string {
+  const params = new URLSearchParams({ redirect_uri: redirectUri });
+  if (state) params.set("state", state);
+  if (error) params.set("error", error);
+  return `/api/mobile/auth/review-login?${params.toString()}`;
+}
+
+function isMobileReviewLoginEnabled(): boolean {
+  return (
+    process.env.MOBILE_REVIEW_LOGIN_ENABLED === "true" &&
+    !!process.env.MOBILE_REVIEW_USERNAME &&
+    !!process.env.MOBILE_REVIEW_PASSWORD
+  );
+}
+
+function constantTimeEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderReviewLoginPage(params: { redirectUri: string; state?: string; error?: string }): string {
+  const escapedRedirect = escapeHtml(params.redirectUri);
+  const escapedState = params.state ? escapeHtml(params.state) : "";
+  const message =
+    params.error === "invalid_credentials"
+      ? "Invalid username or password."
+      : params.error === "login_failed"
+        ? "Sign in failed. Please try again."
+        : "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocuWhisper App Review Sign In</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f7fa; color: #0b1320; }
+    .wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    .card { width: 100%; max-width: 420px; background: #ffffff; border: 1px solid #dce3ea; border-radius: 14px; padding: 22px; box-shadow: 0 12px 30px rgba(17,24,39,0.08); }
+    h1 { margin: 0 0 8px; font-size: 1.35rem; }
+    p { margin: 0 0 14px; color: #5b6674; font-size: 0.95rem; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.9rem; }
+    input { width: 100%; box-sizing: border-box; border: 1px solid #c8d2dc; border-radius: 10px; padding: 11px; font-size: 0.95rem; margin-bottom: 12px; }
+    button { width: 100%; border: 0; border-radius: 10px; padding: 11px; font-size: 0.95rem; font-weight: 700; background: #0d9488; color: #ffffff; cursor: pointer; }
+    .error { margin: 0 0 10px; color: #b91c1c; font-size: 0.9rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <main class="card">
+      <h1>DocuWhisper Review Access</h1>
+      <p>Use the App Review credentials provided by DocuWhisper.</p>
+      ${message ? `<div class="error">${escapeHtml(message)}</div>` : ""}
+      <form method="post" action="/api/mobile/auth/review-login">
+        <input type="hidden" name="redirect_uri" value="${escapedRedirect}" />
+        <input type="hidden" name="state" value="${escapedState}" />
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <button type="submit">Sign In</button>
+      </form>
+    </main>
+  </div>
+</body>
+</html>`;
 }
 
 const parseOptionalInt = (value: unknown): number | undefined => {
@@ -84,16 +172,66 @@ const normalizeSoapSection = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const hasAnySoapSection = (sections: SoapSections): boolean => {
+  return !!(sections.subjective || sections.objective || sections.assessment || sections.plan);
+};
+
+const buildSoapFallbackFromTranscript = (transcript: string): SoapSections => {
+  const normalized = transcript.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return { subjective: null, objective: null, assessment: null, plan: null };
+  }
+  return {
+    subjective: normalized,
+    objective: null,
+    assessment: null,
+    plan: null,
+  };
+};
+
 const generateSoapSections = async (params: {
   transcript: string;
+  userId: string;
   patientName?: string;
   specialty?: string;
   context?: string;
+  templateId?: number;
+  noDefaultTemplate?: boolean;
+  aiInstructions?: string;
+  outputLanguage?: string;
 }): Promise<SoapSections> => {
+  let customPrompt = "";
+  let effectiveTemplateId = params.templateId;
+
+  if (!effectiveTemplateId && !params.noDefaultTemplate) {
+    effectiveTemplateId = await storage.getDefaultTemplateId(params.userId);
+  }
+
+  if (effectiveTemplateId) {
+    const template = await storage.getTemplate(effectiveTemplateId);
+    if (template?.prompt) {
+      customPrompt = template.prompt;
+    }
+  }
+
+  const languageNames: Record<string, string> = {
+    en: "English", es: "Spanish (Español)", fr: "French (Français)",
+    de: "German (Deutsch)", pt: "Portuguese (Português)",
+  };
+  const targetLanguage = languageNames[params.outputLanguage || "en"] || "English";
+  const languageInstruction = params.outputLanguage && params.outputLanguage !== "en"
+    ? `\nIMPORTANT: Generate all sections in ${targetLanguage}.`
+    : "";
+  const aiInstructionsSection = params.aiInstructions ? `\nUser instructions:\n${params.aiInstructions}` : "";
+
   const systemPrompt = `You are a medical documentation assistant creating SOAP notes.
 ${params.specialty ? `Specialty: ${params.specialty}` : ""}
 ${params.patientName ? `Patient: ${params.patientName}` : ""}
 ${params.context ? `Context: ${params.context}` : ""}
+${customPrompt ? `Template instructions:\n${customPrompt}` : ""}
+${customPrompt ? "IMPORTANT: Follow the template instructions exactly and prioritize them over generic defaults." : ""}
+${aiInstructionsSection}
+${languageInstruction}
 
 Return valid JSON only:
 {"subjective":"...","objective":"...","assessment":"...","plan":"..."}
@@ -173,10 +311,15 @@ router.get("/docs", async (_req: Request, res: Response) => {
     endpoints: {
       auth: {
         "GET /auth/start?redirect_uri=<uri>": "Start web-based sign-in (ASWebAuthenticationSession). Redirects through login, then back to redirect_uri with api_key and code params.",
+        "GET /auth/review-login?redirect_uri=<uri>": "Optional App Review username/password sign-in page (enabled via MOBILE_REVIEW_LOGIN_ENABLED).",
+        "POST /auth/review-login": "Submit App Review username/password credentials (enabled via MOBILE_REVIEW_LOGIN_ENABLED).",
         "GET /auth/callback": "Internal callback after login completes. Auto-generates API key and redirects to app.",
         "POST /auth/exchange": "Compatibility endpoint: exchange code for API key payload.",
       },
-      user: { "GET /me": "Get user info, settings, and subscription status" },
+      user: {
+        "GET /me": "Get user info, settings, and subscription status",
+        "DELETE /account": "Delete signed-in account and associated data",
+      },
       notes: {
         "GET /notes": "List notes (query: limit, offset)",
         "GET /notes/:id": "Get single note with full SOAP content",
@@ -253,22 +396,117 @@ router.get("/auth/start", (req: Request, res: Response) => {
     });
   }
 
-  const callbackParams = new URLSearchParams({ redirect_uri: redirectUri });
-  if (state) callbackParams.set("state", state);
-  session.returnTo = `/api/mobile/auth/callback?${callbackParams.toString()}`;
+  const callbackPath = buildMobileAuthCallbackPath(redirectUri, state);
+  session.returnTo = callbackPath;
   session.mobileAuthRedirect = redirectUri;
   session.mobileAuthState = state;
 
   const user = req.user as any;
   if (req.isAuthenticated?.() && user?.claims?.sub) {
     return session.save(() => {
-      res.redirect(`/api/mobile/auth/callback?${callbackParams.toString()}`);
+      res.redirect(callbackPath);
     });
   }
 
   session.save(() => {
+    if (isMobileReviewLoginEnabled()) {
+      return res.redirect(buildReviewLoginPath(redirectUri, state));
+    }
     res.redirect(`/api/login`);
   });
+});
+
+router.get("/auth/review-login", (req: Request, res: Response) => {
+  if (!isMobileReviewLoginEnabled()) {
+    return res.status(404).send("Not found");
+  }
+
+  const redirectUri = typeof req.query.redirect_uri === "string" ? req.query.redirect_uri : "";
+  const state = typeof req.query.state === "string" ? req.query.state : undefined;
+  const error = typeof req.query.error === "string" ? req.query.error : undefined;
+
+  if (!redirectUri || !isRedirectAllowed(redirectUri)) {
+    return res.status(400).send("Invalid redirect URI");
+  }
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.status(200).send(renderReviewLoginPage({ redirectUri, state, error }));
+});
+
+router.post("/auth/review-login", async (req: Request, res: Response) => {
+  if (!isMobileReviewLoginEnabled()) {
+    return res.status(404).send("Not found");
+  }
+
+  const redirectUri = typeof req.body?.redirect_uri === "string" ? req.body.redirect_uri : "";
+  const state = typeof req.body?.state === "string" ? req.body.state : undefined;
+  const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+  if (!redirectUri || !isRedirectAllowed(redirectUri)) {
+    return res.status(400).send("Invalid redirect URI");
+  }
+
+  const expectedUsername = process.env.MOBILE_REVIEW_USERNAME || "";
+  const expectedPassword = process.env.MOBILE_REVIEW_PASSWORD || "";
+
+  const usernameValid = username.length > 0 && constantTimeEquals(username, expectedUsername);
+  const passwordValid = password.length > 0 && constantTimeEquals(password, expectedPassword);
+  if (!usernameValid || !passwordValid) {
+    return res.redirect(buildReviewLoginPath(redirectUri, state, "invalid_credentials"));
+  }
+
+  const reviewUserId = process.env.MOBILE_REVIEW_USER_ID || "apple-review";
+  const reviewUserEmail = process.env.MOBILE_REVIEW_USER_EMAIL || "apple-review@docuwhisper.com";
+  const reviewFirstName = process.env.MOBILE_REVIEW_FIRST_NAME || "Apple";
+  const reviewLastName = process.env.MOBILE_REVIEW_LAST_NAME || "Reviewer";
+  const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+
+  try {
+    await authStorage.upsertUser({
+      id: reviewUserId,
+      email: reviewUserEmail,
+      firstName: reviewFirstName,
+      lastName: reviewLastName,
+      profileImageUrl: null,
+    });
+
+    const userSession = {
+      claims: {
+        sub: reviewUserId,
+        email: reviewUserEmail,
+        first_name: reviewFirstName,
+        last_name: reviewLastName,
+        exp: expiresAt,
+      },
+      access_token: "app_review",
+      refresh_token: undefined,
+      expires_at: expiresAt,
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      (req as any).login(userSession, (error: unknown) => {
+        if (error) return reject(error);
+        resolve();
+      });
+    });
+
+    const session = (req as any).session as any | undefined;
+    if (!session || typeof session.save !== "function") {
+      return res.status(500).send("Authentication session is unavailable");
+    }
+
+    res.cookie("mobile_auth_redirect", redirectUri, getMobileAuthCookieOptions(req));
+    session.returnTo = buildMobileAuthCallbackPath(redirectUri, state);
+    session.mobileAuthRedirect = redirectUri;
+    session.mobileAuthState = state;
+    return session.save(() => {
+      res.redirect(buildMobileAuthCallbackPath(redirectUri, state));
+    });
+  } catch (error) {
+    console.error("[mobile-auth] Review login failed:", error);
+    return res.redirect(buildReviewLoginPath(redirectUri, state, "login_failed"));
+  }
 });
 
 router.get("/auth/callback", async (req: Request, res: Response) => {
@@ -298,15 +536,20 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
     if (!userId) {
       console.log("[mobile-auth] Callback hit without authenticated user");
       if (redirectUri) {
-        const callbackParams = new URLSearchParams({ redirect_uri: redirectUri });
-        if (state) callbackParams.set("state", state);
+        const callbackPath = buildMobileAuthCallbackPath(redirectUri, state);
         if (session && typeof session.save === "function") {
-          session.returnTo = `/api/mobile/auth/callback?${callbackParams.toString()}`;
+          session.returnTo = callbackPath;
           session.mobileAuthRedirect = redirectUri;
           session.mobileAuthState = state;
           return session.save(() => {
+            if (isMobileReviewLoginEnabled()) {
+              return res.redirect(buildReviewLoginPath(redirectUri, state));
+            }
             res.redirect("/api/login");
           });
+        }
+        if (isMobileReviewLoginEnabled()) {
+          return res.redirect(buildReviewLoginPath(redirectUri, state));
         }
         return res.redirect("/api/login");
       }
@@ -483,6 +726,17 @@ router.get("/me", async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Mobile API error:", error);
     res.status(500).json({ error: "internal_error", message: "Failed to fetch user info" });
+  }
+});
+
+router.delete("/account", requireMobileScope("settings:write"), async (req: Request, res: Response) => {
+  try {
+    const userId = req.mobileUserId!;
+    await storage.deleteUserAndData(userId);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Mobile API error:", error);
+    res.status(500).json({ error: "internal_error", message: "Failed to delete account" });
   }
 });
 
@@ -724,6 +978,7 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
     });
 
     let createdNote: any = null;
+    let noteAppended = false;
     let noteCreationError: string | null = null;
     let soapGenerationError: string | null = null;
     let soapGenerated = false;
@@ -741,7 +996,59 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
         const specialty = parseOptionalText(req.body?.specialty);
         const patientContext = parseOptionalText(req.body?.patient_context) || parseOptionalText(req.body?.patientContext);
         const templateId = parseOptionalInt(req.body?.template_id) ?? parseOptionalInt(req.body?.templateId);
-        let soapSections: SoapSections = {
+        const appendToNoteId = parseOptionalInt(req.body?.append_to_note_id) ?? parseOptionalInt(req.body?.appendToNoteId);
+        const appendToLatest = parseOptionalBool(req.body?.append_to_latest) ?? parseOptionalBool(req.body?.appendToLatest) ?? false;
+        const noDefaultTemplate = parseOptionalBool(req.body?.no_default_template) ?? parseOptionalBool(req.body?.noDefaultTemplate);
+        const aiInstructions = parseOptionalText(req.body?.ai_instructions) || parseOptionalText(req.body?.aiInstructions);
+        const outputLanguage = parseOptionalText(req.body?.output_language) || parseOptionalText(req.body?.outputLanguage);
+        let appendTargetNote: any = null;
+        if (appendToNoteId) {
+          try {
+            const existing = await storage.getNote(appendToNoteId);
+            if (existing && existing.userId === req.mobileUserId) {
+              appendTargetNote = existing;
+            } else {
+              noteCreationError = "Append target note not found; creating a new note instead";
+            }
+          } catch (appendLookupError: unknown) {
+            console.error("[mobile-transcribe] append note lookup failed:", appendLookupError);
+            noteCreationError = "Unable to append to prior note; creating a new note instead";
+          }
+        } else if (appendToLatest) {
+          try {
+            const allNotes = await storage.getNotesByUser(req.mobileUserId!);
+            const normalizedPatientName = patientName?.toLowerCase().trim();
+            const candidates = normalizedPatientName
+              ? allNotes.filter((note) => parseOptionalText(note.patientName)?.toLowerCase() === normalizedPatientName)
+              : allNotes;
+
+            const sortedCandidates = candidates.sort((lhs, rhs) => {
+              const lhsTs = (lhs.updatedAt ?? lhs.createdAt ?? new Date(0)).getTime();
+              const rhsTs = (rhs.updatedAt ?? rhs.createdAt ?? new Date(0)).getTime();
+              return rhsTs - lhsTs;
+            });
+
+            appendTargetNote = sortedCandidates[0] ?? null;
+          } catch (appendLatestError: unknown) {
+            console.error("[mobile-transcribe] append latest note lookup failed:", appendLatestError);
+          }
+        }
+
+        const mergedTranscript = appendTargetNote
+          ? [parseOptionalText(appendTargetNote.transcript), transcript].filter(Boolean).join("\n\n").trim()
+          : transcript;
+
+        const effectivePatientName = patientName ?? parseOptionalText(appendTargetNote?.patientName);
+        const effectiveSpecialty = specialty ?? parseOptionalText(appendTargetNote?.specialty);
+        const effectivePatientContext = patientContext ?? parseOptionalText(appendTargetNote?.patientContext);
+        const effectiveTemplateId = templateId ?? parseOptionalInt(appendTargetNote?.templateId);
+
+        let soapSections: SoapSections = appendTargetNote ? {
+          subjective: parseOptionalText(appendTargetNote.subjective) ?? null,
+          objective: parseOptionalText(appendTargetNote.objective) ?? null,
+          assessment: parseOptionalText(appendTargetNote.assessment) ?? null,
+          plan: parseOptionalText(appendTargetNote.plan) ?? null,
+        } : {
           subjective: null,
           objective: null,
           assessment: null,
@@ -751,47 +1058,81 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
         if (shouldAutoGenerateSoap) {
           const hasGenerateScope = req.personalApiKey?.scopes?.includes("generate");
           if (!hasGenerateScope) {
-            soapGenerationError = "API key is missing generate scope";
+            soapSections = buildSoapFallbackFromTranscript(mergedTranscript);
+            soapGenerated = hasAnySoapSection(soapSections);
+            soapGenerationError = "API key missing generate scope; used transcript fallback for SOAP";
           } else {
             try {
               soapSections = await generateSoapSections({
-                transcript,
-                patientName: patientName || undefined,
-                specialty: specialty || undefined,
-                context: patientContext || undefined,
+                transcript: mergedTranscript,
+                userId: req.mobileUserId!,
+                patientName: effectivePatientName || undefined,
+                specialty: effectiveSpecialty || undefined,
+                context: effectivePatientContext || undefined,
+                templateId: effectiveTemplateId || undefined,
+                noDefaultTemplate: noDefaultTemplate || undefined,
+                aiInstructions: aiInstructions || undefined,
+                outputLanguage: outputLanguage || undefined,
               });
-              soapGenerated = !!(soapSections.subjective || soapSections.objective || soapSections.assessment || soapSections.plan);
+              soapGenerated = hasAnySoapSection(soapSections);
+              if (!soapGenerated) {
+                soapSections = buildSoapFallbackFromTranscript(mergedTranscript);
+                soapGenerated = hasAnySoapSection(soapSections);
+                if (soapGenerated) {
+                  soapGenerationError = "AI returned empty SOAP; used transcript fallback";
+                }
+              }
             } catch (soapError: unknown) {
-              soapGenerationError = soapError instanceof Error ? soapError.message : String(soapError);
+              const aiErrorMessage = soapError instanceof Error ? soapError.message : String(soapError);
               console.error("[mobile-transcribe] SOAP auto-generate failed:", soapError);
+              soapSections = buildSoapFallbackFromTranscript(mergedTranscript);
+              soapGenerated = hasAnySoapSection(soapSections);
+              soapGenerationError = soapGenerated
+                ? `SOAP AI failed; used transcript fallback (${aiErrorMessage})`
+                : aiErrorMessage;
             }
           }
         }
 
         try {
-          createdNote = await storage.createNote({
-            userId: req.mobileUserId!,
-            title: noteTitle,
-            transcript,
-            patientName: patientName || null,
-            specialty: specialty || null,
-            subjective: soapSections.subjective,
-            objective: soapSections.objective,
-            assessment: soapSections.assessment,
-            plan: soapSections.plan,
-            patientContext: patientContext || null,
-            templateId: templateId ?? null,
-            icdCodes: null,
-          });
+          if (appendTargetNote) {
+            createdNote = await storage.updateNote(appendTargetNote.id, {
+              transcript: mergedTranscript,
+              patientName: effectivePatientName || null,
+              specialty: effectiveSpecialty || null,
+              subjective: soapSections.subjective,
+              objective: soapSections.objective,
+              assessment: soapSections.assessment,
+              plan: soapSections.plan,
+              patientContext: effectivePatientContext || null,
+              templateId: effectiveTemplateId ?? null,
+            });
+            noteAppended = true;
+          } else {
+            createdNote = await storage.createNote({
+              userId: req.mobileUserId!,
+              title: noteTitle,
+              transcript: mergedTranscript,
+              patientName: effectivePatientName || null,
+              specialty: effectiveSpecialty || null,
+              subjective: soapSections.subjective,
+              objective: soapSections.objective,
+              assessment: soapSections.assessment,
+              plan: soapSections.plan,
+              patientContext: effectivePatientContext || null,
+              templateId: effectiveTemplateId ?? null,
+              icdCodes: null,
+            });
+          }
 
           logTranscriptionMetric({
-            event: "note_created",
+            event: noteAppended ? "note_updated" : "note_created",
             user_id: req.mobileUserId || null,
             chunk_id: chunkId ?? null,
             provider: providerUsed,
             fallback_used: fallbackUsed,
             session_id: sessionId || null,
-            details: JSON.stringify({ soap_generated: soapGenerated }),
+            details: JSON.stringify({ soap_generated: soapGenerated, note_appended: noteAppended }),
           });
         } catch (noteError: unknown) {
           noteCreationError = noteError instanceof Error ? noteError.message : String(noteError);
@@ -809,6 +1150,7 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
         soap_generated: soapGenerated,
         soap_generation_error: soapGenerationError,
         note_created: !!createdNote,
+        note_appended: noteAppended,
         note: createdNote,
         note_creation_error: noteCreationError,
       },

@@ -31,6 +31,10 @@ const EMRPatients = lazy(() => import("@/pages/emr/patients"));
 const EMRPatientDetail = lazy(() => import("@/pages/emr/patient-detail"));
 const EMRSchedule = lazy(() => import("@/pages/emr/schedule"));
 const EMRTeam = lazy(() => import("@/pages/emr/team"));
+const PrivacyPolicy = lazy(() => import("@/pages/privacy"));
+const TermsOfService = lazy(() => import("@/pages/terms"));
+const AccountDeletion = lazy(() => import("@/pages/account-deletion"));
+const Support = lazy(() => import("@/pages/support"));
 
 function RouteFallback() {
   return (
@@ -96,16 +100,24 @@ function AuthenticatedLayout() {
 function Router() {
   const { user, isLoading } = useAuth();
   const [isInvitePage] = useRoute("/invite/:code");
+  const [isPrivacyPage] = useRoute("/privacy");
+  const [isTermsPage] = useRoute("/terms");
+  const [isAccountDeletionPage] = useRoute("/account-deletion");
+  const [isSupportPage] = useRoute("/support");
 
   if (isLoading) {
     return <RouteFallback />;
   }
 
-  // Invite page is accessible to everyone (handles its own auth state)
-  if (isInvitePage) {
+  // Public pages are accessible regardless of auth state.
+  if (isInvitePage || isPrivacyPage || isTermsPage || isAccountDeletionPage || isSupportPage) {
     return (
       <Switch>
         <Route path="/invite/:code" component={Invite} />
+        <Route path="/privacy" component={PrivacyPolicy} />
+        <Route path="/terms" component={TermsOfService} />
+        <Route path="/account-deletion" component={AccountDeletion} />
+        <Route path="/support" component={Support} />
       </Switch>
     );
   }

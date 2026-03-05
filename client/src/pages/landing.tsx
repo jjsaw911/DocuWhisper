@@ -2,7 +2,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Mic, FileText, Clock, Shield, Sparkles, Check, ArrowRight, Stethoscope, X, Zap, Users, Globe, AlertTriangle, Brain } from "lucide-react";
-import { Link } from "wouter";
 import logoImage from "@/assets/logo.png";
 
 export default function Landing() {
@@ -474,6 +473,10 @@ export default function Landing() {
               <nav className="flex items-center gap-4">
                 <a href="#security" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-security">Security</a>
                 <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-pricing">Pricing</a>
+                <a href="/privacy" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-privacy">Privacy</a>
+                <a href="/terms" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-terms">Terms</a>
+                <a href="/account-deletion" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-account-deletion">Account Deletion</a>
+                <a href="/support" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-support">Support</a>
               </nav>
             </div>
             <div className="text-center sm:text-left">
