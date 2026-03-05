@@ -55,6 +55,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Template = {
   id: number;
@@ -139,14 +147,18 @@ export default function Session() {
   // Check for resume mode from URL query parameter
   const urlParams = new URLSearchParams(window.location.search);
   const resumeNoteId = urlParams.get("resumeId");
+  const importNoteId = urlParams.get("fromNoteId");
   const autoStartRecording = urlParams.get("autoStart") === "true";
   const [isResumeMode, setIsResumeMode] = useState(!!resumeNoteId);
   const [resumeNoteData, setResumeNoteData] = useState<ResumeNoteData | null>(null);
+  const [isManualImportDialogOpen, setIsManualImportDialogOpen] = useState(false);
+  const [manualTranscriptInput, setManualTranscriptInput] = useState("");
   
   // Refs to avoid stale closures in async callbacks
   const isResumeModeRef = useRef(!!resumeNoteId);
   const resumeNoteDataRef = useRef<typeof resumeNoteData>(null);
   const hasAutoStartedRef = useRef(false);
+  const hasImportedFromNoteRef = useRef(false);
   const startRecordingRef = useRef<(() => Promise<void>) | null>(null);
 
   const [patientName, setPatientName] = useState("");
@@ -584,6 +596,100 @@ export default function Session() {
     
     setTranscriptEntries((prev) => [...prev, { timestamp, text, type }]);
   };
+
+  const importTranscriptToCurrentSession = useCallback(
+    (
+      transcript: string,
+      options?: {
+        sourceLabel?: string;
+        patientName?: string;
+        patientContext?: string;
+      }
+    ) => {
+      const cleaned = transcript.trim();
+      if (!cleaned) {
+        toast({
+          title: "Transcript is empty",
+          description: "Paste transcript text before importing.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      if (options?.patientName && !patientName.trim()) {
+        setPatientName(options.patientName);
+      }
+      if (options?.patientContext && !contextText.trim()) {
+        setContextText(options.patientContext);
+      }
+
+      const systemLabel = options?.sourceLabel
+        ? `--- Imported transcript (${options.sourceLabel}) ---`
+        : "--- Imported transcript ---";
+      addTranscriptEntry(systemLabel, "system");
+      addTranscriptEntry(cleaned, "content");
+
+      committedTextRef.current = committedTextRef.current.trim()
+        ? `${committedTextRef.current.trim()}\n\n${cleaned}`
+        : cleaned;
+
+      saveBackup(committedTextRef.current, options?.patientName || patientName, "general");
+      setActiveTab("transcript");
+
+      toast({
+        title: "Transcript imported",
+        description: "You can now generate SOAP or continue recording.",
+      });
+
+      return true;
+    },
+    [addTranscriptEntry, contextText, patientName, saveBackup, toast]
+  );
+
+  useEffect(() => {
+    if (!isNewSession || !importNoteId || hasImportedFromNoteRef.current) {
+      return;
+    }
+
+    hasImportedFromNoteRef.current = true;
+
+    const importFromExistingNote = async () => {
+      try {
+        const response = await apiRequest("GET", `/api/notes/${importNoteId}`);
+        const note = await response.json();
+        const transcript =
+          typeof note?.transcript === "string" ? note.transcript.trim() : "";
+
+        if (!transcript) {
+          toast({
+            title: "No transcript found",
+            description: "This note does not contain transcript text to import.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        importTranscriptToCurrentSession(transcript, {
+          sourceLabel: note?.title || `note ${importNoteId}`,
+          patientName: typeof note?.patientName === "string" ? note.patientName : undefined,
+          patientContext:
+            typeof note?.patientContext === "string" ? note.patientContext : undefined,
+        });
+      } catch (error) {
+        console.error("Failed to import transcript from note:", error);
+        hasImportedFromNoteRef.current = false;
+        toast({
+          title: "Import failed",
+          description: "Could not load transcript from that note.",
+          variant: "destructive",
+        });
+      } finally {
+        navigate("/session/new");
+      }
+    };
+
+    void importFromExistingNote();
+  }, [importNoteId, importTranscriptToCurrentSession, isNewSession, navigate, toast]);
 
   type TranscribeResult =
     | {
@@ -1933,18 +2039,40 @@ export default function Session() {
         // Add transcript content
         addTranscriptEntry(data.transcript, "content");
         committedTextRef.current = (committedTextRef.current + " " + data.transcript).trim();
+
+        // Snapshot state now because we reset session immediately after kicking off background save.
+        // Without this, resume sessions can be treated as new notes due to async timing.
+        const transcriptSnapshot = committedTextRef.current;
+        const patientNameSnapshot = patientName;
+        const contextTextSnapshot = contextText;
+        const selectedTemplateIdSnapshot = selectedTemplateId;
+        const resumeModeSnapshot = isResumeModeRef.current;
+        const resumeNoteDataSnapshot = resumeNoteDataRef.current;
+        const speakerSegmentsSnapshot =
+          structuredSegmentsRef.current.length > 0 ? [...structuredSegmentsRef.current] : undefined;
+        const sessionDurationSecondsSnapshot = duration;
         
         // Auto-generate SOAP and save in background for faster turnaround.
         addTranscriptEntry("Generating SOAP note in background...");
-        const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(committedTextRef.current));
+        const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(transcriptSnapshot));
         saveInflightScribeRecovery({
-          transcript: committedTextRef.current,
-          patientName,
-          contextText,
+          transcript: transcriptSnapshot,
+          patientName: patientNameSnapshot,
+          contextText: contextTextSnapshot,
           savedAt: new Date().toISOString(),
           reason: "background-auto-save",
         });
-        void autoGenerateAndSave(committedTextRef.current, { background: true }).finally(() => {
+        void autoGenerateAndSave(transcriptSnapshot, {
+          background: true,
+          patientName: patientNameSnapshot,
+          contextText: contextTextSnapshot,
+          selectedTemplateId: selectedTemplateIdSnapshot,
+          transcriptionLanguage,
+          speakerSegments: speakerSegmentsSnapshot,
+          resumeMode: resumeModeSnapshot,
+          resumeNoteData: resumeNoteDataSnapshot,
+          sessionDurationSeconds: sessionDurationSecondsSnapshot,
+        }).finally(() => {
           finishScribeGeneration(user?.id, generationId);
         });
         toast({
@@ -2282,8 +2410,55 @@ ${noteContentSection}
     });
   };
 
+  const handleManualTranscriptImport = () => {
+    const imported = importTranscriptToCurrentSession(manualTranscriptInput, {
+      sourceLabel: "manual paste",
+    });
+    if (!imported) return;
+    setManualTranscriptInput("");
+    setIsManualImportDialogOpen(false);
+  };
+
   return (
     <div className="flex flex-col h-full">
+      <Dialog open={isManualImportDialogOpen} onOpenChange={setIsManualImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Paste transcript</DialogTitle>
+            <DialogDescription>
+              Import transcript text directly into this new session.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="manual-transcript-import">Transcript text</Label>
+            <Textarea
+              id="manual-transcript-import"
+              value={manualTranscriptInput}
+              onChange={(event) => setManualTranscriptInput(event.target.value)}
+              className="min-h-[200px]"
+              placeholder="Paste transcript here..."
+              data-testid="textarea-manual-transcript-import"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsManualImportDialogOpen(false)}
+              data-testid="button-cancel-manual-transcript-import"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleManualTranscriptImport}
+              disabled={!manualTranscriptInput.trim()}
+              data-testid="button-confirm-manual-transcript-import"
+            >
+              Import transcript
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {interruptedScribeRecovery && recordingState === "idle" && !hasTranscript && (
         <div className="bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2 text-red-800 dark:text-red-200 text-sm">
@@ -2637,6 +2812,14 @@ ${noteContentSection}
                             Start
                           </>
                         )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsManualImportDialogOpen(true)}
+                        data-testid="button-open-manual-transcript-import"
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Paste transcript
                       </Button>
                     </div>
                   </div>

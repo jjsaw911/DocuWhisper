@@ -1670,6 +1670,20 @@ export default function NoteDetail() {
                 Resume
               </Link>
             </Button>
+
+            {note.transcript?.trim() && (
+              <Button
+                size="sm"
+                variant="outline"
+                asChild
+                data-testid="button-new-session-from-transcript"
+              >
+                <Link href={`/session/new?fromNoteId=${id}`}>
+                  <ClipboardCopy className="h-4 w-4 mr-2" />
+                  New Session
+                </Link>
+              </Button>
+            )}
             
             {/* Drug interaction check button */}
             <DrugInteractionDialog text={formData.soapNote} />
