@@ -138,13 +138,44 @@ const vitalsInputSchema = z.object({
 
 type VitalsFormData = z.infer<typeof vitalsInputSchema>;
 
+const PATIENT_DETAIL_TABS = [
+  "overview",
+  "demographics",
+  "vitals",
+  "encounters",
+  "medical",
+  "notes",
+  "appointments",
+] as const;
+
+type PatientDetailTab = (typeof PATIENT_DETAIL_TABS)[number];
+
+const DEFAULT_PATIENT_DETAIL_TAB: PatientDetailTab = "overview";
+const PATIENT_DETAIL_TAB_SET = new Set<string>(PATIENT_DETAIL_TABS);
+const UNSAVED_PATIENT_CHANGES_MESSAGE =
+  "You have unsaved patient changes. Leave without saving?";
+const UNSAVED_NEW_ENCOUNTER_MESSAGE =
+  "You have an unsaved new encounter. Discard changes?";
+const UNSAVED_EDIT_ENCOUNTER_MESSAGE =
+  "You have unsaved encounter edits. Discard changes?";
+
+const resolvePatientDetailTab = (search: string): PatientDetailTab => {
+  const tab = new URLSearchParams(search).get("tab");
+  if (tab && PATIENT_DETAIL_TAB_SET.has(tab)) {
+    return tab as PatientDetailTab;
+  }
+  return DEFAULT_PATIENT_DETAIL_TAB;
+};
 
 export default function PatientDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const patientId = parseInt(id || "0");
+  const [activeTab, setActiveTab] = useState<PatientDetailTab>(() =>
+    resolvePatientDetailTab(window.location.search)
+  );
   const [showConsentDialog, setShowConsentDialog] = useState(false);
   const [showVitalsForm, setShowVitalsForm] = useState(false);
   const [showEncounterDialog, setShowEncounterDialog] = useState(false);
@@ -608,6 +639,164 @@ export default function PatientDetailPage() {
     },
   });
 
+  const hasRosChecklistSelections = Object.values(rosChecklist).some(
+    (items) => Array.isArray(items) && items.length > 0
+  );
+  const hasPeChecklistSelections = Object.values(peChecklist).some(
+    (items) => Array.isArray(items) && items.length > 0
+  );
+
+  const hasUnsavedPatientChanges = form.formState.isDirty && !updatePatientMutation.isPending;
+  const hasUnsavedNewEncounterChanges =
+    showEncounterDialog &&
+    !createEncounterMutation.isPending &&
+    (encounterForm.formState.isDirty ||
+      hasRosChecklistSelections ||
+      hasPeChecklistSelections ||
+      diagnosisCodes.length > 0 ||
+      procedureCodes.length > 0 ||
+      medications.length > 0);
+  const hasUnsavedEditEncounterChanges =
+    !!editingEncounter &&
+    !updateEncounterMutation.isPending &&
+    editEncounterForm.formState.isDirty;
+  const hasAnyUnsavedChanges =
+    hasUnsavedPatientChanges || hasUnsavedNewEncounterChanges || hasUnsavedEditEncounterChanges;
+
+  const confirmDiscardUnsavedChanges = useCallback(() => {
+    if (hasUnsavedNewEncounterChanges) {
+      return window.confirm(UNSAVED_NEW_ENCOUNTER_MESSAGE);
+    }
+    if (hasUnsavedEditEncounterChanges) {
+      return window.confirm(UNSAVED_EDIT_ENCOUNTER_MESSAGE);
+    }
+    if (hasUnsavedPatientChanges) {
+      return window.confirm(UNSAVED_PATIENT_CHANGES_MESSAGE);
+    }
+    return true;
+  }, [hasUnsavedEditEncounterChanges, hasUnsavedNewEncounterChanges, hasUnsavedPatientChanges]);
+
+  const closeNewEncounterDialog = useCallback(() => {
+    if (hasUnsavedNewEncounterChanges && !window.confirm(UNSAVED_NEW_ENCOUNTER_MESSAGE)) {
+      return false;
+    }
+    encounterForm.reset();
+    resetClinicalData();
+    setShowEncounterDialog(false);
+    return true;
+  }, [encounterForm, hasUnsavedNewEncounterChanges, resetClinicalData]);
+
+  const closeEditEncounterDialog = useCallback(() => {
+    if (hasUnsavedEditEncounterChanges && !window.confirm(UNSAVED_EDIT_ENCOUNTER_MESSAGE)) {
+      return false;
+    }
+    setEditingEncounter(null);
+    return true;
+  }, [hasUnsavedEditEncounterChanges]);
+
+  const handleEncounterDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setShowEncounterDialog(true);
+        return;
+      }
+      closeNewEncounterDialog();
+    },
+    [closeNewEncounterDialog]
+  );
+
+  const handleEditingEncounterChange = useCallback(
+    (encounter: PatientEncounter | null) => {
+      if (encounter) {
+        setEditingEncounter(encounter);
+        return;
+      }
+      closeEditEncounterDialog();
+    },
+    [closeEditEncounterDialog]
+  );
+
+  const navigateWithUnsavedGuard = useCallback(
+    (path: string) => {
+      if (!confirmDiscardUnsavedChanges()) return;
+      if (showEncounterDialog) {
+        encounterForm.reset();
+        resetClinicalData();
+        setShowEncounterDialog(false);
+      }
+      if (editingEncounter) {
+        setEditingEncounter(null);
+      }
+      navigate(path);
+    },
+    [
+      confirmDiscardUnsavedChanges,
+      editingEncounter,
+      encounterForm,
+      navigate,
+      resetClinicalData,
+      showEncounterDialog,
+    ]
+  );
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasAnyUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasAnyUnsavedChanges]);
+
+  useEffect(() => {
+    const tabFromUrl = resolvePatientDetailTab(window.location.search);
+    setActiveTab((currentTab) => (currentTab === tabFromUrl ? currentTab : tabFromUrl));
+  }, [location]);
+
+  const handleTabChange = useCallback(
+    (tabValue: string) => {
+      if (!PATIENT_DETAIL_TAB_SET.has(tabValue)) {
+        return;
+      }
+
+      const nextTab = tabValue as PatientDetailTab;
+      if (nextTab !== activeTab && !confirmDiscardUnsavedChanges()) {
+        return;
+      }
+
+      if (nextTab !== activeTab) {
+        if (showEncounterDialog) {
+          encounterForm.reset();
+          resetClinicalData();
+          setShowEncounterDialog(false);
+        }
+        if (editingEncounter) {
+          setEditingEncounter(null);
+        }
+      }
+
+      setActiveTab(nextTab);
+
+      const nextUrl =
+        nextTab === DEFAULT_PATIENT_DETAIL_TAB
+          ? `/emr/patients/${patientId}`
+          : `/emr/patients/${patientId}?tab=${nextTab}`;
+      navigate(nextUrl);
+    },
+    [
+      activeTab,
+      confirmDiscardUnsavedChanges,
+      editingEncounter,
+      encounterForm,
+      navigate,
+      patientId,
+      resetClinicalData,
+      showEncounterDialog,
+    ]
+  );
+
   const formatDate = (date: Date | string | null | undefined) => {
     if (!date) return "Not set";
     return new Date(date).toLocaleDateString();
@@ -645,7 +834,7 @@ export default function PatientDetailPage() {
       <div className="h-full overflow-auto p-6">
         <div className="max-w-4xl mx-auto text-center">
           <h1 className="text-2xl font-bold mb-4">Patient Not Found</h1>
-          <Button onClick={() => navigate("/emr/patients")}>
+          <Button onClick={() => navigateWithUnsavedGuard("/emr/patients")}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Patients
           </Button>
@@ -662,7 +851,7 @@ export default function PatientDetailPage() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => navigate("/emr/patients")}
+              onClick={() => navigateWithUnsavedGuard("/emr/patients")}
               data-testid="button-back"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -707,7 +896,7 @@ export default function PatientDetailPage() {
           </AlertDialog>
         </div>
 
-        <Tabs defaultValue="overview">
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList className="mb-6 flex-wrap gap-1">
             <TabsTrigger value="overview" data-testid="tab-overview">
               <Heart className="h-4 w-4 mr-2" />
@@ -751,7 +940,7 @@ export default function PatientDetailPage() {
                 encounterForm.reset();
                 setShowEncounterDialog(true);
               }}
-              onNavigate={(path: string) => navigate(path)}
+              onNavigate={(path: string) => navigateWithUnsavedGuard(path)}
             />
           </TabsContent>
 
@@ -1363,7 +1552,7 @@ export default function PatientDetailPage() {
                       >
                         <div
                           className="flex-1 cursor-pointer"
-                          onClick={() => navigate(`/notes/${note.id}`)}
+                          onClick={() => navigateWithUnsavedGuard(`/notes/${note.id}`)}
                         >
                           <p className="font-medium">{note.title}</p>
                           <p className="text-sm text-muted-foreground">
@@ -1457,11 +1646,11 @@ export default function PatientDetailPage() {
 
       <EncounterDialogs
         showEncounterDialog={showEncounterDialog}
-        setShowEncounterDialog={setShowEncounterDialog}
+        setShowEncounterDialog={handleEncounterDialogOpenChange}
         viewingEncounter={viewingEncounter}
         setViewingEncounter={setViewingEncounter}
         editingEncounter={editingEncounter}
-        setEditingEncounter={setEditingEncounter}
+        setEditingEncounter={handleEditingEncounterChange}
         encounterForm={encounterForm}
         editEncounterForm={editEncounterForm}
         createEncounterMutation={createEncounterMutation}
