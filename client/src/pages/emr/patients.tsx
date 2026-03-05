@@ -1,30 +1,12 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { EmrConsentDialog } from "@/components/emr-consent-dialog";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
 import {
   Select,
   SelectContent,
@@ -33,9 +15,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import {
   Plus,
   Search,
@@ -46,8 +25,11 @@ import {
   Users,
   Building2,
   Shield,
+  AlertCircle,
+  Pill,
 } from "lucide-react";
 import type { Patient } from "@shared/schema";
+import { PatientIntakeWizard } from "@/components/emr/patient-intake-wizard";
 
 interface Practice {
   id: number;
@@ -67,20 +49,6 @@ interface EmrAccessResponse {
   accessType?: "vendor" | "organization" | "individual" | "none";
   organizations?: OrgAccess[];
 }
-
-const createPatientSchema = z.object({
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  dateOfBirth: z.string().optional(),
-  gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional(),
-  email: z.string().email().optional().or(z.literal("")),
-  phone: z.string().optional(),
-  address: z.string().optional(),
-  insuranceProvider: z.string().optional(),
-  insurancePolicyNumber: z.string().optional(),
-});
-
-type CreatePatientFormData = z.infer<typeof createPatientSchema>;
 
 export default function PatientsPage() {
   const { toast } = useToast();
@@ -147,45 +115,6 @@ export default function PatientsPage() {
     );
   }
 
-  const form = useForm<CreatePatientFormData>({
-    resolver: zodResolver(createPatientSchema),
-    defaultValues: {
-      firstName: "",
-      lastName: "",
-      dateOfBirth: "",
-      gender: undefined,
-      email: "",
-      phone: "",
-      address: "",
-      insuranceProvider: "",
-      insurancePolicyNumber: "",
-    },
-  });
-
-  const createPatientMutation = useMutation({
-    mutationFn: async (data: CreatePatientFormData) => {
-      const payload = selectedOrgId ? { ...data, organizationId: selectedOrgId } : data;
-      const response = await apiRequest("POST", "/api/emr/patients", payload);
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/emr/patients", selectedOrgId] });
-      toast({
-        title: "Patient created",
-        description: "New patient record has been added",
-      });
-      form.reset();
-      setIsDialogOpen(false);
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to create patient",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   const filteredPatients = patients.filter((patient) => {
     if (!search) return true;
     const searchLower = search.toLowerCase();
@@ -249,160 +178,20 @@ export default function PatientsPage() {
               Manage your patient records
             </p>
           </div>
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-add-patient">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Patient
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Add New Patient</DialogTitle>
-                <DialogDescription>
-                  Enter patient information to create a new record.
-                </DialogDescription>
-              </DialogHeader>
-              <Form {...form}>
-                <form
-                  onSubmit={form.handleSubmit((data) =>
-                    createPatientMutation.mutate(data)
-                  )}
-                  className="space-y-4"
-                >
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="firstName"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>First Name</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="John"
-                              {...field}
-                              data-testid="input-first-name"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="lastName"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Last Name</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Doe"
-                              {...field}
-                              data-testid="input-last-name"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="dateOfBirth"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Date of Birth</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="date"
-                              {...field}
-                              data-testid="input-dob"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="gender"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Gender</FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            defaultValue={field.value}
-                          >
-                            <FormControl>
-                              <SelectTrigger data-testid="select-gender">
-                                <SelectValue placeholder="Select" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="male">Male</SelectItem>
-                              <SelectItem value="female">Female</SelectItem>
-                              <SelectItem value="other">Other</SelectItem>
-                              <SelectItem value="prefer_not_to_say">
-                                Prefer not to say
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="patient@example.com"
-                            {...field}
-                            data-testid="input-email"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Phone</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="(555) 123-4567"
-                            {...field}
-                            data-testid="input-phone"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <DialogFooter>
-                    <Button
-                      type="submit"
-                      disabled={createPatientMutation.isPending}
-                      data-testid="button-submit-patient"
-                    >
-                      {createPatientMutation.isPending
-                        ? "Creating..."
-                        : "Create Patient"}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
+          <Button data-testid="button-add-patient" onClick={() => setIsDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Patient
+          </Button>
+          <PatientIntakeWizard
+            open={isDialogOpen}
+            onOpenChange={setIsDialogOpen}
+            onPatientCreated={(patient) => {
+              queryClient.invalidateQueries({ queryKey: ["/api/emr/patients"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/emr/patients", selectedOrgId] });
+              setLocation("/emr/patients/" + patient.id);
+            }}
+            organizationId={selectedOrgId}
+          />
         </div>
 
         <div className="relative mb-6">
@@ -477,7 +266,63 @@ export default function PatientsPage() {
                           <span>{getGenderLabel(patient.gender)}</span>
                         </div>
                       )}
+                      {patient.insuranceProvider && (
+                        <div className="flex items-center gap-2">
+                          <Shield className="h-4 w-4" />
+                          <span className="truncate">{patient.insuranceProvider}</span>
+                        </div>
+                      )}
                     </div>
+                    {(patient.allergies || patient.medications) && (
+                      <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t">
+                        {patient.allergies && (() => {
+                          try {
+                            const parsed = JSON.parse(patient.allergies);
+                            if (Array.isArray(parsed) && parsed.length > 0) {
+                              return (
+                                <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
+                                  <AlertCircle className="h-3 w-3 mr-1" />
+                                  {parsed.length} {parsed.length === 1 ? 'Allergy' : 'Allergies'}
+                                </Badge>
+                              );
+                            }
+                          } catch {
+                            if (patient.allergies.trim()) {
+                              return (
+                                <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
+                                  <AlertCircle className="h-3 w-3 mr-1" />
+                                  Allergies noted
+                                </Badge>
+                              );
+                            }
+                          }
+                          return null;
+                        })()}
+                        {patient.medications && (() => {
+                          try {
+                            const parsed = JSON.parse(patient.medications);
+                            if (Array.isArray(parsed) && parsed.length > 0) {
+                              return (
+                                <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
+                                  <Pill className="h-3 w-3 mr-1" />
+                                  {parsed.length} {parsed.length === 1 ? 'Medication' : 'Medications'}
+                                </Badge>
+                              );
+                            }
+                          } catch {
+                            if (patient.medications.trim()) {
+                              return (
+                                <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
+                                  <Pill className="h-3 w-3 mr-1" />
+                                  Medications noted
+                                </Badge>
+                              );
+                            }
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </Link>

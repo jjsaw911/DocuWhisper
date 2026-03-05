@@ -16,6 +16,11 @@ Key capabilities include:
 - Advanced features like medical terminology autocomplete, drug interaction alerts, and real-time co-editing.
 - HIPAA-compliant architecture with robust audit logging, access control, and data encryption.
 - An invite-only EMR system for patient records, scheduling, and document management.
+- Multi-step patient intake wizard (4 steps: Demographics, Contact, Insurance, Medical History).
+- Patient overview dashboard with vitals charts, quick actions, and summary cards.
+- Structured allergy and medication management (JSON-backed, replaces plain text fields).
+- Enhanced SOAP-to-encounter data flow with import from SOAP notes.
+- "Create Encounter from Note" action on the Notes tab for quick encounter creation.
 
 ## User Preferences
 
@@ -48,6 +53,7 @@ I do not want changes to the `shared/schema.ts` file without explicit approval.
 - **WebSocket-based Co-editing:** Enables real-time collaborative editing of shared notes with presence indicators.
 - **API Architecture:** Organized into distinct routes for authentication, notes, AI, templates, settings, tasks, subscription, admin, practices/teams, note sharing, and analytics.
 - **Database Schema Design:** Relational database optimized for medical data, including tables for Notes, Subscriptions, Templates, Invites, User Settings, Tasks, and EMR-specific tables (PatientRecords, Appointments, Documents).
+- **EMR Component Architecture:** Patient detail page uses extracted components: `encounter-dialogs.tsx` (create/view/edit encounter dialogs), `patient-overview.tsx` (dashboard tab), `structured-allergy-input.tsx` and `structured-medication-input.tsx` (JSON-backed structured inputs), `patient-intake-wizard.tsx` (4-step creation flow). Allergies and medications are stored as JSON strings in text columns for backward compatibility.
 
 **Feature Specifications:**
 - **Visit Modes:** Support for Transcribing, Dictating, or Uploading session audio.

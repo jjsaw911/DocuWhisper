@@ -4607,10 +4607,16 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.post("/api/emr/consent", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const ownerEmail = process.env.OWNER_EMAIL;
       const subscription = await storage.getSubscription(userId);
+      const emrOrgs = await storage.getUserEmrOrganizations(userId);
       
-      // Verify user has EMR access before allowing consent
-      if (!subscription?.hasEmrAccess || subscription?.status !== "active") {
+      const isVendorOwner = ownerEmail && userEmail === ownerEmail;
+      const hasIndividualAccess = subscription?.hasEmrAccess === true && subscription?.status === "active";
+      const hasOrgAccess = emrOrgs.length > 0;
+      
+      if (!isVendorOwner && !hasIndividualAccess && !hasOrgAccess) {
         return res.status(403).json({ error: "EMR access not enabled" });
       }
       
