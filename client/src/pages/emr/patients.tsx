@@ -155,8 +155,21 @@ export default function PatientsPage() {
     );
   }
 
+  const safeRecentPatients = useMemo(
+    () => (Array.isArray(recentPatients) ? recentPatients.filter((p) => p && typeof p === "object") : []),
+    [recentPatients],
+  );
+  const safeSearchedPatients = useMemo(
+    () => (Array.isArray(searchedPatients) ? searchedPatients.filter((p) => p && typeof p === "object") : []),
+    [searchedPatients],
+  );
+  const safeAppointments = useMemo(
+    () => (Array.isArray(appointments) ? appointments.filter((a) => a && typeof a === "object") : []),
+    [appointments],
+  );
+
   const isSearchMode = trimmedSearch.length > 0;
-  const displayedPatients = isSearchMode ? searchedPatients : recentPatients;
+  const displayedPatients = isSearchMode ? safeSearchedPatients : safeRecentPatients;
   const isPatientsLoading = isSearchMode ? isSearching : isLoadingRecent;
 
   const runSearch = () => {
@@ -165,7 +178,7 @@ export default function PatientsPage() {
 
   const latestAppointmentByPatient = useMemo(() => {
     const map = new Map<number, Appointment>();
-    for (const appointment of appointments) {
+    for (const appointment of safeAppointments) {
       const existing = map.get(appointment.patientId);
       if (!existing) {
         map.set(appointment.patientId, appointment);
@@ -178,14 +191,17 @@ export default function PatientsPage() {
       }
     }
     return map;
-  }, [appointments]);
+  }, [safeAppointments]);
 
   const formatDate = (date: Date | string | null | undefined) => {
     if (!date) return "Not set";
     return new Date(date).toLocaleDateString();
   };
 
-  const formatChartNumber = (patientId: number) => `CH-${patientId.toString().padStart(6, "0")}`;
+  const formatChartNumber = (patientId: number | null | undefined) => {
+    if (typeof patientId !== "number" || Number.isNaN(patientId)) return "CH-000000";
+    return `CH-${patientId.toString().padStart(6, "0")}`;
+  };
 
   const getPatientType = (patient: Patient) => {
     const appointmentType = latestAppointmentByPatient.get(patient.id)?.appointmentType || "";
