@@ -50,7 +50,8 @@ export default function PatientsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [activeSearch, setActiveSearch] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
 
@@ -80,7 +81,8 @@ export default function PatientsPage() {
     }
   }, [emrAccess, isCheckingAccess, setLocation, toast, emrOrganizations, selectedOrgId]);
 
-  const trimmedSearch = search.trim();
+  const trimmedSearchInput = searchInput.trim();
+  const trimmedSearch = activeSearch.trim();
 
   const { data: recentPatients = [], isLoading: isLoadingRecent } = useQuery<Patient[]>({
     queryKey: ["/api/emr/patients/recent", selectedOrgId],
@@ -138,6 +140,10 @@ export default function PatientsPage() {
   const isSearchMode = trimmedSearch.length > 0;
   const displayedPatients = isSearchMode ? searchedPatients : recentPatients;
   const isPatientsLoading = isSearchMode ? isSearching : isLoadingRecent;
+
+  const runSearch = () => {
+    setActiveSearch(trimmedSearchInput);
+  };
 
   const formatDate = (date: Date | string | null | undefined) => {
     if (!date) return "Not set";
@@ -208,16 +214,51 @@ export default function PatientsPage() {
           />
         </div>
 
-        <div className="relative mb-6">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search all patients by name, email, or phone..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10"
-            data-testid="input-search-patients"
-          />
+        <div className="flex gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search all patients by name, email, or phone..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  runSearch();
+                }
+              }}
+              className="pl-10"
+              data-testid="input-search-patients"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={runSearch}
+            data-testid="button-search-patients"
+          >
+            <Search className="h-4 w-4 mr-2" />
+            Search
+          </Button>
+          {isSearchMode && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setSearchInput("");
+                setActiveSearch("");
+              }}
+              data-testid="button-clear-search-patients"
+            >
+              Clear
+            </Button>
+          )}
         </div>
+
+        {trimmedSearchInput !== trimmedSearch && (
+          <p className="text-xs text-muted-foreground mb-3">
+            Press Search to run your updated query.
+          </p>
+        )}
 
         <p className="text-sm text-muted-foreground mb-4">
           {isSearchMode
@@ -226,20 +267,20 @@ export default function PatientsPage() {
         </p>
 
         {isPatientsLoading ? (
-          <div className="rounded-lg border">
+          <div className="max-h-[62vh] overflow-y-auto">
             {[...Array(6)].map((_, i) => (
-              <div key={i} className="p-4 border-b last:border-b-0">
+              <div key={i} className="py-4 border-b last:border-b-0">
                 <Skeleton className="h-4 w-40 mb-2" />
                 <Skeleton className="h-3 w-full" />
               </div>
             ))}
           </div>
         ) : displayedPatients.length > 0 ? (
-          <div className="rounded-lg border overflow-hidden bg-card">
+          <div className="max-h-[62vh] overflow-y-auto">
             {displayedPatients.map((patient) => (
               <Link key={patient.id} href={`/emr/patients/${patient.id}`}>
                 <div
-                  className="px-4 py-3 border-b last:border-b-0 hover:bg-muted/40 cursor-pointer"
+                  className="py-3 border-b last:border-b-0 hover:bg-muted/30 cursor-pointer"
                   data-testid={`row-patient-${patient.id}`}
                 >
                   <div className="flex items-center justify-between gap-3">
