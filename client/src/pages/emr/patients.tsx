@@ -311,7 +311,7 @@ export default function PatientsPage() {
         </p>
 
         {isPatientsLoading ? (
-          <div className="border border-border">
+          <div>
             <div className="max-h-[62vh] overflow-y-auto">
               <table className="w-full border-collapse table-fixed text-sm">
                 <thead className="sticky top-0 z-10 bg-muted/30">
@@ -334,7 +334,7 @@ export default function PatientsPage() {
             </div>
           </div>
         ) : displayedPatients.length > 0 ? (
-          <div className="border border-border">
+          <div>
             <div className="max-h-[62vh] overflow-y-auto">
               <table className="w-full border-collapse table-fixed text-sm">
                 <thead className="sticky top-0 z-10 bg-muted/30">
