@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -21,10 +21,8 @@ import {
   Users,
   Building2,
   Shield,
-  AlertCircle,
-  Pill,
 } from "lucide-react";
-import type { Patient } from "@shared/schema";
+import type { Patient, Appointment } from "@shared/schema";
 import { PatientIntakeWizard } from "@/components/emr/patient-intake-wizard";
 
 interface Practice {
@@ -45,6 +43,14 @@ interface EmrAccessResponse {
   accessType?: "vendor" | "organization" | "individual" | "none";
   organizations?: OrgAccess[];
 }
+
+const APPOINTMENT_TYPE_LABELS: Record<string, string> = {
+  initial: "New Patient",
+  follow_up: "Follow-up",
+  urgent: "Sick/Urgent",
+  general: "General",
+  telehealth: "Telehealth",
+};
 
 export default function PatientsPage() {
   const { toast } = useToast();
@@ -119,6 +125,19 @@ export default function PatientsPage() {
       (isVendor ? selectedOrgId !== null : true),
   });
 
+  const { data: appointments = [] } = useQuery<Appointment[]>({
+    queryKey: ["/api/emr/appointments", selectedOrgId],
+    queryFn: async () => {
+      const url = selectedOrgId
+        ? `/api/emr/appointments?organizationId=${selectedOrgId}`
+        : "/api/emr/appointments";
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch appointments");
+      return response.json();
+    },
+    enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
+  });
+
   if (isCheckingAccess || !emrAccess?.hasAccess) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -145,6 +164,23 @@ export default function PatientsPage() {
     setActiveSearch(trimmedSearchInput);
   };
 
+  const latestAppointmentByPatient = useMemo(() => {
+    const map = new Map<number, Appointment>();
+    for (const appointment of appointments) {
+      const existing = map.get(appointment.patientId);
+      if (!existing) {
+        map.set(appointment.patientId, appointment);
+        continue;
+      }
+      const existingTime = existing.startTime ? new Date(existing.startTime).getTime() : 0;
+      const nextTime = appointment.startTime ? new Date(appointment.startTime).getTime() : 0;
+      if (nextTime > existingTime) {
+        map.set(appointment.patientId, appointment);
+      }
+    }
+    return map;
+  }, [appointments]);
+
   const formatDate = (date: Date | string | null | undefined) => {
     if (!date) return "Not set";
     return new Date(date).toLocaleDateString();
@@ -158,6 +194,25 @@ export default function PatientsPage() {
       prefer_not_to_say: "Prefer not to say",
     };
     return labels[gender || ""] || "Not set";
+  };
+
+  const formatChartNumber = (patientId: number) => `CH-${patientId.toString().padStart(6, "0")}`;
+
+  const getPatientType = (patient: Patient) => {
+    const appointmentType = latestAppointmentByPatient.get(patient.id)?.appointmentType || "";
+    if (appointmentType) {
+      return APPOINTMENT_TYPE_LABELS[appointmentType] || appointmentType;
+    }
+
+    if (patient.createdAt) {
+      const ageMs = Date.now() - new Date(patient.createdAt).getTime();
+      const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+      if (ageMs <= fourteenDaysMs) {
+        return "New Patient";
+      }
+    }
+
+    return "Unspecified";
   };
 
   return (
@@ -267,92 +322,54 @@ export default function PatientsPage() {
         </p>
 
         {isPatientsLoading ? (
-          <div className="max-h-[62vh] overflow-y-auto">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="py-4 border-b last:border-b-0">
-                <Skeleton className="h-4 w-40 mb-2" />
-                <Skeleton className="h-3 w-full" />
-              </div>
-            ))}
+          <div className="rounded-md border overflow-hidden">
+            <div className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] gap-3 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40 border-b">
+              <span>Patient Name</span>
+              <span>Chart # / DOB</span>
+              <span>Type</span>
+            </div>
+            <div className="max-h-[62vh] overflow-y-auto">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] gap-3 px-4 py-3 border-b last:border-b-0">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-4 w-44" />
+                  <Skeleton className="h-6 w-28" />
+                </div>
+              ))}
+            </div>
           </div>
         ) : displayedPatients.length > 0 ? (
-          <div className="max-h-[62vh] overflow-y-auto">
-            {displayedPatients.map((patient) => (
-              <Link key={patient.id} href={`/emr/patients/${patient.id}`}>
-                <div
-                  className="py-3 border-b last:border-b-0 hover:bg-muted/30 cursor-pointer"
-                  data-testid={`row-patient-${patient.id}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
+          <div className="rounded-md border overflow-hidden">
+            <div className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] gap-3 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40 border-b">
+              <span>Patient Name</span>
+              <span>Chart # / DOB</span>
+              <span>Type</span>
+            </div>
+            <div className="max-h-[62vh] overflow-y-auto">
+              {displayedPatients.map((patient) => (
+                <Link key={patient.id} href={`/emr/patients/${patient.id}`}>
+                  <div
+                    className="grid grid-cols-[minmax(210px,2fr)_minmax(220px,1.6fr)_minmax(150px,1fr)] items-center gap-3 px-4 py-3 border-b last:border-b-0 hover:bg-muted/30 cursor-pointer"
+                    data-testid={`row-patient-${patient.id}`}
+                  >
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium truncate">
-                          {patient.firstName} {patient.lastName}
-                        </p>
-                        {!patient.isActive && (
-                          <Badge variant="secondary">Inactive</Badge>
-                        )}
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        {patient.dateOfBirth && <span>DOB: {formatDate(patient.dateOfBirth)}</span>}
-                        {patient.phone && <span>{patient.phone}</span>}
-                        {patient.email && <span className="truncate">{patient.email}</span>}
-                        {patient.gender && <span>{getGenderLabel(patient.gender)}</span>}
-                        {patient.insuranceProvider && <span>{patient.insuranceProvider}</span>}
-                      </div>
+                      <p className="font-medium truncate">{patient.lastName}, {patient.firstName}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {patient.phone || patient.email || getGenderLabel(patient.gender)}
+                      </p>
                     </div>
-                    <div className="flex flex-wrap justify-end gap-1.5">
-                      {patient.allergies && (() => {
-                        try {
-                          const parsed = JSON.parse(patient.allergies);
-                          if (Array.isArray(parsed) && parsed.length > 0) {
-                            return (
-                              <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
-                                <AlertCircle className="h-3 w-3 mr-1" />
-                                {parsed.length} {parsed.length === 1 ? "Allergy" : "Allergies"}
-                              </Badge>
-                            );
-                          }
-                        } catch {
-                          if (patient.allergies.trim()) {
-                            return (
-                              <Badge variant="destructive" className="text-xs" data-testid={`badge-allergies-${patient.id}`}>
-                                <AlertCircle className="h-3 w-3 mr-1" />
-                                Allergies
-                              </Badge>
-                            );
-                          }
-                        }
-                        return null;
-                      })()}
-                      {patient.medications && (() => {
-                        try {
-                          const parsed = JSON.parse(patient.medications);
-                          if (Array.isArray(parsed) && parsed.length > 0) {
-                            return (
-                              <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
-                                <Pill className="h-3 w-3 mr-1" />
-                                {parsed.length} {parsed.length === 1 ? "Medication" : "Medications"}
-                              </Badge>
-                            );
-                          }
-                        } catch {
-                          if (patient.medications.trim()) {
-                            return (
-                              <Badge variant="secondary" className="text-xs" data-testid={`badge-medications-${patient.id}`}>
-                                <Pill className="h-3 w-3 mr-1" />
-                                Medications
-                              </Badge>
-                            );
-                          }
-                        }
-                        return null;
-                      })()}
+                    <div className="min-w-0 text-sm">
+                      <p className="font-mono text-xs text-foreground">{formatChartNumber(patient.id)}</p>
+                      <p className="text-xs text-muted-foreground">DOB: {formatDate(patient.dateOfBirth)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{getPatientType(patient)}</Badge>
+                      {!patient.isActive && <Badge variant="secondary">Inactive</Badge>}
                     </div>
                   </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              ))}
+            </div>
           </div>
         ) : (
           <Card className="max-w-md mx-auto">
