@@ -137,24 +137,6 @@ export default function PatientsPage() {
     enabled: emrAccess?.hasAccess === true && emrAccess?.consentAcknowledged === true && (isVendor ? selectedOrgId !== null : true),
   });
 
-  if (isCheckingAccess || !emrAccess?.hasAccess) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Skeleton className="h-8 w-48" />
-      </div>
-    );
-  }
-
-  // Show consent dialog if needed
-  if (showConsentDialog && !emrAccess.consentAcknowledged) {
-    return (
-      <EmrConsentDialog 
-        open={true} 
-        onConsentGiven={() => setShowConsentDialog(false)} 
-      />
-    );
-  }
-
   const safeRecentPatients = useMemo(
     () => (Array.isArray(recentPatients) ? recentPatients.filter((p) => p && typeof p === "object") : []),
     [recentPatients],
@@ -219,6 +201,24 @@ export default function PatientsPage() {
 
     return "Unspecified";
   };
+
+  if (isCheckingAccess || !emrAccess?.hasAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Skeleton className="h-8 w-48" />
+      </div>
+    );
+  }
+
+  // Show consent dialog if needed
+  if (showConsentDialog && !emrAccess.consentAcknowledged) {
+    return (
+      <EmrConsentDialog 
+        open={true} 
+        onConsentGiven={() => setShowConsentDialog(false)} 
+      />
+    );
+  }
 
   return (
     <div className="h-full overflow-auto p-6">
