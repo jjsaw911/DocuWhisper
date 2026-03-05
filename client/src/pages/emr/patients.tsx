@@ -4,9 +4,7 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmrConsentDialog } from "@/components/emr-consent-dialog";
 import {
   Select,
@@ -313,66 +311,63 @@ export default function PatientsPage() {
         </p>
 
         {isPatientsLoading ? (
-          <div className="rounded-md border overflow-hidden">
+          <div className="border border-border">
             <div className="max-h-[62vh] overflow-y-auto">
-              <Table className="table-fixed">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[42%] sticky top-0 z-10 bg-muted/50">Patient Name</TableHead>
-                    <TableHead className="w-[34%] sticky top-0 z-10 bg-muted/50">Chart # / DOB</TableHead>
-                    <TableHead className="w-[24%] sticky top-0 z-10 bg-muted/50">Type</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <table className="w-full border-collapse table-fixed text-sm">
+                <thead className="sticky top-0 z-10 bg-muted/30">
+                  <tr>
+                    <th className="w-[42%] border-b border-r px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">Patient Name</th>
+                    <th className="w-[34%] border-b border-r px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">Chart # / DOB</th>
+                    <th className="w-[24%] border-b px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">Type</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {[...Array(6)].map((_, i) => (
-                    <TableRow key={i}>
-                      <TableCell><Skeleton className="h-4 w-40" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-44" /></TableCell>
-                      <TableCell><Skeleton className="h-6 w-28" /></TableCell>
-                    </TableRow>
+                    <tr key={i}>
+                      <td className="border-b border-r px-3 py-2"><Skeleton className="h-4 w-40" /></td>
+                      <td className="border-b border-r px-3 py-2"><Skeleton className="h-4 w-44" /></td>
+                      <td className="border-b px-3 py-2"><Skeleton className="h-4 w-28" /></td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
             </div>
           </div>
         ) : displayedPatients.length > 0 ? (
-          <div className="rounded-md border overflow-hidden">
+          <div className="border border-border">
             <div className="max-h-[62vh] overflow-y-auto">
-              <Table className="table-fixed">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[42%] sticky top-0 z-10 bg-muted/50">Patient Name</TableHead>
-                    <TableHead className="w-[34%] sticky top-0 z-10 bg-muted/50">Chart # / DOB</TableHead>
-                    <TableHead className="w-[24%] sticky top-0 z-10 bg-muted/50">Type</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <table className="w-full border-collapse table-fixed text-sm">
+                <thead className="sticky top-0 z-10 bg-muted/30">
+                  <tr>
+                    <th className="w-[42%] border-b border-r px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">Patient Name</th>
+                    <th className="w-[34%] border-b border-r px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">Chart # / DOB</th>
+                    <th className="w-[24%] border-b px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">Type</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {displayedPatients.map((patient) => (
-                    <TableRow
+                    <tr
                       key={patient.id}
-                      className="cursor-pointer"
+                      className="cursor-pointer hover:bg-muted/20"
                       data-testid={`row-patient-${patient.id}`}
                       onClick={() => setLocation(`/emr/patients/${patient.id}`)}
                     >
-                      <TableCell className="font-medium">
+                      <td className="border-b border-r px-3 py-2 font-medium">
                         {patient.lastName}, {patient.firstName}
-                      </TableCell>
-                      <TableCell>
+                      </td>
+                      <td className="border-b border-r px-3 py-2">
                         <div className="text-xs font-mono">{formatChartNumber(patient.id)}</div>
                         <div className="text-xs text-muted-foreground">
                           DOB: {patient.dateOfBirth ? formatDate(patient.dateOfBirth) : "Not set"}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">{getPatientType(patient)}</Badge>
-                          {!patient.isActive && <Badge variant="secondary">Inactive</Badge>}
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                      <td className="border-b px-3 py-2 text-xs">
+                        {getPatientType(patient)}{!patient.isActive ? " • Inactive" : ""}
+                      </td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
             </div>
           </div>
         ) : (
