@@ -87,6 +87,11 @@ const updateNoteSchema = z.object({
   patientId: z.number().nullable().optional(),
   templateId: z.number().nullable().optional(),
   icdCodes: z.string().nullable().optional(),
+  createdAt: z
+    .string()
+    .datetime()
+    .optional()
+    .transform((value) => (value ? new Date(value) : undefined)),
 });
 
 const updateMedicalVocabularySchema = z.object({

@@ -3,11 +3,13 @@ import crypto from "crypto";
 import { db } from "./db";
 import { eq, desc, and, asc, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
 
+type UpdateNoteInput = Partial<InsertNote> & { createdAt?: Date };
+
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
   getNote(id: number): Promise<Note | undefined>;
   createNote(note: InsertNote): Promise<Note>;
-  updateNote(id: number, note: Partial<InsertNote>): Promise<Note | undefined>;
+  updateNote(id: number, note: UpdateNoteInput): Promise<Note | undefined>;
   deleteNote(id: number): Promise<void>;
   getSubscription(userId: string): Promise<Subscription | undefined>;
   getSubscriptionByStripeCustomerId(stripeCustomerId: string): Promise<Subscription | undefined>;
@@ -182,7 +184,7 @@ class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateNote(id: number, data: Partial<InsertNote>): Promise<Note | undefined> {
+  async updateNote(id: number, data: UpdateNoteInput): Promise<Note | undefined> {
     const [updated] = await db
       .update(notes)
       .set({ ...data, updatedAt: new Date() })

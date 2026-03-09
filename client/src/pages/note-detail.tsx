@@ -150,6 +150,28 @@ const parsePositiveMinutes = (value: unknown): number | undefined => {
   return Math.round(parsed);
 };
 
+const toDateTimeInputValue = (value: unknown): string => {
+  if (!value) return "";
+  const date = new Date(value as string | number | Date);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+};
+
+const resolveNoteDate = (editableDateTime: string, fallbackValue: unknown): Date => {
+  if (editableDateTime) {
+    const edited = new Date(editableDateTime);
+    if (!Number.isNaN(edited.getTime())) return edited;
+  }
+
+  if (fallbackValue) {
+    const fallback = new Date(fallbackValue as string | number | Date);
+    if (!Number.isNaN(fallback.getTime())) return fallback;
+  }
+
+  return new Date();
+};
+
 const estimateMinutesFromCptCodes = (cptCodes: SuggestedCptCode[]): number | undefined => {
   for (const cpt of cptCodes) {
     const normalizedCode = cpt.code.trim();
@@ -291,15 +313,18 @@ export default function NoteDetail() {
     title: "",
     patientName: "",
     soapNote: "",
+    noteDateTime: "",
   });
   const lastHydratedFormRef = useRef({
     title: "",
     patientName: "",
     soapNote: "",
+    noteDateTime: "",
   });
   const [aiInstructions, setAiInstructions] = useState("");
   const [showAiInstructions, setShowAiInstructions] = useState(false);
   const [activeMainTab, setActiveMainTab] = useState("soap");
+  const [isEditingNoteDateTime, setIsEditingNoteDateTime] = useState(false);
   const [copied, setCopied] = useState(false);
   const [translateLanguage, setTranslateLanguage] = useState("es");
   const [transcriptSelection, setTranscriptSelection] = useState<{ start: number; end: number; text: string }>({
@@ -364,6 +389,16 @@ export default function NoteDetail() {
     const minutes = parsePositiveMinutes(suggestedCodes?.visitTimeMinutes);
     setBillableTimeInput(minutes ? String(minutes) : "");
   }, [suggestedCodes?.visitTimeMinutes]);
+
+  const cumulativeVisitMinutes = useMemo(
+    () => parsePositiveMinutes(suggestedCodes?.visitTimeMinutes),
+    [suggestedCodes?.visitTimeMinutes],
+  );
+
+  const effectiveNoteDate = useMemo(
+    () => resolveNoteDate(formData.noteDateTime, note?.createdAt),
+    [formData.noteDateTime, note?.createdAt],
+  );
   
   const [showAiChat, setShowAiChat] = useState(false);
   
@@ -777,11 +812,13 @@ export default function NoteDetail() {
       title: "",
       patientName: "",
       soapNote: "",
+      noteDateTime: "",
     });
     lastHydratedFormRef.current = {
       title: "",
       patientName: "",
       soapNote: "",
+      noteDateTime: "",
     };
     setSoapHistory([]);
     setHistoryIndex(-1);
@@ -808,18 +845,21 @@ export default function NoteDetail() {
       title: note.title || "",
       patientName: note.patientName || "",
       soapNote: incomingSoap,
+      noteDateTime: toDateTimeInputValue(note.createdAt),
     };
     const previousHydrated = lastHydratedFormRef.current;
 
     const formMatchesPreviousHydrated =
       formData.title === previousHydrated.title &&
       formData.patientName === previousHydrated.patientName &&
-      formData.soapNote === previousHydrated.soapNote;
+      formData.soapNote === previousHydrated.soapNote &&
+      formData.noteDateTime === previousHydrated.noteDateTime;
 
     const incomingMatchesCurrentForm =
       formData.title === incomingForm.title &&
       formData.patientName === incomingForm.patientName &&
-      formData.soapNote === incomingForm.soapNote;
+      formData.soapNote === incomingForm.soapNote &&
+      formData.noteDateTime === incomingForm.noteDateTime;
 
     const shouldHydrate =
       !initialLoadDone || formMatchesPreviousHydrated || incomingMatchesCurrentForm;
@@ -850,7 +890,14 @@ export default function NoteDetail() {
     }
 
     setInitialLoadDone(true);
-  }, [note, id, initialLoadDone, formData.title, formData.patientName, formData.soapNote]);
+  }, [note, id, initialLoadDone, formData.title, formData.patientName, formData.soapNote, formData.noteDateTime]);
+
+  const getCreatedAtIsoFromForm = () => {
+    if (!formData.noteDateTime) return undefined;
+    const parsed = new Date(formData.noteDateTime);
+    if (Number.isNaN(parsed.getTime())) return undefined;
+    return parsed.toISOString();
+  };
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -860,6 +907,7 @@ export default function NoteDetail() {
       const response = await apiRequest("PATCH", `/api/notes/${id}`, {
         title: formData.title,
         patientName: formData.patientName,
+        createdAt: getCreatedAtIsoFromForm(),
         ...parsedSoap,
         icdCodes: currentCodes ? JSON.stringify(currentCodes) : null,
       });
@@ -1154,6 +1202,7 @@ export default function NoteDetail() {
         await apiRequest("PATCH", `/api/notes/${id}`, {
           title: formData.title,
           patientName: formData.patientName,
+          createdAt: getCreatedAtIsoFromForm(),
           templateId: effectiveTemplateId,
           ...noteData,
           icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
@@ -1446,7 +1495,7 @@ export default function NoteDetail() {
 
     const summaryTitle = summaryType === "patient_instructions" ? "Patient Instructions" : "Patient Summary";
     const patientLabel = formData.patientName ? `<p style="margin: 4px 0;">Patient: ${formData.patientName}</p>` : "";
-    const dateLabel = `<p style="margin: 4px 0;">Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>`;
+    const dateLabel = `<p style="margin: 4px 0;">Date: ${effectiveNoteDate.toLocaleDateString()}</p>`;
     const formattedSummary = summaryText.replace(/\n/g, "<br>");
 
     const rawHtml = `
@@ -1555,7 +1604,7 @@ export default function NoteDetail() {
         <h1 style="color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px; margin-top: 0;">${formData.title || "SOAP Note"}</h1>
         <div style="color: #6b7280; margin-bottom: 24px;">
           ${formData.patientName ? `<p style="margin: 4px 0;">Patient: ${formData.patientName}</p>` : ""}
-          <p style="margin: 4px 0;">Date: ${note ? new Date(note.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}</p>
+          <p style="margin: 4px 0;">Date: ${effectiveNoteDate.toLocaleDateString()}</p>
         </div>
         <div style="white-space: pre-wrap; line-height: 1.6;">${formData.soapNote}</div>
         ${buildSectionHtml("Diagnoses", diagnosesItems)}
@@ -1947,14 +1996,43 @@ export default function NoteDetail() {
                 <span>{note.patientName}</span>
               </div>
             )}
-            <div className="flex items-center gap-1">
-              <Calendar className="h-4 w-4" />
-              <span>{new Date(note.createdAt).toLocaleDateString()}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Clock className="h-4 w-4" />
-              <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
-            </div>
+            {isEditingNoteDateTime ? (
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                <Input
+                  type="datetime-local"
+                  value={formData.noteDateTime}
+                  onChange={(e) => setFormData({ ...formData, noteDateTime: e.target.value })}
+                  className="h-8 w-[220px]"
+                  data-testid="input-note-datetime"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setIsEditingNoteDateTime(false);
+                    updateMutation.mutate();
+                  }}
+                  disabled={updateMutation.isPending}
+                  data-testid="button-done-note-datetime"
+                >
+                  Done
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-muted/60 hover:text-foreground"
+                onClick={() => setIsEditingNoteDateTime(true)}
+                data-testid="button-edit-note-datetime"
+              >
+                <Calendar className="h-4 w-4" />
+                <span>{effectiveNoteDate.toLocaleDateString()}</span>
+                <Clock className="h-4 w-4 ml-2" />
+                <span>{effectiveNoteDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+              </button>
+            )}
           </div>
 
           {/* Title/Patient Card */}
@@ -1994,62 +2072,68 @@ export default function NoteDetail() {
             <TabsContent value="soap" className="space-y-4">
               <Card data-testid="card-soap">
                 <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-primary" />
-                      SOAP Note
-                    </CardTitle>
-                    <div className="flex items-center gap-2">
-                      <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
-                        <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
-                          <SelectValue placeholder="Template" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default</SelectItem>
-                          <SelectItem value="none">No template</SelectItem>
-                          {templates.map((template) => (
-                            <SelectItem key={template.id} value={template.id.toString()}>
-                              {template.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => regenerateMutation.mutate()}
-                        disabled={regenerateMutation.isPending || !note.transcript}
-                        data-testid="button-retranscribe"
-                      >
-                        {regenerateMutation.isPending ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <>
-                            <RefreshCw className="h-3 w-3 mr-1" />
-                            Redo
-                          </>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        SOAP Note
+                      </CardTitle>
+                      <div className="flex items-center gap-2">
+                        <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
+                          <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
+                            <SelectValue placeholder="Template" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">Default</SelectItem>
+                            <SelectItem value="none">No template</SelectItem>
+                            {templates.map((template) => (
+                              <SelectItem key={template.id} value={template.id.toString()}>
+                                {template.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => regenerateMutation.mutate()}
+                          disabled={regenerateMutation.isPending || !note.transcript}
+                          data-testid="button-retranscribe"
+                        >
+                          {regenerateMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <RefreshCw className="h-3 w-3 mr-1" />
+                              Redo
+                            </>
+                          )}
+                        </Button>
+                        {note.transcript && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setActiveMainTab("transcript")}
+                            data-testid="button-toggle-transcript-header"
+                          >
+                            <FileText className="h-3 w-3 mr-1" />
+                            Transcript
+                          </Button>
                         )}
-                      </Button>
-                      {note.transcript && (
                         <Button
                           variant="ghost"
-                          size="sm"
-                          onClick={() => setActiveMainTab("transcript")}
-                          data-testid="button-toggle-transcript-header"
+                          size="icon"
+                          onClick={() => copyToClipboard(formData.soapNote)}
+                          data-testid="button-copy-soap"
                         >
-                          <FileText className="h-3 w-3 mr-1" />
-                          Transcript
+                          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                         </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => copyToClipboard(formData.soapNote)}
-                        data-testid="button-copy-soap"
-                      >
-                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      </Button>
+                      </div>
                     </div>
+                    <p className="text-xs text-muted-foreground" data-testid="text-cumulative-visit-time">
+                      Cumulative transcript time:{" "}
+                      <span className="font-medium">{cumulativeVisitMinutes ? `${cumulativeVisitMinutes} minutes` : "Not available yet"}</span>
+                    </p>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">

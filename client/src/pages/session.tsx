@@ -96,6 +96,7 @@ type ResumeNoteData = {
   transcript: string;
   patientName: string | null;
   patientContext: string | null;
+  icdCodes?: unknown;
 };
 
 type InflightScribeRecovery = {
@@ -401,6 +402,7 @@ export default function Session() {
             transcript: note.transcript || "",
             patientName: note.patientName,
             patientContext: note.patientContext,
+            icdCodes: note.icdCodes,
           };
           setResumeNoteData(noteData);
           // Update refs for async callbacks
@@ -555,9 +557,31 @@ export default function Session() {
     return Math.round(parsed);
   };
 
+  const extractVisitTimeMinutesFromPayload = (payload: unknown): number | undefined => {
+    if (!payload) return undefined;
+    let parsedPayload: unknown = payload;
+
+    if (typeof payload === "string") {
+      try {
+        parsedPayload = JSON.parse(payload);
+      } catch {
+        return undefined;
+      }
+    }
+
+    if (!parsedPayload || typeof parsedPayload !== "object") return undefined;
+    const source = parsedPayload as Record<string, unknown>;
+    return (
+      normalizeVisitTimeMinutes(source.visitTimeMinutes) ??
+      normalizeVisitTimeMinutes(source.timeSpentMinutes) ??
+      normalizeVisitTimeMinutes(source.billableTimeMinutes)
+    );
+  };
+
   const buildIcdCodesWithVisitTime = (
     icdCodesPayload: any,
     sessionDurationSeconds?: number,
+    priorVisitMinutes?: number,
   ) => {
     if (!icdCodesPayload || typeof icdCodesPayload !== "object") {
       return icdCodesPayload;
@@ -567,15 +591,18 @@ export default function Session() {
       typeof sessionDurationSeconds === "number" && sessionDurationSeconds > 0
         ? Math.max(1, Math.round(sessionDurationSeconds / 60))
         : undefined;
-    const existingMinutes =
+    const payloadMinutes =
       normalizeVisitTimeMinutes(icdCodesPayload.visitTimeMinutes) ??
       normalizeVisitTimeMinutes(icdCodesPayload.timeSpentMinutes) ??
       normalizeVisitTimeMinutes(icdCodesPayload.billableTimeMinutes);
+    const baseMinutes = payloadMinutes ?? recordedMinutes;
+    const cumulativeMinutes =
+      (typeof priorVisitMinutes === "number" ? priorVisitMinutes : 0) + (baseMinutes ?? 0);
 
     return {
       ...icdCodesPayload,
-      ...(existingMinutes || recordedMinutes
-        ? { visitTimeMinutes: existingMinutes ?? recordedMinutes }
+      ...(cumulativeMinutes > 0
+        ? { visitTimeMinutes: cumulativeMinutes }
         : {}),
     };
   };
@@ -1901,7 +1928,17 @@ export default function Session() {
         speakerSegments: segments,
       });
       const soapData = await soapResponse.json();
-      const icdCodesData = buildIcdCodesWithVisitTime(soapData.icdCodes || null, sessionDurationSecondsSnapshot);
+      // Use refs/options to avoid stale closure issues.
+      const currentIsResumeMode = options?.resumeMode ?? isResumeModeRef.current;
+      const currentResumeNoteData = options?.resumeNoteData ?? resumeNoteDataRef.current;
+      const priorVisitMinutes = currentIsResumeMode
+        ? extractVisitTimeMinutesFromPayload(currentResumeNoteData?.icdCodes)
+        : undefined;
+      const icdCodesData = buildIcdCodesWithVisitTime(
+        soapData.icdCodes || null,
+        sessionDurationSecondsSnapshot,
+        priorVisitMinutes,
+      );
       
       if (!background) {
         setSoapNote({
@@ -1913,9 +1950,6 @@ export default function Session() {
 
       let savedNoteId: number;
 
-      // Use refs to avoid stale closure issues
-      const currentIsResumeMode = options?.resumeMode ?? isResumeModeRef.current;
-      const currentResumeNoteData = options?.resumeNoteData ?? resumeNoteDataRef.current;
       console.log("[Save] isResumeMode (ref):", currentIsResumeMode, "resumeNoteData (ref):", currentResumeNoteData);
       
       if (currentIsResumeMode && currentResumeNoteData) {
