@@ -34,6 +34,7 @@ import multer from "multer";
 import { Resend } from "resend";
 import externalApiRoutes from "./externalApiRoutes";
 import mobileApiRoutes from "./mobileApiRoutes";
+import fhirRoutes from "./fhirRoutes";
 import { PERSONAL_API_SCOPES } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
@@ -303,6 +304,7 @@ export async function registerRoutes(
   // Register external API routes (for third-party integrations like urgent care)
   app.use("/api/external/v1", externalApiRoutes);
   app.use("/api/mobile", mobileApiRoutes);
+  app.use("/api/fhir/r4", fhirRoutes);
 
   try {
     await initializeAiProviderPreference();

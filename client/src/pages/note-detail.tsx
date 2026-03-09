@@ -292,6 +292,11 @@ export default function NoteDetail() {
     patientName: "",
     soapNote: "",
   });
+  const lastHydratedFormRef = useRef({
+    title: "",
+    patientName: "",
+    soapNote: "",
+  });
   const [aiInstructions, setAiInstructions] = useState("");
   const [showAiInstructions, setShowAiInstructions] = useState(false);
   const [activeMainTab, setActiveMainTab] = useState("soap");
@@ -773,6 +778,11 @@ export default function NoteDetail() {
       patientName: "",
       soapNote: "",
     });
+    lastHydratedFormRef.current = {
+      title: "",
+      patientName: "",
+      soapNote: "",
+    };
     setSoapHistory([]);
     setHistoryIndex(-1);
     setSelectedTemplateId("");
@@ -791,33 +801,56 @@ export default function NoteDetail() {
   }, [id]);
   
   useEffect(() => {
-    // Only run on initial load, not on refetches after regeneration
-    if (note && note.id === parseInt(id || "0") && !initialLoadDone) {
-      const initialSoap = formatSoapNote(note);
-      setFormData({
-        title: note.title || "",
-        patientName: note.patientName || "",
-        soapNote: initialSoap,
-      });
-      // Initialize history with the original note content
-      setSoapHistory([initialSoap]);
-      setHistoryIndex(0);
-      // Load the saved template selection
-      setSelectedTemplateId(note.templateId ? note.templateId.toString() : "");
-      // Load saved ICD codes if available
-      if (note.icdCodes) {
-        try {
-          const parsedCodes = typeof note.icdCodes === 'string' 
-            ? JSON.parse(note.icdCodes) 
-            : note.icdCodes;
-          setSuggestedCodes(normalizeSuggestedCodes(parsedCodes));
-        } catch (e) {
-          console.error("Failed to parse saved ICD codes:", e);
-        }
+    if (!note || note.id !== parseInt(id || "0")) return;
+
+    const incomingSoap = formatSoapNote(note);
+    const incomingForm = {
+      title: note.title || "",
+      patientName: note.patientName || "",
+      soapNote: incomingSoap,
+    };
+    const previousHydrated = lastHydratedFormRef.current;
+
+    const formMatchesPreviousHydrated =
+      formData.title === previousHydrated.title &&
+      formData.patientName === previousHydrated.patientName &&
+      formData.soapNote === previousHydrated.soapNote;
+
+    const incomingMatchesCurrentForm =
+      formData.title === incomingForm.title &&
+      formData.patientName === incomingForm.patientName &&
+      formData.soapNote === incomingForm.soapNote;
+
+    const shouldHydrate =
+      !initialLoadDone || formMatchesPreviousHydrated || incomingMatchesCurrentForm;
+
+    if (!shouldHydrate) return;
+
+    setFormData(incomingForm);
+    lastHydratedFormRef.current = incomingForm;
+
+    // Reset history when server content updates and local form isn't dirty.
+    setSoapHistory([incomingSoap]);
+    setHistoryIndex(0);
+
+    // Load the saved template selection
+    setSelectedTemplateId(note.templateId ? note.templateId.toString() : "");
+
+    // Load saved ICD codes if available
+    if (note.icdCodes) {
+      try {
+        const parsedCodes = typeof note.icdCodes === "string" ? JSON.parse(note.icdCodes) : note.icdCodes;
+        setSuggestedCodes(normalizeSuggestedCodes(parsedCodes));
+      } catch (e) {
+        console.error("Failed to parse saved ICD codes:", e);
+        setSuggestedCodes(null);
       }
-      setInitialLoadDone(true);
+    } else {
+      setSuggestedCodes(null);
     }
-  }, [note, id, initialLoadDone]);
+
+    setInitialLoadDone(true);
+  }, [note, id, initialLoadDone, formData.title, formData.patientName, formData.soapNote]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -1102,7 +1135,7 @@ export default function NoteDetail() {
           const rawCodesData = await codesResponse.json();
           icdCodesData = normalizeSuggestedCodes(rawCodesData);
           setSuggestedCodes(icdCodesData);
-          setActiveMainTab("codes");
+          setActiveMainTab("soap");
         } catch (e) {
           console.error("Failed to generate ICD codes:", e);
         }
