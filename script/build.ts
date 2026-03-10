@@ -68,7 +68,8 @@ async function buildAll() {
     define: {
       "process.env.NODE_ENV": '"production"',
     },
-    minify: true,
+    // Keep server bundle unminified for Node runtime stability and clearer crash traces.
+    minify: false,
     external: externals,
     logLevel: "warning",
   });
