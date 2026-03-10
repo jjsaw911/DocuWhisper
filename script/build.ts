@@ -61,6 +61,7 @@ async function buildAll() {
   await esbuild({
     entryPoints: ["server/index.ts"],
     platform: "node",
+    target: "node20",
     bundle: true,
     format: "cjs",
     outfile: "dist/index.cjs",
