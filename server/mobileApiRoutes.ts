@@ -54,12 +54,103 @@ function buildReviewLoginPath(redirectUri: string, state?: string, error?: strin
   return `/api/mobile/auth/review-login?${params.toString()}`;
 }
 
-function isMobileReviewLoginEnabled(): boolean {
-  return (
-    process.env.MOBILE_REVIEW_LOGIN_ENABLED === "true" &&
-    !!process.env.MOBILE_REVIEW_USERNAME &&
-    !!process.env.MOBILE_REVIEW_PASSWORD
+function buildTestLoginPath(redirectUri: string, state?: string, error?: string): string {
+  const params = new URLSearchParams({ redirect_uri: redirectUri });
+  if (state) params.set("state", state);
+  if (error) params.set("error", error);
+  return `/api/mobile/auth/test-login?${params.toString()}`;
+}
+
+function readEnv(...keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+function getMobileCredentialLoginConfig(): {
+  enabled: boolean;
+  username: string;
+  password: string;
+  userId: string;
+  userEmail: string;
+  firstName: string;
+  lastName: string;
+  title: string;
+  subtitle: string;
+} {
+  const username = readEnv(
+    "MOBILE_TEST_USERNAME",
+    "MOBILE_REVIEW_USERNAME",
+    "APP_REVIEW_USERNAME"
   );
+  const password = readEnv(
+    "MOBILE_TEST_PASSWORD",
+    "MOBILE_REVIEW_PASSWORD",
+    "APP_REVIEW_PASSWORD"
+  );
+  const hasCredentials = !!username && !!password;
+
+  const explicitFlag = parseBooleanEnv(
+    process.env.MOBILE_TEST_LOGIN_ENABLED ??
+      process.env.MOBILE_REVIEW_LOGIN_ENABLED ??
+      process.env.APP_REVIEW_LOGIN_ENABLED
+  );
+
+  const enabled =
+    hasCredentials &&
+    (explicitFlag === true || explicitFlag === undefined);
+
+  return {
+    enabled,
+    username,
+    password,
+    userId:
+      readEnv(
+        "MOBILE_TEST_USER_ID",
+        "MOBILE_REVIEW_USER_ID",
+        "APP_REVIEW_USER_ID"
+      ) || "mobile-tester",
+    userEmail:
+      readEnv(
+        "MOBILE_TEST_USER_EMAIL",
+        "MOBILE_REVIEW_USER_EMAIL",
+        "APP_REVIEW_USER_EMAIL"
+      ) || "tester@docuwhisper.com",
+    firstName:
+      readEnv(
+        "MOBILE_TEST_FIRST_NAME",
+        "MOBILE_REVIEW_FIRST_NAME",
+        "APP_REVIEW_FIRST_NAME"
+      ) || "Mobile",
+    lastName:
+      readEnv(
+        "MOBILE_TEST_LAST_NAME",
+        "MOBILE_REVIEW_LAST_NAME",
+        "APP_REVIEW_LAST_NAME"
+      ) || "Tester",
+    title:
+      readEnv("MOBILE_TEST_LOGIN_TITLE", "MOBILE_REVIEW_LOGIN_TITLE") ||
+      "DocuWhisper Sign In",
+    subtitle:
+      readEnv("MOBILE_TEST_LOGIN_SUBTITLE", "MOBILE_REVIEW_LOGIN_SUBTITLE") ||
+      "Use the tester credentials provided by DocuWhisper.",
+  };
+}
+
+function isMobileCredentialLoginEnabled(): boolean {
+  return getMobileCredentialLoginConfig().enabled;
 }
 
 function constantTimeEquals(left: string, right: string): boolean {
@@ -78,9 +169,19 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function renderReviewLoginPage(params: { redirectUri: string; state?: string; error?: string }): string {
+function renderReviewLoginPage(params: {
+  redirectUri: string;
+  state?: string;
+  error?: string;
+  title: string;
+  subtitle: string;
+  formAction: string;
+}): string {
   const escapedRedirect = escapeHtml(params.redirectUri);
   const escapedState = params.state ? escapeHtml(params.state) : "";
+  const escapedTitle = escapeHtml(params.title);
+  const escapedSubtitle = escapeHtml(params.subtitle);
+  const escapedFormAction = escapeHtml(params.formAction);
   const message =
     params.error === "invalid_credentials"
       ? "Invalid username or password."
@@ -93,7 +194,7 @@ function renderReviewLoginPage(params: { redirectUri: string; state?: string; er
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DocuWhisper App Review Sign In</title>
+  <title>${escapedTitle}</title>
   <style>
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f7fa; color: #0b1320; }
     .wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
@@ -109,10 +210,10 @@ function renderReviewLoginPage(params: { redirectUri: string; state?: string; er
 <body>
   <div class="wrap">
     <main class="card">
-      <h1>DocuWhisper Review Access</h1>
-      <p>Use the App Review credentials provided by DocuWhisper.</p>
+      <h1>${escapedTitle}</h1>
+      <p>${escapedSubtitle}</p>
       ${message ? `<div class="error">${escapeHtml(message)}</div>` : ""}
-      <form method="post" action="/api/mobile/auth/review-login">
+      <form method="post" action="${escapedFormAction}">
         <input type="hidden" name="redirect_uri" value="${escapedRedirect}" />
         <input type="hidden" name="state" value="${escapedState}" />
         <label for="username">Username</label>
@@ -311,8 +412,10 @@ router.get("/docs", async (_req: Request, res: Response) => {
     endpoints: {
       auth: {
         "GET /auth/start?redirect_uri=<uri>": "Start web-based sign-in (ASWebAuthenticationSession). Redirects through login, then back to redirect_uri with api_key and code params.",
-        "GET /auth/review-login?redirect_uri=<uri>": "Optional App Review username/password sign-in page (enabled via MOBILE_REVIEW_LOGIN_ENABLED).",
-        "POST /auth/review-login": "Submit App Review username/password credentials (enabled via MOBILE_REVIEW_LOGIN_ENABLED).",
+        "GET /auth/test-login?redirect_uri=<uri>": "Username/password sign-in page for tester or App Review credentials (enabled via MOBILE_TEST_* or MOBILE_REVIEW_* env vars).",
+        "POST /auth/test-login": "Submit tester/App Review username/password credentials.",
+        "GET /auth/review-login?redirect_uri=<uri>": "Backward-compatible alias for test-login.",
+        "POST /auth/review-login": "Backward-compatible alias for test-login.",
         "GET /auth/callback": "Internal callback after login completes. Auto-generates API key and redirects to app.",
         "POST /auth/exchange": "Compatibility endpoint: exchange code for API key payload.",
       },
@@ -409,15 +512,19 @@ router.get("/auth/start", (req: Request, res: Response) => {
   }
 
   session.save(() => {
-    if (isMobileReviewLoginEnabled()) {
-      return res.redirect(buildReviewLoginPath(redirectUri, state));
+    if (isMobileCredentialLoginEnabled()) {
+      return res.redirect(buildTestLoginPath(redirectUri, state));
     }
     res.redirect(`/api/login`);
   });
 });
 
-router.get("/auth/review-login", (req: Request, res: Response) => {
-  if (!isMobileReviewLoginEnabled()) {
+function renderCredentialLoginPage(
+  req: Request,
+  res: Response,
+  formAction: "/api/mobile/auth/review-login" | "/api/mobile/auth/test-login"
+) {
+  if (!isMobileCredentialLoginEnabled()) {
     return res.status(404).send("Not found");
   }
 
@@ -429,12 +536,28 @@ router.get("/auth/review-login", (req: Request, res: Response) => {
     return res.status(400).send("Invalid redirect URI");
   }
 
+  const reviewLoginConfig = getMobileCredentialLoginConfig();
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.status(200).send(renderReviewLoginPage({ redirectUri, state, error }));
-});
+  return res.status(200).send(
+    renderReviewLoginPage({
+      redirectUri,
+      state,
+      error,
+      title: reviewLoginConfig.title,
+      subtitle: reviewLoginConfig.subtitle,
+      formAction,
+    })
+  );
+}
 
-router.post("/auth/review-login", async (req: Request, res: Response) => {
-  if (!isMobileReviewLoginEnabled()) {
+async function processCredentialLogin(
+  req: Request,
+  res: Response,
+  buildErrorPath: (redirectUri: string, state?: string, error?: string) => string,
+  accessTokenLabel: string
+) {
+  const reviewLoginConfig = getMobileCredentialLoginConfig();
+  if (!reviewLoginConfig.enabled) {
     return res.status(404).send("Not found");
   }
 
@@ -447,19 +570,19 @@ router.post("/auth/review-login", async (req: Request, res: Response) => {
     return res.status(400).send("Invalid redirect URI");
   }
 
-  const expectedUsername = process.env.MOBILE_REVIEW_USERNAME || "";
-  const expectedPassword = process.env.MOBILE_REVIEW_PASSWORD || "";
+  const expectedUsername = reviewLoginConfig.username;
+  const expectedPassword = reviewLoginConfig.password;
 
   const usernameValid = username.length > 0 && constantTimeEquals(username, expectedUsername);
   const passwordValid = password.length > 0 && constantTimeEquals(password, expectedPassword);
   if (!usernameValid || !passwordValid) {
-    return res.redirect(buildReviewLoginPath(redirectUri, state, "invalid_credentials"));
+    return res.redirect(buildErrorPath(redirectUri, state, "invalid_credentials"));
   }
 
-  const reviewUserId = process.env.MOBILE_REVIEW_USER_ID || "apple-review";
-  const reviewUserEmail = process.env.MOBILE_REVIEW_USER_EMAIL || "apple-review@docuwhisper.com";
-  const reviewFirstName = process.env.MOBILE_REVIEW_FIRST_NAME || "Apple";
-  const reviewLastName = process.env.MOBILE_REVIEW_LAST_NAME || "Reviewer";
+  const reviewUserId = reviewLoginConfig.userId;
+  const reviewUserEmail = reviewLoginConfig.userEmail;
+  const reviewFirstName = reviewLoginConfig.firstName;
+  const reviewLastName = reviewLoginConfig.lastName;
   const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
 
   try {
@@ -479,7 +602,7 @@ router.post("/auth/review-login", async (req: Request, res: Response) => {
         last_name: reviewLastName,
         exp: expiresAt,
       },
-      access_token: "app_review",
+      access_token: accessTokenLabel,
       refresh_token: undefined,
       expires_at: expiresAt,
     };
@@ -504,9 +627,25 @@ router.post("/auth/review-login", async (req: Request, res: Response) => {
       res.redirect(buildMobileAuthCallbackPath(redirectUri, state));
     });
   } catch (error) {
-    console.error("[mobile-auth] Review login failed:", error);
-    return res.redirect(buildReviewLoginPath(redirectUri, state, "login_failed"));
+    console.error("[mobile-auth] Credential login failed:", error);
+    return res.redirect(buildErrorPath(redirectUri, state, "login_failed"));
   }
+}
+
+router.get("/auth/test-login", (req: Request, res: Response) => {
+  return renderCredentialLoginPage(req, res, "/api/mobile/auth/test-login");
+});
+
+router.post("/auth/test-login", async (req: Request, res: Response) => {
+  return processCredentialLogin(req, res, buildTestLoginPath, "mobile_tester");
+});
+
+router.get("/auth/review-login", (req: Request, res: Response) => {
+  return renderCredentialLoginPage(req, res, "/api/mobile/auth/review-login");
+});
+
+router.post("/auth/review-login", async (req: Request, res: Response) => {
+  return processCredentialLogin(req, res, buildReviewLoginPath, "app_review");
 });
 
 router.get("/auth/callback", async (req: Request, res: Response) => {
@@ -542,14 +681,14 @@ router.get("/auth/callback", async (req: Request, res: Response) => {
           session.mobileAuthRedirect = redirectUri;
           session.mobileAuthState = state;
           return session.save(() => {
-            if (isMobileReviewLoginEnabled()) {
-              return res.redirect(buildReviewLoginPath(redirectUri, state));
+            if (isMobileCredentialLoginEnabled()) {
+              return res.redirect(buildTestLoginPath(redirectUri, state));
             }
             res.redirect("/api/login");
           });
         }
-        if (isMobileReviewLoginEnabled()) {
-          return res.redirect(buildReviewLoginPath(redirectUri, state));
+        if (isMobileCredentialLoginEnabled()) {
+          return res.redirect(buildTestLoginPath(redirectUri, state));
         }
         return res.redirect("/api/login");
       }
