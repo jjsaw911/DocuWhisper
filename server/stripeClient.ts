@@ -2,8 +2,31 @@ import Stripe from 'stripe';
 
 let connectionSettings: any;
 
+function readEnv(name: string): string {
+  const value = process.env[name];
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
 async function getCredentials() {
+  const envPublishableKey = readEnv("STRIPE_PUBLISHABLE_KEY");
+  const envSecretKey = readEnv("STRIPE_SECRET_KEY");
+
+  if (envPublishableKey || envSecretKey) {
+    if (!envPublishableKey || !envSecretKey) {
+      throw new Error("Set both STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY");
+    }
+    return {
+      publishableKey: envPublishableKey,
+      secretKey: envSecretKey,
+    };
+  }
+
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  if (!hostname) {
+    throw new Error('Stripe credentials missing. Set STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY.');
+  }
+
   const xReplitToken = process.env.REPL_IDENTITY
     ? 'repl ' + process.env.REPL_IDENTITY
     : process.env.WEB_REPL_RENEWAL

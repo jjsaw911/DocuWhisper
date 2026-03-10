@@ -51,10 +51,21 @@ async function initStripe() {
     const stripeSync = await getStripeSync();
 
     log("Setting up managed webhook...", "stripe");
-    const webhookBaseUrl = `https://${process.env.REPLIT_DOMAINS?.split(",")[0]}`;
+    const configuredBaseUrl = process.env.APP_BASE_URL?.trim();
+    const replitPrimaryDomain = process.env.REPLIT_DOMAINS?.split(",")[0]?.trim();
+    const webhookBaseUrl =
+      configuredBaseUrl ||
+      (replitPrimaryDomain ? `https://${replitPrimaryDomain}` : "");
+
+    if (!webhookBaseUrl) {
+      log("Webhook setup skipped (APP_BASE_URL or REPLIT_DOMAINS not configured)", "stripe");
+      return;
+    }
+
+    const normalizedWebhookBaseUrl = webhookBaseUrl.replace(/\/+$/, "");
     try {
       const result = await stripeSync.findOrCreateManagedWebhook(
-        `${webhookBaseUrl}/api/stripe/webhook`
+        `${normalizedWebhookBaseUrl}/api/stripe/webhook`
       );
       if (result?.webhook?.url) {
         log(`Webhook configured: ${result.webhook.url}`, "stripe");

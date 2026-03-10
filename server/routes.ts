@@ -3620,11 +3620,13 @@ Focus only on clinically significant interactions. Do not include minor or theor
       const membershipLabel = membershipLabels[membershipType] || membershipType;
 
       // Construct invite link
-      const baseUrl = process.env.REPLIT_DEV_DOMAIN 
-        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-        : process.env.REPLIT_DOMAINS?.split(",")[0]
-          ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}`
-          : "https://docuwhisper.com";
+      const configuredBaseUrl = process.env.APP_BASE_URL?.trim();
+      const replitDevBaseUrl = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "";
+      const replitPrimaryBaseUrl = process.env.REPLIT_DOMAINS?.split(",")[0]
+        ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}`
+        : "";
+      const baseUrl = (configuredBaseUrl || replitDevBaseUrl || replitPrimaryBaseUrl || "https://docuwhisper.com")
+        .replace(/\/+$/, "");
       const inviteLink = `${baseUrl}/invite/${code}`;
 
       // Send email using Resend
