@@ -33,15 +33,26 @@ At minimum configure:
 - `SESSION_SECRET`
 - `OPENAI_API_KEY`
 - `APP_BASE_URL=https://docuwhisper.com`
+- `IDENTITY_PROJECT_ID` or `PROJECT_ID`
+- `IDENTITY_API_KEY`
+- `IDENTITY_AUTH_DOMAIN`
+- `IDENTITY_APP_ID`
 - `MOBILE_TEST_LOGIN_ENABLED=true`
 - `MOBILE_TEST_USERNAME`
 - `MOBILE_TEST_PASSWORD`
 
-For non-Replit web auth, set:
+Preferred production web auth uses Google Identity Platform. If you use multi-tenancy, also set:
+
+- `IDENTITY_TENANT_ID`
+
+For emergency local fallback access, set:
 
 - `LOCAL_AUTH_ENABLED=true`
 - `LOCAL_AUTH_USERNAME`
 - `LOCAL_AUTH_PASSWORD`
+
+When Identity Platform is configured, `/api/login` serves the self-service signup and sign-in flow.
+If `LOCAL_AUTH_ENABLED=true`, emergency admin access stays available at `/api/login/local`.
 
 For Stripe on Google, set:
 
@@ -63,7 +74,7 @@ Set non-secret env vars:
 ```bash
 gcloud run services update docuwhisper-api \
   --region us-central1 \
-  --set-env-vars NODE_ENV=production,APP_BASE_URL=https://docuwhisper.com,MOBILE_TEST_LOGIN_ENABLED=true,LOCAL_AUTH_ENABLED=true,MOBILE_AUTH_REDIRECT_ALLOWLIST=docuwhisper://auth/callback
+  --set-env-vars NODE_ENV=production,APP_BASE_URL=https://docuwhisper.com,IDENTITY_PROJECT_ID=YOUR_PROJECT_ID,IDENTITY_API_KEY=AIza...,IDENTITY_AUTH_DOMAIN=YOUR_PROJECT.firebaseapp.com,IDENTITY_APP_ID=1:1234567890:web:abcdef,MOBILE_TEST_LOGIN_ENABLED=true,LOCAL_AUTH_ENABLED=true,MOBILE_AUTH_REDIRECT_ALLOWLIST=docuwhisper://auth/callback
 ```
 
 Use Secret Manager for sensitive values:

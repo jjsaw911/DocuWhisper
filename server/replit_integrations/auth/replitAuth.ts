@@ -7,7 +7,7 @@ import session from "express-session";
 import type { Express, RequestHandler, Request } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
-import { timingSafeEqual } from "crypto";
+import { createVerify, timingSafeEqual } from "crypto";
 import { authStorage } from "./storage";
 import { storage } from "../../storage";
 
@@ -37,16 +37,6 @@ const logSecurityEvent = async (
   }
 };
 
-const getOidcConfig = memoize(
-  async () => {
-    return await client.discovery(
-      new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
-    );
-  },
-  { maxAge: 3600 * 1000 }
-);
-
 function readEnv(...keys: string[]): string {
   for (const key of keys) {
     const value = process.env[key];
@@ -56,6 +46,213 @@ function readEnv(...keys: string[]): string {
   }
   return "";
 }
+
+type IdentityPlatformConfig = {
+  enabled: boolean;
+  hasAnyConfig: boolean;
+  apiKey: string;
+  authDomain: string;
+  appId: string;
+  projectId: string;
+  tenantId: string;
+  appBaseUrl: string;
+};
+
+type IdentityPlatformClaims = {
+  aud: string;
+  email?: string;
+  email_verified?: boolean;
+  exp: number;
+  firebase?: {
+    sign_in_provider?: string;
+    tenant?: string;
+  };
+  iat: number;
+  iss: string;
+  name?: string;
+  picture?: string;
+  sub: string;
+};
+
+type FirebaseCertCache = {
+  certs: Record<string, string>;
+  expiresAt: number;
+};
+
+const FIREBASE_CERTS_URL =
+  "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+let firebaseCertCache: FirebaseCertCache | null = null;
+
+function getIdentityPlatformConfig(): IdentityPlatformConfig {
+  const apiKey = readEnv("IDENTITY_API_KEY");
+  const authDomain = readEnv("IDENTITY_AUTH_DOMAIN");
+  const appId = readEnv("IDENTITY_APP_ID");
+  const projectId = readEnv("IDENTITY_PROJECT_ID", "PROJECT_ID");
+  const tenantId = readEnv("IDENTITY_TENANT_ID");
+  const appBaseUrl = readEnv("APP_BASE_URL");
+
+  const values = [apiKey, authDomain, appId, projectId];
+  const hasAnyConfig = values.some(Boolean);
+  const enabled = values.every(Boolean);
+
+  return {
+    enabled,
+    hasAnyConfig,
+    apiKey,
+    authDomain,
+    appId,
+    projectId,
+    tenantId,
+    appBaseUrl,
+  };
+}
+
+function ensureIdentityPlatformConfig(config: IdentityPlatformConfig): IdentityPlatformConfig {
+  if (config.enabled) return config;
+  if (!config.hasAnyConfig) return config;
+
+  throw new Error(
+    "Identity Platform configuration is incomplete. Set IDENTITY_API_KEY, IDENTITY_AUTH_DOMAIN, IDENTITY_APP_ID, and IDENTITY_PROJECT_ID (or PROJECT_ID)."
+  );
+}
+
+function parseCacheMaxAgeSeconds(cacheControl: string | null): number {
+  if (!cacheControl) return 3600;
+  const match = cacheControl.match(/max-age=(\d+)/i);
+  if (!match) return 3600;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3600;
+}
+
+async function getFirebaseSigningCertificates(): Promise<Record<string, string>> {
+  if (firebaseCertCache && firebaseCertCache.expiresAt > Date.now()) {
+    return firebaseCertCache.certs;
+  }
+
+  const response = await fetch(FIREBASE_CERTS_URL);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Firebase signing certificates (${response.status})`);
+  }
+
+  const certs = (await response.json()) as Record<string, string>;
+  firebaseCertCache = {
+    certs,
+    expiresAt: Date.now() + parseCacheMaxAgeSeconds(response.headers.get("cache-control")) * 1000,
+  };
+
+  return certs;
+}
+
+function decodeJwtSegment(segment: string): Record<string, unknown> {
+  const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const decoded = Buffer.from(padded, "base64").toString("utf8");
+  return JSON.parse(decoded) as Record<string, unknown>;
+}
+
+function decodeJwtPayload<T>(segment: string): T {
+  return decodeJwtSegment(segment) as T;
+}
+
+async function verifyIdentityPlatformIdToken(
+  idToken: string,
+  config: IdentityPlatformConfig
+): Promise<IdentityPlatformClaims> {
+  const parts = idToken.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Invalid identity token");
+  }
+
+  const [headerSegment, payloadSegment, signatureSegment] = parts;
+  const header = decodeJwtSegment(headerSegment);
+  const payload = decodeJwtPayload<IdentityPlatformClaims>(payloadSegment);
+
+  if (header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
+    throw new Error("Unsupported identity token signature");
+  }
+
+  const certificates = await getFirebaseSigningCertificates();
+  const certificate = certificates[header.kid];
+  if (!certificate) {
+    throw new Error("Signing certificate not found for identity token");
+  }
+
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${headerSegment}.${payloadSegment}`);
+  verifier.end();
+
+  const normalizedSignature = signatureSegment.replace(/-/g, "+").replace(/_/g, "/");
+  const paddedSignature = normalizedSignature.padEnd(
+    Math.ceil(normalizedSignature.length / 4) * 4,
+    "="
+  );
+  const signature = Buffer.from(paddedSignature, "base64");
+
+  if (!verifier.verify(certificate, signature)) {
+    throw new Error("Identity token signature verification failed");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const expectedIssuer = `https://securetoken.google.com/${config.projectId}`;
+  if (payload.aud !== config.projectId || payload.iss !== expectedIssuer) {
+    throw new Error("Identity token issuer mismatch");
+  }
+
+  if (!payload.sub || typeof payload.sub !== "string") {
+    throw new Error("Identity token subject missing");
+  }
+
+  if (typeof payload.exp !== "number" || payload.exp <= now - 300) {
+    throw new Error("Identity token has expired");
+  }
+
+  if (typeof payload.iat !== "number" || payload.iat > now + 300) {
+    throw new Error("Identity token issued-at timestamp is invalid");
+  }
+
+  if (config.tenantId && payload.firebase?.tenant !== config.tenantId) {
+    throw new Error("Identity token tenant mismatch");
+  }
+
+  return payload;
+}
+
+function jsonForInlineScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+function getSessionSecret(): string {
+  const sessionSecret = readEnv("SESSION_SECRET");
+  if (sessionSecret) return sessionSecret;
+
+  if (process.env.NODE_ENV !== "production") {
+    return "docuwhisper-dev-session-secret";
+  }
+
+  throw new Error(
+    "SESSION_SECRET is required in production. Set SESSION_SECRET in your environment."
+  );
+}
+
+function getReplitClientId(): string {
+  const clientId = readEnv("REPL_ID");
+  if (clientId) return clientId;
+
+  throw new Error(
+    "Auth configuration missing. Set REPL_ID for Replit OIDC, or configure LOCAL_AUTH_USERNAME/LOCAL_AUTH_PASSWORD (or MOBILE_TEST_USERNAME/MOBILE_TEST_PASSWORD) for non-Replit deployments."
+  );
+}
+
+const getOidcConfig = memoize(
+  async () => {
+    return await client.discovery(
+      new URL(readEnv("ISSUER_URL") || "https://replit.com/oidc"),
+      getReplitClientId()
+    );
+  },
+  { maxAge: 3600 * 1000 }
+);
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (!value) return undefined;
@@ -94,8 +291,20 @@ type LocalAuthConfig = {
 };
 
 function getLocalAuthConfig(): LocalAuthConfig {
-  const username = readEnv("LOCAL_AUTH_USERNAME", "WEB_TEST_USERNAME");
-  const password = readEnv("LOCAL_AUTH_PASSWORD", "WEB_TEST_PASSWORD");
+  const username = readEnv(
+    "LOCAL_AUTH_USERNAME",
+    "WEB_TEST_USERNAME",
+    "MOBILE_TEST_USERNAME",
+    "MOBILE_REVIEW_USERNAME",
+    "APP_REVIEW_USERNAME"
+  );
+  const password = readEnv(
+    "LOCAL_AUTH_PASSWORD",
+    "WEB_TEST_PASSWORD",
+    "MOBILE_TEST_PASSWORD",
+    "MOBILE_REVIEW_PASSWORD",
+    "APP_REVIEW_PASSWORD"
+  );
   const hasCredentials = !!username && !!password;
   const explicitFlag = parseBooleanEnv(process.env.LOCAL_AUTH_ENABLED);
   const hasReplitOidcConfig = !!readEnv("REPL_ID");
@@ -108,18 +317,58 @@ function getLocalAuthConfig(): LocalAuthConfig {
     enabled,
     username,
     password,
-    userId: readEnv("LOCAL_AUTH_USER_ID") || "local-user",
-    userEmail: readEnv("LOCAL_AUTH_USER_EMAIL") || "local-user@docuwhisper.local",
-    firstName: readEnv("LOCAL_AUTH_FIRST_NAME") || "Local",
-    lastName: readEnv("LOCAL_AUTH_LAST_NAME") || "User",
-    title: readEnv("LOCAL_AUTH_LOGIN_TITLE") || "DocuWhisper Sign In",
-    subtitle: readEnv("LOCAL_AUTH_LOGIN_SUBTITLE") || "Use the tester credentials provided by your administrator.",
+    userId:
+      readEnv(
+        "LOCAL_AUTH_USER_ID",
+        "MOBILE_TEST_USER_ID",
+        "MOBILE_REVIEW_USER_ID",
+        "APP_REVIEW_USER_ID"
+      ) || "local-user",
+    userEmail:
+      readEnv(
+        "LOCAL_AUTH_USER_EMAIL",
+        "MOBILE_TEST_USER_EMAIL",
+        "MOBILE_REVIEW_USER_EMAIL",
+        "APP_REVIEW_USER_EMAIL"
+      ) || "local-user@docuwhisper.local",
+    firstName:
+      readEnv(
+        "LOCAL_AUTH_FIRST_NAME",
+        "MOBILE_TEST_FIRST_NAME",
+        "MOBILE_REVIEW_FIRST_NAME",
+        "APP_REVIEW_FIRST_NAME"
+      ) || "Local",
+    lastName:
+      readEnv(
+        "LOCAL_AUTH_LAST_NAME",
+        "MOBILE_TEST_LAST_NAME",
+        "MOBILE_REVIEW_LAST_NAME",
+        "APP_REVIEW_LAST_NAME"
+      ) || "User",
+    title:
+      readEnv(
+        "LOCAL_AUTH_LOGIN_TITLE",
+        "MOBILE_TEST_LOGIN_TITLE",
+        "MOBILE_REVIEW_LOGIN_TITLE"
+      ) || "DocuWhisper Sign In",
+    subtitle:
+      readEnv(
+        "LOCAL_AUTH_LOGIN_SUBTITLE",
+        "MOBILE_TEST_LOGIN_SUBTITLE",
+        "MOBILE_REVIEW_LOGIN_SUBTITLE"
+      ) || "Use the tester credentials provided by your administrator.",
   };
 }
 
-function renderLocalLoginPage(params: { title: string; subtitle: string; error?: string }): string {
+function renderLocalLoginPage(params: {
+  title: string;
+  subtitle: string;
+  error?: string;
+  formAction?: string;
+}): string {
   const escapedTitle = escapeHtml(params.title);
   const escapedSubtitle = escapeHtml(params.subtitle);
+  const escapedFormAction = escapeHtml(params.formAction || "/api/login");
   const message =
     params.error === "invalid_credentials"
       ? "Invalid username or password."
@@ -151,7 +400,7 @@ function renderLocalLoginPage(params: { title: string; subtitle: string; error?:
       <h1>${escapedTitle}</h1>
       <p>${escapedSubtitle}</p>
       ${message ? `<div class="error">${escapeHtml(message)}</div>` : ""}
-      <form method="post" action="/api/login">
+      <form method="post" action="${escapedFormAction}">
         <label for="username">Username</label>
         <input id="username" name="username" type="text" autocomplete="username" required />
         <label for="password">Password</label>
@@ -164,24 +413,680 @@ function renderLocalLoginPage(params: { title: string; subtitle: string; error?:
 </html>`;
 }
 
+function renderIdentityPlatformLoginPage(params: {
+  config: IdentityPlatformConfig;
+  appBaseUrl: string;
+  initialMode: "login" | "signup";
+  message?: string;
+  showLocalFallback: boolean;
+}): string {
+  const configJson = jsonForInlineScript({
+    apiKey: params.config.apiKey,
+    authDomain: params.config.authDomain,
+    appId: params.config.appId,
+    projectId: params.config.projectId,
+    tenantId: params.config.tenantId || null,
+    appBaseUrl: params.appBaseUrl,
+    localFallbackUrl: params.showLocalFallback ? "/api/login/local" : null,
+  });
+  const initialMode = jsonForInlineScript(params.initialMode);
+  const initialMessage = jsonForInlineScript(params.message || "");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocuWhisper Sign In</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-alt: #eef5f4;
+      --text: #0f172a;
+      --muted: #5b6674;
+      --line: #d7e1e7;
+      --accent: #0f766e;
+      --accent-dark: #115e59;
+      --danger: #b91c1c;
+      --danger-bg: #fef2f2;
+      --info-bg: #eff6ff;
+      --info: #1d4ed8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(15,118,110,0.08), transparent 28%),
+        linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 960px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      background: var(--panel);
+      border: 1px solid rgba(215,225,231,0.9);
+      border-radius: 24px;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.12);
+      overflow: hidden;
+    }
+    .hero {
+      background: linear-gradient(165deg, #0f766e 0%, #134e4a 100%);
+      color: #f8fafc;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+    }
+    .hero p {
+      margin: 0;
+      color: rgba(248,250,252,0.82);
+      line-height: 1.6;
+      max-width: 28rem;
+    }
+    .hero ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 10px;
+    }
+    .hero li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(248,250,252,0.92);
+    }
+    .hero li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #99f6e4;
+      flex: none;
+    }
+    .panel {
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .eyebrow {
+      margin: 0;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .title {
+      margin: 0;
+      font-size: 1.75rem;
+      letter-spacing: -0.03em;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .tabs {
+      display: inline-grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      padding: 6px;
+      background: var(--panel-alt);
+      border-radius: 999px;
+      width: 100%;
+      max-width: 340px;
+    }
+    .tab {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 14px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tab.active {
+      background: var(--panel);
+      color: var(--text);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+    }
+    .alert {
+      display: none;
+      border-radius: 14px;
+      padding: 12px 14px;
+      line-height: 1.5;
+      font-size: 0.95rem;
+    }
+    .alert.visible { display: block; }
+    .alert.info { background: var(--info-bg); color: var(--info); }
+    .alert.error { background: var(--danger-bg); color: var(--danger); }
+    .form {
+      display: none;
+      gap: 14px;
+    }
+    .form.active {
+      display: grid;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+    label {
+      font-size: 0.93rem;
+      font-weight: 700;
+    }
+    input {
+      width: 100%;
+      padding: 12px 13px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      font-size: 0.98rem;
+      color: var(--text);
+      background: #fff;
+    }
+    input:focus {
+      outline: 2px solid rgba(15,118,110,0.18);
+      border-color: var(--accent);
+    }
+    button.primary, button.secondary {
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 0.97rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    button.primary:hover { background: var(--accent-dark); }
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+      padding: 0;
+      text-align: left;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .small {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    .mfa-box {
+      display: none;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 16px;
+      background: var(--panel-alt);
+      border: 1px solid var(--line);
+    }
+    .mfa-box.visible { display: grid; }
+    .hidden { display: none !important; }
+    .footer-link {
+      margin-top: auto;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .footer-link a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    @media (max-width: 900px) {
+      .card { grid-template-columns: 1fr; }
+      .hero { padding: 28px; }
+    }
+    @media (max-width: 640px) {
+      .panel { padding: 24px; }
+      .row { grid-template-columns: 1fr; }
+      .actions { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <main class="card">
+      <section class="hero">
+        <div>
+          <h1>Clinical documentation without a shared login.</h1>
+          <p>Each clinician and staff member signs in with a unique account. New signups automatically create their own practice workspace on first verified login.</p>
+        </div>
+        <ul>
+          <li>Email/password sign-in through Google Identity Platform</li>
+          <li>Automatic practice bootstrap for new accounts</li>
+          <li>MFA-capable sign-in flow for TOTP-enrolled users</li>
+        </ul>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">DocuWhisper Access</p>
+        <h2 class="title">Sign in or create your account</h2>
+        <p class="subtitle">Use your own user account. Shared production logins are not supported.</p>
+        <div class="tabs" role="tablist" aria-label="Authentication mode">
+          <button class="tab" id="tab-login" type="button">Sign In</button>
+          <button class="tab" id="tab-signup" type="button">Create Account</button>
+        </div>
+        <div id="alert" class="alert" aria-live="polite"></div>
+
+        <form id="login-form" class="form" novalidate>
+          <div class="field">
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+          </div>
+          <div id="mfa-box" class="mfa-box">
+            <p class="small" id="mfa-copy">Enter the 6-digit code from your authenticator app.</p>
+            <div class="field">
+              <label for="mfa-code">Authenticator Code</label>
+              <input id="mfa-code" name="mfaCode" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" />
+            </div>
+            <button class="primary" type="button" id="mfa-submit">Verify Code</button>
+          </div>
+          <button class="primary" type="submit" id="login-submit">Sign In</button>
+          <div class="actions">
+            <button class="secondary" type="button" id="forgot-password">Send password reset email</button>
+            <button class="secondary hidden" type="button" id="resend-verification">Resend verification email</button>
+          </div>
+        </form>
+
+        <form id="signup-form" class="form" novalidate>
+          <div class="row">
+            <div class="field">
+              <label for="signup-first-name">First Name</label>
+              <input id="signup-first-name" name="firstName" type="text" autocomplete="given-name" required />
+            </div>
+            <div class="field">
+              <label for="signup-last-name">Last Name</label>
+              <input id="signup-last-name" name="lastName" type="text" autocomplete="family-name" required />
+            </div>
+          </div>
+          <div class="field">
+            <label for="signup-practice-name">Practice Name</label>
+            <input id="signup-practice-name" name="practiceName" type="text" autocomplete="organization" required />
+          </div>
+          <div class="field">
+            <label for="signup-email">Work Email</label>
+            <input id="signup-email" name="email" type="email" autocomplete="email" required />
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="signup-password">Password</label>
+              <input id="signup-password" name="password" type="password" autocomplete="new-password" required />
+            </div>
+            <div class="field">
+              <label for="signup-confirm-password">Confirm Password</label>
+              <input id="signup-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required />
+            </div>
+          </div>
+          <p class="small">After signup, we send an email verification link. Once verified, your first login creates your practice automatically.</p>
+          <button class="primary" type="submit" id="signup-submit">Create Account</button>
+        </form>
+
+        <p class="footer-link${params.showLocalFallback ? "" : " hidden"}">Emergency admin access is available at <a href="/api/login/local">/api/login/local</a>.</p>
+      </section>
+    </main>
+  </div>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import {
+      TotpMultiFactorGenerator,
+      createUserWithEmailAndPassword,
+      getMultiFactorResolver,
+      initializeAuth,
+      inMemoryPersistence,
+      sendEmailVerification,
+      sendPasswordResetEmail,
+      signInWithEmailAndPassword,
+      signOut,
+      updateProfile,
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+
+    const config = ${configJson};
+    const initialMode = ${initialMode};
+    const initialMessage = ${initialMessage};
+    const verificationUrl = config.appBaseUrl.replace(/\\/+$/, "") + "/api/login?mode=login&verified=1";
+    const app = initializeApp({
+      apiKey: config.apiKey,
+      authDomain: config.authDomain,
+      appId: config.appId,
+      projectId: config.projectId,
+    });
+    const auth = initializeAuth(app, { persistence: inMemoryPersistence });
+    if (config.tenantId) {
+      auth.tenantId = config.tenantId;
+    }
+
+    const alertEl = document.getElementById("alert");
+    const loginForm = document.getElementById("login-form");
+    const signupForm = document.getElementById("signup-form");
+    const tabLogin = document.getElementById("tab-login");
+    const tabSignup = document.getElementById("tab-signup");
+    const loginSubmit = document.getElementById("login-submit");
+    const signupSubmit = document.getElementById("signup-submit");
+    const resendVerificationButton = document.getElementById("resend-verification");
+    const forgotPasswordButton = document.getElementById("forgot-password");
+    const mfaBox = document.getElementById("mfa-box");
+    const mfaCodeInput = document.getElementById("mfa-code");
+    const mfaSubmit = document.getElementById("mfa-submit");
+    const mfaCopy = document.getElementById("mfa-copy");
+    const loginEmailInput = document.getElementById("login-email");
+    const loginPasswordInput = document.getElementById("login-password");
+    const signupEmailInput = document.getElementById("signup-email");
+    const signupFirstNameInput = document.getElementById("signup-first-name");
+    const signupLastNameInput = document.getElementById("signup-last-name");
+    const signupPracticeNameInput = document.getElementById("signup-practice-name");
+    const signupPasswordInput = document.getElementById("signup-password");
+    const signupConfirmPasswordInput = document.getElementById("signup-confirm-password");
+
+    let pendingMfaResolver = null;
+    let pendingMfaHint = null;
+    let unverifiedUser = null;
+
+    function onboardingKey(email) {
+      return "docuwhisper.identity.onboarding:" + String(email || "").trim().toLowerCase();
+    }
+
+    function saveOnboarding(email, data) {
+      if (!email) return;
+      localStorage.setItem(onboardingKey(email), JSON.stringify(data));
+    }
+
+    function readOnboarding(email) {
+      if (!email) return null;
+      const raw = localStorage.getItem(onboardingKey(email));
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+
+    function clearOnboarding(email) {
+      if (!email) return;
+      localStorage.removeItem(onboardingKey(email));
+    }
+
+    function setMessage(message, tone = "info") {
+      if (!message) {
+        alertEl.textContent = "";
+        alertEl.className = "alert";
+        return;
+      }
+      alertEl.textContent = message;
+      alertEl.className = "alert visible " + tone;
+    }
+
+    function setMode(mode) {
+      const loginActive = mode === "login";
+      tabLogin.classList.toggle("active", loginActive);
+      tabSignup.classList.toggle("active", !loginActive);
+      loginForm.classList.toggle("active", loginActive);
+      signupForm.classList.toggle("active", !loginActive);
+      history.replaceState(null, "", "/api/login?mode=" + mode);
+      if (loginActive) {
+        loginEmailInput.focus();
+      } else {
+        signupFirstNameInput.focus();
+      }
+    }
+
+    function setLoading(button, loadingText, active) {
+      button.disabled = active;
+      if (!button.dataset.defaultLabel) {
+        button.dataset.defaultLabel = button.textContent || "";
+      }
+      button.textContent = active ? loadingText : button.dataset.defaultLabel;
+    }
+
+    async function establishBackendSession(user) {
+      const email = user.email || loginEmailInput.value.trim();
+      const onboarding = readOnboarding(email) || {};
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/auth/identity/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          idToken,
+          firstName: onboarding.firstName || "",
+          lastName: onboarding.lastName || "",
+          practiceName: onboarding.practiceName || "",
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || "Unable to establish the application session.");
+      }
+
+      clearOnboarding(email);
+      await signOut(auth).catch(() => {});
+      window.location.href = data.redirectTo || "/";
+    }
+
+    function revealMfa(resolver) {
+      pendingMfaResolver = resolver;
+      pendingMfaHint = resolver.hints.find((hint) => hint.factorId === TotpMultiFactorGenerator.FACTOR_ID) || resolver.hints[0];
+      if (!pendingMfaHint) {
+        throw new Error("MFA is required, but no supported TOTP factor was found.");
+      }
+      mfaCopy.textContent = "Enter the code from your authenticator app for " + (pendingMfaHint.displayName || pendingMfaHint.factorId || "your account") + ".";
+      mfaBox.classList.add("visible");
+      mfaCodeInput.value = "";
+      mfaCodeInput.focus();
+    }
+
+    async function finalizeSuccessfulLogin(user) {
+      if (!user.emailVerified) {
+        unverifiedUser = user;
+        resendVerificationButton.classList.remove("hidden");
+        setMessage("Verify your email address before continuing. We can resend the verification email from this page.", "error");
+        return;
+      }
+
+      resendVerificationButton.classList.add("hidden");
+      await establishBackendSession(user);
+    }
+
+    tabLogin.addEventListener("click", () => setMode("login"));
+    tabSignup.addEventListener("click", () => setMode("signup"));
+
+    resendVerificationButton.addEventListener("click", async () => {
+      if (!unverifiedUser) {
+        setMessage("Sign in first so we know which account to resend verification for.", "error");
+        return;
+      }
+
+      setLoading(resendVerificationButton, "Sending...", true);
+      try {
+        await sendEmailVerification(unverifiedUser, { url: verificationUrl });
+        setMessage("Verification email sent. After confirming it, return here and sign in again.", "info");
+      } catch (error) {
+        setMessage(error.message || "Unable to send verification email.", "error");
+      } finally {
+        setLoading(resendVerificationButton, "Sending...", false);
+      }
+    });
+
+    forgotPasswordButton.addEventListener("click", async () => {
+      const email = loginEmailInput.value.trim();
+      if (!email) {
+        setMessage("Enter your email address first, then request a password reset.", "error");
+        return;
+      }
+
+      setLoading(forgotPasswordButton, "Sending reset...", true);
+      try {
+        await sendPasswordResetEmail(auth, email);
+        setMessage("Password reset email sent. Check your inbox for the reset link.", "info");
+      } catch (error) {
+        setMessage(error.message || "Unable to send the password reset email.", "error");
+      } finally {
+        setLoading(forgotPasswordButton, "Sending reset...", false);
+      }
+    });
+
+    mfaSubmit.addEventListener("click", async () => {
+      if (!pendingMfaResolver || !pendingMfaHint) {
+        setMessage("Start the login flow again to complete MFA.", "error");
+        return;
+      }
+      const otp = mfaCodeInput.value.trim();
+      if (!otp) {
+        setMessage("Enter the code from your authenticator app.", "error");
+        return;
+      }
+
+      setLoading(mfaSubmit, "Verifying...", true);
+      try {
+        const assertion = TotpMultiFactorGenerator.assertionForSignIn(pendingMfaHint.uid, otp);
+        const credential = await pendingMfaResolver.resolveSignIn(assertion);
+        pendingMfaResolver = null;
+        pendingMfaHint = null;
+        mfaBox.classList.remove("visible");
+        await finalizeSuccessfulLogin(credential.user);
+      } catch (error) {
+        setMessage(error.message || "The MFA code was not accepted.", "error");
+      } finally {
+        setLoading(mfaSubmit, "Verifying...", false);
+      }
+    });
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setMessage("");
+      resendVerificationButton.classList.add("hidden");
+      unverifiedUser = null;
+
+      const email = loginEmailInput.value.trim();
+      const password = loginPasswordInput.value;
+      if (!email || !password) {
+        setMessage("Enter your email address and password.", "error");
+        return;
+      }
+
+      setLoading(loginSubmit, "Signing in...", true);
+      try {
+        const credential = await signInWithEmailAndPassword(auth, email, password);
+        await finalizeSuccessfulLogin(credential.user);
+      } catch (error) {
+        if (error.code === "auth/multi-factor-auth-required") {
+          const resolver = getMultiFactorResolver(auth, error);
+          revealMfa(resolver);
+          setMessage("A second factor is required for this account.", "info");
+        } else {
+          setMessage(error.message || "Unable to sign in.", "error");
+        }
+      } finally {
+        setLoading(loginSubmit, "Signing in...", false);
+      }
+    });
+
+    signupForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setMessage("");
+
+      const firstName = signupFirstNameInput.value.trim();
+      const lastName = signupLastNameInput.value.trim();
+      const practiceName = signupPracticeNameInput.value.trim();
+      const email = signupEmailInput.value.trim();
+      const password = signupPasswordInput.value;
+      const confirmPassword = signupConfirmPasswordInput.value;
+
+      if (!firstName || !lastName || !practiceName || !email || !password) {
+        setMessage("Complete every signup field before continuing.", "error");
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setMessage("The password confirmation does not match.", "error");
+        return;
+      }
+
+      setLoading(signupSubmit, "Creating account...", true);
+      try {
+        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        const displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
+        if (displayName) {
+          await updateProfile(credential.user, { displayName });
+        }
+        saveOnboarding(email, { firstName, lastName, practiceName });
+        await sendEmailVerification(credential.user, { url: verificationUrl });
+        await signOut(auth).catch(() => {});
+        loginEmailInput.value = email;
+        signupPasswordInput.value = "";
+        signupConfirmPasswordInput.value = "";
+        setMode("login");
+        setMessage("Account created. Check your email for the verification link, then sign in to finish setup.", "info");
+      } catch (error) {
+        setMessage(error.message || "Unable to create the account.", "error");
+      } finally {
+        setLoading(signupSubmit, "Creating account...", false);
+      }
+    });
+
+    setMode(initialMode === "signup" ? "signup" : "login");
+    if (initialMessage) {
+      setMessage(initialMessage, "info");
+    }
+  </script>
+</body>
+</html>`;
+}
+
 export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
     createTableIfMissing: false,
-    ttl: sessionTtl,
+    ttl: SESSION_TTL_MS,
     tableName: "sessions",
   });
   return session({
-    secret: process.env.SESSION_SECRET!,
+    secret: getSessionSecret(),
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       secure: true,
-      maxAge: sessionTtl,
+      maxAge: SESSION_TTL_MS,
     },
   });
 }
@@ -196,13 +1101,223 @@ function updateUserSession(
   user.expires_at = user.claims?.exp;
 }
 
-async function upsertUser(claims: any) {
+function splitDisplayName(value: unknown): { firstName?: string; lastName?: string } {
+  if (typeof value !== "string") return {};
+  const trimmed = value.trim();
+  if (!trimmed) return {};
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0] };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+}
+
+function deriveUserProfile(
+  claims: Record<string, unknown>,
+  overrides?: { firstName?: string; lastName?: string; profileImageUrl?: string | null }
+) {
+  const parsedName = splitDisplayName(claims["name"]);
+  const firstName =
+    overrides?.firstName?.trim() ||
+    (typeof claims["first_name"] === "string" ? claims["first_name"].trim() : "") ||
+    parsedName.firstName ||
+    "";
+  const lastName =
+    overrides?.lastName?.trim() ||
+    (typeof claims["last_name"] === "string" ? claims["last_name"].trim() : "") ||
+    parsedName.lastName ||
+    "";
+  const profileImageUrl =
+    overrides?.profileImageUrl ??
+    (typeof claims["profile_image_url"] === "string"
+      ? claims["profile_image_url"]
+      : typeof claims["picture"] === "string"
+        ? claims["picture"]
+        : null);
+
+  return {
+    firstName,
+    lastName,
+    profileImageUrl,
+  };
+}
+
+function buildIdentitySessionClaims(
+  claims: IdentityPlatformClaims,
+  overrides?: { firstName?: string; lastName?: string; profileImageUrl?: string | null }
+) {
+  const profile = deriveUserProfile(claims as unknown as Record<string, unknown>, overrides);
+  return {
+    sub: claims.sub,
+    email: claims.email || null,
+    email_verified: claims.email_verified === true,
+    first_name: profile.firstName || null,
+    last_name: profile.lastName || null,
+    name: claims.name || [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim() || null,
+    profile_image_url: profile.profileImageUrl || null,
+    firebase: claims.firebase,
+  };
+}
+
+async function upsertUser(
+  claims: Record<string, unknown>,
+  overrides?: { firstName?: string; lastName?: string; profileImageUrl?: string | null }
+) {
+  const profile = deriveUserProfile(claims, overrides);
+  const userId = typeof claims["sub"] === "string" ? claims["sub"] : "";
+  const email = typeof claims["email"] === "string" ? claims["email"] : null;
   await authStorage.upsertUser({
-    id: claims["sub"],
-    email: claims["email"],
-    firstName: claims["first_name"],
-    lastName: claims["last_name"],
-    profileImageUrl: claims["profile_image_url"],
+    id: userId,
+    email,
+    firstName: profile.firstName || null,
+    lastName: profile.lastName || null,
+    profileImageUrl: profile.profileImageUrl || null,
+  });
+}
+
+function getPendingRedirect(sessionData: any | undefined): string {
+  const redirectTo = typeof sessionData?.returnTo === "string" ? sessionData.returnTo : "/";
+  if (sessionData && "returnTo" in sessionData) {
+    delete sessionData.returnTo;
+  }
+  return redirectTo;
+}
+
+async function establishSession(req: Request, userSession: Record<string, unknown>): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    (req as any).login(userSession, (error: unknown) => {
+      if (error) return reject(error);
+      resolve();
+    });
+  });
+
+  const sessionData = (req as any).session as any | undefined;
+  const redirectTo = getPendingRedirect(sessionData);
+
+  await new Promise<void>((resolve, reject) => {
+    if (!sessionData || typeof sessionData.save !== "function") {
+      return resolve();
+    }
+    sessionData.save((error: unknown) => {
+      if (error) return reject(error);
+      resolve();
+    });
+  });
+
+  return redirectTo;
+}
+
+function derivePracticeName(
+  providedPracticeName: string,
+  firstName: string,
+  lastName: string,
+  email: string
+): string {
+  const trimmedPracticeName = providedPracticeName.trim();
+  if (trimmedPracticeName) return trimmedPracticeName;
+
+  const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(" ").trim();
+  if (fullName) return `${fullName} Practice`;
+
+  const emailPrefix = email.split("@")[0]?.trim();
+  if (emailPrefix) return `${emailPrefix} Practice`;
+
+  return "My Practice";
+}
+
+function buildIdentityPageMessage(req: Request): string {
+  if (req.query.verified === "1") {
+    return "Email verified. Sign in to finish setting up your workspace.";
+  }
+  if (req.query.reset === "1") {
+    return "Password updated. Sign in with your new password.";
+  }
+  return "";
+}
+
+function registerLocalCredentialRoutes(
+  app: Express,
+  localAuthConfig: LocalAuthConfig,
+  loginPath: string
+) {
+  app.get(loginPath, (req, res) => {
+    if (req.isAuthenticated?.()) {
+      const returnTo = typeof (req as any).session?.returnTo === "string" ? (req as any).session.returnTo : "/";
+      return res.redirect(returnTo);
+    }
+    const error = typeof req.query.error === "string" ? req.query.error : undefined;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.status(200).send(
+      renderLocalLoginPage({
+        title: localAuthConfig.title,
+        subtitle: localAuthConfig.subtitle,
+        error,
+        formAction: loginPath,
+      })
+    );
+  });
+
+  app.post(loginPath, express.urlencoded({ extended: false }), async (req, res) => {
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+    const usernameValid = username.length > 0 && constantTimeEquals(username, localAuthConfig.username);
+    const passwordValid = password.length > 0 && constantTimeEquals(password, localAuthConfig.password);
+    if (!usernameValid || !passwordValid) {
+      return res.redirect(`${loginPath}?error=invalid_credentials`);
+    }
+
+    const expiresAt = Math.floor((Date.now() + SESSION_TTL_MS) / 1000);
+
+    try {
+      await authStorage.upsertUser({
+        id: localAuthConfig.userId,
+        email: localAuthConfig.userEmail,
+        firstName: localAuthConfig.firstName,
+        lastName: localAuthConfig.lastName,
+        profileImageUrl: null,
+      });
+
+      const redirectTo = await establishSession(req, {
+        claims: {
+          sub: localAuthConfig.userId,
+          email: localAuthConfig.userEmail,
+          first_name: localAuthConfig.firstName,
+          last_name: localAuthConfig.lastName,
+          exp: expiresAt,
+        },
+        access_token: "local_auth",
+        refresh_token: undefined,
+        expires_at: expiresAt,
+      });
+
+      void logSecurityEvent(req, "login", localAuthConfig.userId, localAuthConfig.userEmail, {
+        method: "local_password",
+      });
+      return res.redirect(redirectTo);
+    } catch (error) {
+      console.error("[local-auth] Login failed:", error);
+      return res.redirect(`${loginPath}?error=login_failed`);
+    }
+  });
+}
+
+function registerSimpleLogoutRoute(app: Express) {
+  app.get("/api/logout", (req, res) => {
+    const user = req.user as any;
+    const userId = user?.claims?.sub;
+    const userEmail = user?.claims?.email;
+
+    if (userId) {
+      void logSecurityEvent(req, "logout", userId, userEmail);
+    }
+
+    req.logout(() => {
+      res.redirect("/");
+    });
   });
 }
 
@@ -216,85 +1331,112 @@ export async function setupAuth(app: Express) {
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   const localAuthConfig = getLocalAuthConfig();
-  if (localAuthConfig.enabled) {
+  const identityPlatformConfig = ensureIdentityPlatformConfig(getIdentityPlatformConfig());
+
+  if (identityPlatformConfig.enabled) {
+    if (localAuthConfig.enabled) {
+      registerLocalCredentialRoutes(app, localAuthConfig, "/api/login/local");
+    }
+
     app.get("/api/login", (req, res) => {
       if (req.isAuthenticated?.()) {
         const returnTo = typeof (req as any).session?.returnTo === "string" ? (req as any).session.returnTo : "/";
         return res.redirect(returnTo);
       }
-      const error = typeof req.query.error === "string" ? req.query.error : undefined;
+
+      const requestedMode = req.query.mode === "signup" ? "signup" : "login";
+      const appBaseUrl =
+        identityPlatformConfig.appBaseUrl || `${req.protocol}://${req.get("host") || req.hostname}`;
+
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(
-        renderLocalLoginPage({
-          title: localAuthConfig.title,
-          subtitle: localAuthConfig.subtitle,
-          error,
+        renderIdentityPlatformLoginPage({
+          config: identityPlatformConfig,
+          appBaseUrl,
+          initialMode: requestedMode,
+          message: buildIdentityPageMessage(req),
+          showLocalFallback: localAuthConfig.enabled,
         })
       );
     });
 
-    app.post("/api/login", express.urlencoded({ extended: false }), async (req, res) => {
-      const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
-      const password = typeof req.body?.password === "string" ? req.body.password : "";
+    app.post("/api/auth/identity/session", express.json(), async (req, res) => {
+      const idToken = typeof req.body?.idToken === "string" ? req.body.idToken.trim() : "";
+      const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+      const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+      const practiceName = typeof req.body?.practiceName === "string" ? req.body.practiceName.trim() : "";
 
-      const usernameValid = username.length > 0 && constantTimeEquals(username, localAuthConfig.username);
-      const passwordValid = password.length > 0 && constantTimeEquals(password, localAuthConfig.password);
-      if (!usernameValid || !passwordValid) {
-        return res.redirect("/api/login?error=invalid_credentials");
+      if (!idToken) {
+        return res.status(400).json({ message: "Identity token is required." });
       }
 
-      const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
       try {
-        await authStorage.upsertUser({
-          id: localAuthConfig.userId,
-          email: localAuthConfig.userEmail,
-          firstName: localAuthConfig.firstName,
-          lastName: localAuthConfig.lastName,
-          profileImageUrl: null,
+        const claims = await verifyIdentityPlatformIdToken(idToken, identityPlatformConfig);
+        if (!claims.email) {
+          return res.status(400).json({ message: "Authenticated account is missing an email address." });
+        }
+        if (claims.email_verified !== true) {
+          return res.status(403).json({ message: "Verify your email address before signing in." });
+        }
+
+        const normalizedClaims = buildIdentitySessionClaims(claims, { firstName, lastName });
+        await upsertUser(claims as unknown as Record<string, unknown>, {
+          firstName: normalizedClaims.first_name || undefined,
+          lastName: normalizedClaims.last_name || undefined,
+          profileImageUrl: normalizedClaims.profile_image_url,
         });
 
-        const userSession = {
+        const userPractices = await storage.getUserPractices(claims.sub);
+        let createdPractice: { id: number; name: string } | null = null;
+        if (userPractices.length === 0) {
+          const derivedPracticeName = derivePracticeName(
+            practiceName,
+            normalizedClaims.first_name || "",
+            normalizedClaims.last_name || "",
+            claims.email
+          );
+          const practice = await storage.createPractice({
+            name: derivedPracticeName,
+            ownerId: claims.sub,
+            description: "Practice created automatically during account setup.",
+          });
+          createdPractice = {
+            id: practice.id,
+            name: practice.name,
+          };
+
+          await storage.upsertUserSettings({
+            userId: claims.sub,
+            firstName: normalizedClaims.first_name || null,
+            lastName: normalizedClaims.last_name || null,
+            practiceName: practice.name,
+          });
+        }
+
+        const expiresAt = Math.floor((Date.now() + SESSION_TTL_MS) / 1000);
+        const redirectTo = await establishSession(req, {
           claims: {
-            sub: localAuthConfig.userId,
-            email: localAuthConfig.userEmail,
-            first_name: localAuthConfig.firstName,
-            last_name: localAuthConfig.lastName,
+            ...normalizedClaims,
             exp: expiresAt,
           },
-          access_token: "local_auth",
+          access_token: "identity_platform",
           refresh_token: undefined,
           expires_at: expiresAt,
-        };
-
-        await new Promise<void>((resolve, reject) => {
-          (req as any).login(userSession, (error: unknown) => {
-            if (error) return reject(error);
-            resolve();
-          });
         });
 
-        const session = (req as any).session as any | undefined;
-        const returnTo = typeof session?.returnTo === "string" ? session.returnTo : "/";
-        if (session && "returnTo" in session) {
-          delete session.returnTo;
-        }
+        void logSecurityEvent(req, "login", claims.sub, claims.email, {
+          method: "identity_platform",
+          createdPractice: !!createdPractice,
+        });
 
-        const finish = () => {
-          void logSecurityEvent(req, "login", localAuthConfig.userId, localAuthConfig.userEmail, {
-            method: "local_password",
-          });
-          res.redirect(returnTo);
-        };
-
-        if (session && typeof session.save === "function") {
-          return session.save(finish);
-        }
-
-        return finish();
+        return res.status(200).json({
+          ok: true,
+          redirectTo,
+          createdPractice,
+        });
       } catch (error) {
-        console.error("[local-auth] Login failed:", error);
-        return res.redirect("/api/login?error=login_failed");
+        console.error("[identity-platform] Session establishment failed:", error);
+        return res.status(401).json({ message: "Unable to verify the signed-in user." });
       }
     });
 
@@ -302,20 +1444,18 @@ export async function setupAuth(app: Express) {
       res.redirect("/api/login");
     });
 
-    app.get("/api/logout", (req, res) => {
-      const user = req.user as any;
-      const userId = user?.claims?.sub;
-      const userEmail = user?.claims?.email;
+    registerSimpleLogoutRoute(app);
+    return;
+  }
 
-      if (userId) {
-        void logSecurityEvent(req, "logout", userId, userEmail);
-      }
+  if (localAuthConfig.enabled) {
+    registerLocalCredentialRoutes(app, localAuthConfig, "/api/login");
 
-      req.logout(() => {
-        res.redirect("/");
-      });
+    app.get("/api/callback", (_req, res) => {
+      res.redirect("/api/login");
     });
 
+    registerSimpleLogoutRoute(app);
     return;
   }
 
@@ -391,7 +1531,7 @@ export async function setupAuth(app: Express) {
     req.logout(() => {
       res.redirect(
         client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
+          client_id: getReplitClientId(),
           post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
         }).href
       );

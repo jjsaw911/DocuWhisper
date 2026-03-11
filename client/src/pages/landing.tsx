@@ -25,7 +25,7 @@ export default function Landing() {
                 <a href="/api/login">Log In</a>
               </Button>
               <Button asChild data-testid="button-get-started">
-                <a href="/api/login">Get Started</a>
+                <a href="/api/login?mode=signup">Get Started</a>
               </Button>
             </div>
           </div>
@@ -54,7 +54,7 @@ export default function Landing() {
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <Button size="lg" className="text-base px-8" asChild data-testid="button-hero-get-started">
-                  <a href="/api/login">
+                  <a href="/api/login?mode=signup">
                     Start Free Trial
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </a>
@@ -357,7 +357,7 @@ export default function Landing() {
                     ))}
                   </ul>
                   <Button className="w-full" size="lg" asChild data-testid="button-pricing-subscribe">
-                    <a href="/api/login">Start 14-Day Free Trial</a>
+                    <a href="/api/login?mode=signup">Start 14-Day Free Trial</a>
                   </Button>
                 </CardContent>
               </Card>
@@ -452,7 +452,7 @@ export default function Landing() {
                 Join thousands of healthcare providers who have reclaimed their time with DocuWhisper.
               </p>
               <Button size="lg" className="text-base px-8 bg-primary text-primary-foreground hover:bg-primary/90" asChild data-testid="button-cta-get-started">
-                <a href="/api/login">
+                <a href="/api/login?mode=signup">
                   Get Started for Free
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </a>
