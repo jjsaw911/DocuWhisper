@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
+    "import:backup": "tsx scripts/import-backup.ts",
     "remap:user": "tsx scripts/remap-user-id.ts",
     "smoke:transcribe-soap": "node --import tsx scripts/smoke-transcribe-soap.ts"
   },
