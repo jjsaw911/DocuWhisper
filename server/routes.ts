@@ -39,6 +39,50 @@ import { PERSONAL_API_SCOPES } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
 
+function readEnv(name: string): string {
+  const value = process.env[name];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+type StripeClient = Awaited<ReturnType<typeof getUncachableStripeClient>>;
+
+async function resolveSubscriptionPrice(stripe: StripeClient) {
+  const configuredPriceId = readEnv("STRIPE_PRICE_ID");
+
+  if (configuredPriceId) {
+    const price = await stripe.prices.retrieve(configuredPriceId, {
+      expand: ["product"],
+    });
+
+    if (!price.active) {
+      throw new Error(`Configured Stripe price ${configuredPriceId} is inactive.`);
+    }
+
+    if (price.type !== "recurring" || price.recurring?.interval !== "month") {
+      throw new Error("Configured STRIPE_PRICE_ID must point to an active monthly recurring price.");
+    }
+
+    return price;
+  }
+
+  const prices = await stripe.prices.list({
+    active: true,
+    limit: 100,
+    recurring: { interval: "month" },
+    expand: ["data.product"],
+  });
+
+  if (prices.data.length === 0) {
+    return null;
+  }
+
+  if (prices.data.length > 1) {
+    throw new Error("Multiple active monthly Stripe prices found. Set STRIPE_PRICE_ID for DocuWhisper.");
+  }
+
+  return prices.data[0];
+}
+
 const speakerSegmentSchema = z.object({
   speaker: z.enum(["clinician", "patient"]),
   text: z.string(),
@@ -2421,19 +2465,9 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.get("/api/stripe/price", isAuthenticated, async (req: any, res: Response) => {
     try {
       const stripe = await getUncachableStripeClient();
-      
-      const prices = await stripe.prices.list({
-        active: true,
-        limit: 10,
-        recurring: { interval: 'month' },
-        expand: ['data.product'],
-      });
 
-      const docuWhisperPrice = prices.data.find(p => 
-        p.unit_amount === 2500 && p.currency === 'usd'
-      );
-      
-      res.json({ price: docuWhisperPrice || prices.data[0] || null });
+      const price = await resolveSubscriptionPrice(stripe);
+      res.json({ price });
     } catch (error) {
       console.error("Error fetching price:", error);
       res.status(500).json({ error: "Failed to fetch price" });
@@ -2463,13 +2497,8 @@ Focus only on clinically significant interactions. Do not include minor or theor
         });
       }
 
-      const prices = await stripe.prices.list({
-        active: true,
-        limit: 1,
-        recurring: { interval: 'month' },
-      });
-
-      const priceId = prices.data[0]?.id;
+      const price = await resolveSubscriptionPrice(stripe);
+      const priceId = price?.id;
 
       if (!priceId) {
         return res.status(400).json({ error: "No price configured. Please set up products in Stripe." });

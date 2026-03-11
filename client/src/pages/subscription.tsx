@@ -124,6 +124,12 @@ export default function Subscription() {
   const isOwner = adminCheck?.isAdmin === true;
   const isLifetime = subscription?.currentPeriodEnd && 
     new Date(subscription.currentPeriodEnd).getFullYear() > new Date().getFullYear() + 50;
+  const formattedMonthlyPrice = priceData?.price?.unit_amount != null
+    ? new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: (priceData.price.currency || "usd").toUpperCase(),
+      }).format(priceData.price.unit_amount / 100)
+    : "$25";
 
   return (
     <div className="h-full overflow-auto bg-background">
@@ -176,7 +182,7 @@ export default function Subscription() {
               <CardContent>
                 {!isOwner && (
                   <div className="flex items-baseline gap-1 mb-4">
-                    <span className="text-4xl font-bold">$25</span>
+                    <span className="text-4xl font-bold">{formattedMonthlyPrice}</span>
                     <span className="text-muted-foreground">/month</span>
                   </div>
                 )}
@@ -271,7 +277,7 @@ export default function Subscription() {
                         </>
                       ) : (
                         <>
-                          Subscribe for $25/month
+                          Subscribe for {formattedMonthlyPrice}/month
                         </>
                       )}
                     </Button>
