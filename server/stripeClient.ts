@@ -91,6 +91,7 @@ export async function getStripeSync() {
   if (!stripeSync) {
     const { StripeSync } = await import('stripe-replit-sync');
     const secretKey = await getStripeSecretKey();
+    const webhookSecret = readEnv("STRIPE_WEBHOOK_SECRET") || undefined;
 
     stripeSync = new StripeSync({
       poolConfig: {
@@ -98,6 +99,7 @@ export async function getStripeSync() {
         max: 2,
       },
       stripeSecretKey: secretKey,
+      stripeWebhookSecret: webhookSecret,
     });
   }
   return stripeSync;

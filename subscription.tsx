@@ -6,12 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import {
-  SUBSCRIPTION_PLANS,
-  type BillingInterval,
-  type SubscriptionPlanCode,
-} from "@shared/subscriptionPlans";
+import { SUBSCRIPTION_PLANS, type SubscriptionPlanCode } from "@shared/subscriptionPlans";
 import { Link } from "wouter";
 import { useState } from "react";
 import { 
@@ -40,9 +37,7 @@ interface SubscriptionData {
     code: string | null;
     name: string;
     monthlyPriceCents: number | null;
-    annualPriceCents: number | null;
     monthlyNoteAllowance: number | null;
-    billingInterval?: BillingInterval | null;
     unlimited: boolean;
     source: string;
   };
@@ -61,29 +56,25 @@ interface PriceData {
   id: string;
   unit_amount: number | null;
   currency: string;
-  recurring?: { interval: BillingInterval };
+  recurring?: { interval: string };
   productName?: string | null;
 }
 
 interface AdminCheckData {
   isAdmin: boolean;
-  isSuperAdmin: boolean;
 }
 
 export default function Subscription() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [inviteCode, setInviteCode] = useState("");
-  const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
 
   const { data: subscription, isLoading: subLoading, refetch: refetchSub } = useQuery<SubscriptionData>({
     queryKey: ["/api/subscription"],
     enabled: !!user,
   });
 
-  const { data: pricesData } = useQuery<{
-    prices?: Partial<Record<SubscriptionPlanCode, Partial<Record<BillingInterval, PriceData>>>>;
-  }>({
+  const { data: pricesData } = useQuery<{ prices?: Partial<Record<SubscriptionPlanCode, PriceData>> }>({
     queryKey: ["/api/stripe/prices"],
     enabled: !!user,
   });
@@ -94,17 +85,8 @@ export default function Subscription() {
   });
 
   const checkoutMutation = useMutation({
-    mutationFn: async ({
-      planCode,
-      billingInterval,
-    }: {
-      planCode: SubscriptionPlanCode;
-      billingInterval: BillingInterval;
-    }) => {
-      const response = await apiRequest("POST", "/api/stripe/checkout", {
-        planCode,
-        billingInterval,
-      });
+    mutationFn: async (planCode: SubscriptionPlanCode) => {
+      const response = await apiRequest("POST", "/api/stripe/checkout", { planCode });
       return response.json();
     },
     onSuccess: (data) => {
@@ -165,8 +147,7 @@ export default function Subscription() {
   const accessState = subscription?.accessState || (subscription?.status === "active" ? "active" : "inactive");
   const isTrial = accessState === "trial";
   const isActive = accessState === "active";
-  const hasAdminAccess = adminCheck?.isAdmin === true;
-  const isSuperAdmin = adminCheck?.isSuperAdmin === true;
+  const isOwner = adminCheck?.isAdmin === true;
   const isLifetime = accessState === "lifetime";
   const canManageBilling = subscription?.canManageBilling === true;
   const currentPlan = subscription?.plan;
@@ -177,12 +158,8 @@ export default function Subscription() {
       style: "currency",
       currency: "USD",
     }).format(amountCents / 100);
-  const formatPriceForPlan = (
-    planCode: SubscriptionPlanCode,
-    interval: BillingInterval,
-    fallbackCents: number,
-  ) => {
-    const price = pricesByPlan[planCode]?.[interval];
+  const formatPriceForPlan = (planCode: SubscriptionPlanCode, fallbackCents: number) => {
+    const price = pricesByPlan[planCode];
     if (price?.unit_amount != null) {
       return new Intl.NumberFormat("en-US", {
         style: "currency",
@@ -191,29 +168,16 @@ export default function Subscription() {
     }
     return formattedCurrency(fallbackCents);
   };
-  const hasAnnualOption = PUBLIC_CHECKOUT_PLAN_CODES.some((planCode) => Boolean(pricesByPlan[planCode]?.year));
-  const formattedMonthlyPrice = formatPriceForPlan("unlimited", "month", 5900);
-  const formattedAnnualPrice = formatPriceForPlan("unlimited", "year", 59000);
-  const currentPlanBillingInterval = currentPlan?.billingInterval ?? "month";
-  const currentPlanPriceCents =
-    currentPlanBillingInterval === "year"
-      ? currentPlan?.annualPriceCents ?? null
-      : currentPlan?.monthlyPriceCents ?? null;
+  const formattedMonthlyPrice = formatPriceForPlan("unlimited", 5900);
   const formattedPlanPrice =
-    currentPlanPriceCents != null
-      ? formattedCurrency(currentPlanPriceCents)
-      : currentPlanBillingInterval === "year"
-        ? formattedAnnualPrice
-        : formattedMonthlyPrice;
+    currentPlan?.monthlyPriceCents != null ? formattedCurrency(currentPlan.monthlyPriceCents) : formattedMonthlyPrice;
   const shouldShowPlanPrice =
-    !hasAdminAccess &&
+    !isOwner &&
     !isTrial &&
     !isLifetime &&
-    (currentPlanPriceCents != null || accessState === "inactive");
+    (currentPlan?.monthlyPriceCents != null || accessState === "inactive");
   const checkoutPlans = SUBSCRIPTION_PLANS.filter(
-    (plan) =>
-      PUBLIC_CHECKOUT_PLAN_CODES.includes(plan.code) &&
-      Boolean(pricesByPlan[plan.code]?.[billingInterval]),
+    (plan) => PUBLIC_CHECKOUT_PLAN_CODES.includes(plan.code) && Boolean(pricesByPlan[plan.code]),
   );
 
   return (
@@ -226,21 +190,15 @@ export default function Subscription() {
           </div>
         ) : (
           <div className="space-y-6">
-            {hasAdminAccess && (
+            {isOwner && (
               <Card className="border-2 border-primary bg-primary/5" data-testid="card-owner">
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    {isSuperAdmin ? (
-                      <Crown className="h-5 w-5 text-primary" />
-                    ) : (
-                      <Shield className="h-5 w-5 text-primary" />
-                    )}
-                    <CardTitle>{isSuperAdmin ? "Super Admin Account" : "Admin Account"}</CardTitle>
+                    <Crown className="h-5 w-5 text-primary" />
+                    <CardTitle>Owner Account</CardTitle>
                   </div>
                   <CardDescription>
-                    {isSuperAdmin
-                      ? "You are the DocuWhisper super admin. You have full access to all features and can manage admin roles."
-                      : "You have DocuWhisper admin access, including the admin dashboard and protected admin tools."}
+                    You are the owner of DocuWhisper. You have full access to all features and the admin dashboard.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -258,25 +216,13 @@ export default function Subscription() {
               <CardHeader>
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle>Current Plan</CardTitle>
-                  <Badge variant={hasAdminAccess || isActive ? "default" : "secondary"}>
-                    {hasAdminAccess
-                      ? isSuperAdmin
-                        ? "Super Admin"
-                        : "Admin"
-                      : isLifetime
-                        ? "Lifetime"
-                        : isTrial
-                          ? "Trial"
-                          : isActive
-                            ? "Active"
-                            : "Inactive"}
+                  <Badge variant={isOwner || isActive ? "default" : "secondary"}>
+                    {isOwner ? "Owner" : isLifetime ? "Lifetime" : isTrial ? "Trial" : isActive ? "Active" : "Inactive"}
                   </Badge>
                 </div>
                 <CardDescription>
-                  {hasAdminAccess
-                    ? isSuperAdmin
-                      ? "As the super admin, you have permanent full access to DocuWhisper"
-                      : "As an admin, you have full access to DocuWhisper and the admin dashboard"
+                  {isOwner
+                    ? "As the owner, you have permanent full access to DocuWhisper"
                     : isTrial
                     ? "You're on your 14-day free trial. Subscribe before it ends to keep access."
                     : isActive
@@ -300,13 +246,8 @@ export default function Subscription() {
                     <span className="text-4xl font-bold">
                       {formattedPlanPrice}
                     </span>
-                    <span className="text-muted-foreground">
-                      /{currentPlanBillingInterval === "year" ? "year" : "month"}
-                    </span>
+                    <span className="text-muted-foreground">/month</span>
                   </div>
-                )}
-                {currentPlanBillingInterval === "year" && isActive && (
-                  <p className="mb-4 text-sm text-muted-foreground">Billed annually.</p>
                 )}
                 {(isActive || isTrial) && subscription?.currentPeriodEnd && !isLifetime && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -326,7 +267,7 @@ export default function Subscription() {
               </CardContent>
             </Card>
 
-            {usage && (subscription?.hasAccess || hasAdminAccess) && (
+            {usage && (subscription?.hasAccess || isOwner) && (
               <Card data-testid="card-usage">
                 <CardHeader>
                   <CardTitle>Usage This Cycle</CardTitle>
@@ -366,7 +307,7 @@ export default function Subscription() {
               </Card>
             )}
 
-            {isActive && !hasAdminAccess && canManageBilling ? (
+            {isActive && !isOwner && canManageBilling ? (
               <Card data-testid="card-manage">
                 <CardHeader>
                   <CardTitle>Manage Subscription</CardTitle>
@@ -395,7 +336,7 @@ export default function Subscription() {
                   </Button>
                 </CardContent>
               </Card>
-            ) : isActive && !hasAdminAccess ? (
+            ) : isActive && !isOwner ? (
               <Card data-testid="card-access-granted">
                 <CardHeader>
                   <CardTitle>Access Enabled</CardTitle>
@@ -404,7 +345,7 @@ export default function Subscription() {
                   </CardDescription>
                 </CardHeader>
               </Card>
-            ) : !hasAdminAccess && (
+            ) : !isOwner && (
               <>
                 <Card className="border-2 border-primary" data-testid="card-subscribe">
                   <CardHeader>
@@ -415,45 +356,14 @@ export default function Subscription() {
                     <CardDescription>
                       {isTrial
                         ? "Keep your access active after the free trial ends"
-                        : "Choose monthly or annual billing for full DocuWhisper access"}
+                        : "One monthly price with full DocuWhisper access"}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {hasAnnualOption && (
-                      <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
-                        <Button
-                          type="button"
-                          variant={billingInterval === "month" ? "default" : "ghost"}
-                          onClick={() => setBillingInterval("month")}
-                          className="w-full"
-                          data-testid="button-billing-monthly"
-                        >
-                          Monthly
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={billingInterval === "year" ? "default" : "ghost"}
-                          onClick={() => setBillingInterval("year")}
-                          className="w-full"
-                          data-testid="button-billing-annual"
-                        >
-                          Annual
-                        </Button>
-                      </div>
-                    )}
-                    {hasAnnualOption && billingInterval === "year" && (
-                      <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
-                        Annual billing saves $118 compared with paying monthly for 12 months.
-                      </div>
-                    )}
                     {checkoutPlans.length > 0 ? (
                       <div className="grid gap-4">
                         {checkoutPlans.map((plan) => {
                           const isCurrentPlan = currentPlan?.code === plan.code && isActive;
-                          const fallbackPriceCents =
-                            billingInterval === "year"
-                              ? plan.annualPriceCents ?? plan.monthlyPriceCents * 10
-                              : plan.monthlyPriceCents;
                           return (
                             <div
                               key={plan.code}
@@ -470,17 +380,10 @@ export default function Subscription() {
                               </div>
                               <div className="mb-3 flex items-baseline gap-1">
                                 <span className="text-3xl font-bold">
-                                  {formatPriceForPlan(plan.code, billingInterval, fallbackPriceCents)}
+                                  {formatPriceForPlan(plan.code, plan.monthlyPriceCents)}
                                 </span>
-                                <span className="text-muted-foreground">
-                                  /{billingInterval === "year" ? "year" : "month"}
-                                </span>
+                                <span className="text-muted-foreground">/month</span>
                               </div>
-                              {billingInterval === "year" && (
-                                <p className="mb-3 text-sm text-muted-foreground">
-                                  Pay once for the year and keep full access active.
-                                </p>
-                              )}
                               <ul className="mb-4 space-y-2 text-sm">
                                 <li className="flex items-center gap-2">
                                   <Check className="h-4 w-4 text-primary" />
@@ -498,12 +401,7 @@ export default function Subscription() {
                                 </li>
                               </ul>
                               <Button
-                                onClick={() =>
-                                  checkoutMutation.mutate({
-                                    planCode: plan.code,
-                                    billingInterval,
-                                  })
-                                }
+                                onClick={() => checkoutMutation.mutate(plan.code)}
                                 disabled={checkoutMutation.isPending || isCurrentPlan}
                                 className="w-full"
                                 data-testid={`button-subscribe-${plan.code}`}
@@ -516,13 +414,9 @@ export default function Subscription() {
                                 ) : isCurrentPlan ? (
                                   "Current Plan"
                                 ) : isTrial ? (
-                                  billingInterval === "year"
-                                    ? "Continue with Annual Access"
-                                    : "Continue with Monthly Access"
+                                  "Continue with Monthly Access"
                                 ) : (
-                                  billingInterval === "year"
-                                    ? "Subscribe for $590/year"
-                                    : "Subscribe for $59/month"
+                                  "Subscribe for $59/month"
                                 )}
                               </Button>
                             </div>
@@ -531,7 +425,7 @@ export default function Subscription() {
                       </div>
                     ) : (
                       <div className="rounded-md border border-dashed px-4 py-5 text-sm text-muted-foreground">
-                        Stripe pricing is not configured yet. Add the live {billingInterval === "year" ? "annual" : "monthly"} Stripe price ID to enable checkout.
+                        Stripe pricing is not configured yet. Add the live monthly Stripe price ID to enable checkout.
                       </div>
                     )}
                     <p className="text-xs text-muted-foreground text-center">

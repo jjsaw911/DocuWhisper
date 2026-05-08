@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,6 +6,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from "recharts";
 import { TrendingUp, Activity, FileText, Clock, Target, Zap, CalendarIcon } from "lucide-react";
 import { format, subDays, differenceInDays } from "date-fns";
@@ -38,17 +40,68 @@ const CHART_COLORS = [
   "hsl(var(--chart-5))",
 ];
 
+const startOfDay = (date: Date) => {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+};
+
+const endOfDay = (date: Date) => {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+};
+
+const formatDateInputValue = (date: Date) => format(date, "yyyy-MM-dd");
+
+const parseDateInputValue = (value: string, boundary: "start" | "end") => {
+  if (!value) return null;
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return boundary === "start" ? startOfDay(parsed) : endOfDay(parsed);
+};
+
 export default function Analytics() {
   const { user } = useAuth();
   
-  // Date range state - default to last 30 days
-  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
-    from: subDays(new Date(), 30),
-    to: new Date(),
-  });
+  const defaultDateRange = {
+    from: startOfDay(subDays(new Date(), 30)),
+    to: endOfDay(new Date()),
+  };
+  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>(defaultDateRange);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [draftFromDate, setDraftFromDate] = useState(formatDateInputValue(defaultDateRange.from));
+  const [draftToDate, setDraftToDate] = useState(formatDateInputValue(defaultDateRange.to));
   
   const days = differenceInDays(dateRange.to, dateRange.from) + 1;
+
+  useEffect(() => {
+    if (!datePickerOpen) return;
+    setDraftFromDate(formatDateInputValue(dateRange.from));
+    setDraftToDate(formatDateInputValue(dateRange.to));
+  }, [datePickerOpen, dateRange.from, dateRange.to]);
+
+  const applyDateRange = (from: Date, to: Date, closePopover = true) => {
+    const normalizedFrom = from <= to ? startOfDay(from) : startOfDay(to);
+    const normalizedTo = from <= to ? endOfDay(to) : endOfDay(from);
+    setDateRange({ from: normalizedFrom, to: normalizedTo });
+    setDraftFromDate(formatDateInputValue(normalizedFrom));
+    setDraftToDate(formatDateInputValue(normalizedTo));
+    if (closePopover) {
+      setDatePickerOpen(false);
+    }
+  };
+
+  const applyPreset = (daysBack: number) => {
+    applyDateRange(subDays(new Date(), daysBack), new Date());
+  };
+
+  const applyManualDateRange = () => {
+    const manualFrom = parseDateInputValue(draftFromDate, "start");
+    const manualTo = parseDateInputValue(draftToDate, "end");
+    if (!manualFrom || !manualTo) return;
+    applyDateRange(manualFrom, manualTo);
+  };
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery<Analytics>({
     queryKey: ["/api/analytics", dateRange.from.toISOString(), dateRange.to.toISOString()],
@@ -118,32 +171,55 @@ export default function Analytics() {
                     <Button 
                       variant="outline" 
                       size="sm"
-                      onClick={() => {
-                        setDateRange({ from: subDays(new Date(), 7), to: new Date() });
-                        setDatePickerOpen(false);
-                      }}
+                      onClick={() => applyPreset(7)}
                     >
                       Last 7 days
                     </Button>
                     <Button 
                       variant="outline" 
                       size="sm"
-                      onClick={() => {
-                        setDateRange({ from: subDays(new Date(), 30), to: new Date() });
-                        setDatePickerOpen(false);
-                      }}
+                      onClick={() => applyPreset(30)}
                     >
                       Last 30 days
                     </Button>
                     <Button 
                       variant="outline" 
                       size="sm"
-                      onClick={() => {
-                        setDateRange({ from: subDays(new Date(), 90), to: new Date() });
-                        setDatePickerOpen(false);
-                      }}
+                      onClick={() => applyPreset(90)}
                     >
                       Last 90 days
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="analytics-from-date">From</Label>
+                    <Input
+                      id="analytics-from-date"
+                      type="date"
+                      value={draftFromDate}
+                      onChange={(event) => setDraftFromDate(event.target.value)}
+                      data-testid="input-analytics-from-date"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="analytics-to-date">To</Label>
+                    <Input
+                      id="analytics-to-date"
+                      type="date"
+                      value={draftToDate}
+                      onChange={(event) => setDraftToDate(event.target.value)}
+                      data-testid="input-analytics-to-date"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 flex justify-end">
+                    <Button
+                      size="sm"
+                      onClick={applyManualDateRange}
+                      disabled={!draftFromDate || !draftToDate}
+                      data-testid="button-apply-analytics-date-range"
+                    >
+                      Apply Custom Range
                     </Button>
                   </div>
                 </div>
@@ -152,10 +228,9 @@ export default function Analytics() {
                   selected={{ from: dateRange.from, to: dateRange.to }}
                   onSelect={(range) => {
                     if (range?.from && range?.to) {
-                      setDateRange({ from: range.from, to: range.to });
-                      setDatePickerOpen(false);
+                      applyDateRange(range.from, range.to);
                     } else if (range?.from) {
-                      setDateRange({ from: range.from, to: range.from });
+                      applyDateRange(range.from, range.from, false);
                     }
                   }}
                   numberOfMonths={2}
@@ -254,7 +329,7 @@ export default function Analytics() {
                   <Activity className="h-5 w-5 text-primary" />
                   <CardTitle>Productivity Trends</CardTitle>
                 </div>
-                <CardDescription>Notes created per day over the last 30 days</CardDescription>
+                <CardDescription>Notes created per day for the selected date range</CardDescription>
               </CardHeader>
               <CardContent>
                 {trendsLoading ? (
@@ -310,7 +385,7 @@ export default function Analytics() {
                   <TrendingUp className="h-5 w-5 text-primary" />
                   <CardTitle>Trending Diagnoses</CardTitle>
                 </div>
-                <CardDescription>Most common conditions in your notes</CardDescription>
+                <CardDescription>Most common diagnoses captured in notes updated during the selected date range</CardDescription>
               </CardHeader>
               <CardContent>
                 {diagnosesLoading ? (

@@ -6,6 +6,11 @@ const CACHE_TTL_MS = 60_000;
 const MAX_CUSTOM_TERMS = 1500;
 const MAX_TERM_LENGTH = 80;
 
+const sortTermsAlpha = (terms: string[]) =>
+  [...terms].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+  );
+
 interface VocabularyCacheState {
   customTerms: string[];
   mergedTerms: string[];
@@ -38,10 +43,12 @@ const mergeTerms = (baseTerms: string[], customTerms: string[]) => {
 
 const parseCustomTerms = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
-  return normalizeTerms(
-    value
-      .filter((entry): entry is string => typeof entry === "string")
-      .slice(0, MAX_CUSTOM_TERMS)
+  return sortTermsAlpha(
+    normalizeTerms(
+      value
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, MAX_CUSTOM_TERMS)
+    ),
   );
 };
 

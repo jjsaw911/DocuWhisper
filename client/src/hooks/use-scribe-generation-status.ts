@@ -8,6 +8,7 @@ export interface ScribeGenerationItem {
   id: string;
   label: string;
   startedAt: number;
+  noteId?: number | null;
 }
 
 interface ScribeGenerationEventDetail {
@@ -43,6 +44,10 @@ const parseItems = (value: string | null): ScribeGenerationItem[] => {
         id: item.id,
         label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : DEFAULT_LABEL,
         startedAt: typeof (item as any).startedAt === "number" ? (item as any).startedAt : 0,
+        noteId:
+          typeof (item as any).noteId === "number" && Number.isFinite((item as any).noteId)
+            ? (item as any).noteId
+            : null,
       }));
   } catch {
     return [];
@@ -66,7 +71,7 @@ const persistItems = (storageKey: string, items: ScribeGenerationItem[]) => {
 
 const createItemId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-export const startScribeGeneration = (userId?: string, label?: string) => {
+export const startScribeGeneration = (userId?: string, label?: string, noteId?: number | null) => {
   const storageKey = getStorageKey(userId);
   if (!storageKey || typeof window === "undefined") return "";
 
@@ -78,6 +83,7 @@ export const startScribeGeneration = (userId?: string, label?: string) => {
       id,
       label: label && label.trim() ? label.trim() : DEFAULT_LABEL,
       startedAt: Date.now(),
+      noteId: typeof noteId === "number" && Number.isFinite(noteId) && noteId > 0 ? noteId : null,
     },
   ];
 
@@ -109,6 +115,19 @@ export const decrementScribeGeneration = (userId?: string) => {
 export const useScribeGenerationStatus = (userId?: string) => {
   const storageKey = useMemo(() => getStorageKey(userId), [userId]);
   const [items, setItems] = useState<ScribeGenerationItem[]>([]);
+  const pendingNoteIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items.flatMap((item) =>
+            typeof item.noteId === "number" && Number.isFinite(item.noteId) && item.noteId > 0
+              ? [item.noteId]
+              : [],
+          ),
+        ),
+      ),
+    [items],
+  );
 
   useEffect(() => {
     if (!storageKey || typeof window === "undefined") {
@@ -145,6 +164,7 @@ export const useScribeGenerationStatus = (userId?: string) => {
   return {
     pendingItems: items,
     pendingCount: items.length,
+    pendingNoteIds,
     currentLabel: items[0]?.label ?? DEFAULT_LABEL,
     isGenerating: items.length > 0,
   };

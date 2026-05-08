@@ -3,6 +3,8 @@ import { toFile } from "openai";
 import { Buffer } from "node:buffer";
 import { openai } from "../../openaiClient";
 
+export { openai };
+
 /**
  * Generate an image and return as Buffer.
  * Uses gpt-image-1 model via Replit AI Integrations.

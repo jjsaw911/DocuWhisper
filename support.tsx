@@ -24,7 +24,7 @@ const faqItems = [
   {
     question: "How do trials and billing work?",
     answer:
-      "New verified accounts start with a 14-day trial. After the trial ends, regular users need an active $59/month or $590/year subscription, or manually granted access, unless they are the configured owner/admin account.",
+      "New verified accounts start with a 14-day trial. After the trial ends, regular users need an active $59/month subscription or manually granted access unless they are the configured owner/admin account.",
   },
   {
     question: "How do I know if I have unread internal mail?",

@@ -7,9 +7,20 @@ import multer from "multer";
 import { openai } from "./openaiClient";
 import { timingSafeEqual } from "crypto";
 import { authStorage } from "./replit_integrations/auth/storage";
+import { getAdminAiTextModel } from "./aiGenerationSettings";
+import { resolveAdminAccess } from "./adminAccess";
+import { normalizeExpiredSubscriptionStatus } from "./subscriptionAccess";
+import { getNoteCreditEntitlement } from "./subscriptionPlans";
+import {
+  generateClinicalNoteFromTranscript,
+  generateClinicalTitleFromTranscript,
+} from "./clinicalNotePipeline";
+import { getGlobalMedicalVocabulary } from "./medicalVocabulary";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const shouldLogVerboseAiDetails =
+  process.env.NODE_ENV !== "production" || process.env.VERBOSE_AI_LOGS === "true";
 
 const DEFAULT_MOBILE_SCOPES = [
   "notes:read", "notes:write", "templates:read", "templates:write",
@@ -69,6 +80,133 @@ function readEnv(...keys: string[]): string {
     if (trimmed) return trimmed;
   }
   return "";
+}
+
+async function getMobileUserNoteCreditState(params: {
+  userId: string;
+  existingNoteAlreadyConsumed?: boolean;
+}) {
+  let subscription = await storage.getSubscription(params.userId);
+  subscription = await normalizeExpiredSubscriptionStatus(params.userId, subscription);
+  const usage = await storage.getNoteCreditUsageSummary(params.userId);
+  const adminAccess = await resolveAdminAccess({
+    userId: params.userId,
+  });
+
+  return getNoteCreditEntitlement({
+    subscription,
+    usage,
+    isAdmin: adminAccess.isAdmin,
+    isSuperAdmin: adminAccess.isSuperAdmin,
+    noteAlreadyConsumed: params.existingNoteAlreadyConsumed,
+  });
+}
+
+function createMobileNoteCreditExceededPayload(
+  entitlement: Awaited<ReturnType<typeof getMobileUserNoteCreditState>>,
+) {
+  return {
+    error: "payment_required",
+    code: "note_credits_exhausted",
+    message:
+      entitlement.reason === "inactive"
+        ? "An active subscription is required before you can save new AI notes."
+        : `Your ${entitlement.plan.name.toLowerCase()} plan has no note credits remaining for this cycle.`,
+    data: {
+      plan: {
+        code: entitlement.plan.code,
+        name: entitlement.plan.name,
+        monthlyNoteAllowance: entitlement.plan.monthlyNoteAllowance,
+        unlimited: entitlement.plan.unlimited,
+        source: entitlement.plan.source,
+      },
+      usage: {
+        currentPeriodCount: entitlement.usage.currentPeriodCount,
+        includedCredits: entitlement.usage.includedCredits,
+        remainingCredits: entitlement.usage.remainingCredits,
+        exhausted: entitlement.usage.exhausted,
+        currentPeriodStart: entitlement.usage.currentPeriodStart,
+        nextResetAt: entitlement.usage.nextResetAt,
+      },
+    },
+  };
+}
+
+function hasMeaningfulStructuredContent(
+  payload: Record<string, unknown>,
+  requiredFields: string[],
+): boolean {
+  return requiredFields.some((field) => {
+    const value = payload[field];
+    if (typeof value === "string") {
+      return value.trim().length > 0;
+    }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (value && typeof value === "object") {
+      return Object.keys(value).length > 0;
+    }
+    return false;
+  });
+}
+
+async function createJsonCompletionWithRetry(params: {
+  label: string;
+  model: string;
+  fallbackModel?: string;
+  systemPrompt: string;
+  userContent: string;
+  requiredFields: string[];
+  maxCompletionTokens?: number;
+  temperature?: number;
+}) {
+  let lastContent = "{}";
+  const attempts = [params.model, params.model];
+  if (params.fallbackModel && params.fallbackModel !== params.model) {
+    attempts.push(params.fallbackModel);
+  }
+
+  for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
+    const attempt = attemptIndex + 1;
+    const attemptModel = attempts[attemptIndex];
+    const retryInstruction =
+      attemptIndex === 0
+        ? ""
+        : `\n\nRETRY REQUIREMENT: Your previous response was empty or missing the required fields. Return valid JSON with non-empty ${params.requiredFields.join(", ")} values derived from the transcript. If a field truly has no supporting detail, use "No information documented for this section." instead of leaving it blank.`;
+
+    const completion = await openai.chat.completions.create({
+      model: attemptModel,
+      messages: [
+        { role: "system", content: `${params.systemPrompt}${retryInstruction}` },
+        { role: "user", content: params.userContent },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: params.maxCompletionTokens,
+      temperature: params.temperature,
+    });
+
+    const content = completion.choices[0]?.message?.content || "{}";
+    lastContent = content;
+
+    try {
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      if (
+        params.requiredFields.length === 0 ||
+        hasMeaningfulStructuredContent(parsed, params.requiredFields)
+      ) {
+        return { content, parsed, attempts: attempt, model: attemptModel };
+      }
+      console.warn(`[${params.label}] Empty structured response on attempt ${attempt} using ${attemptModel}; retrying.`, parsed);
+    } catch (error) {
+      console.warn(`[${params.label}] Invalid JSON response on attempt ${attempt} using ${attemptModel}; retrying.`, error);
+      if (attemptIndex === attempts.length - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`${params.label} returned empty structured content after retry. Last content: ${lastContent}`);
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
@@ -267,6 +405,8 @@ type SoapSections = {
   plan: string | null;
 };
 
+const SOAP_PLACEHOLDER_TEXT = "No information documented for this section.";
+
 const normalizeSoapSection = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -277,8 +417,56 @@ const hasAnySoapSection = (sections: SoapSections): boolean => {
   return !!(sections.subjective || sections.objective || sections.assessment || sections.plan);
 };
 
+const isPlaceholderSoapSection = (value: string | null | undefined): boolean => {
+  if (typeof value !== "string") return false;
+  return value.trim().toLowerCase() === SOAP_PLACEHOLDER_TEXT.toLowerCase();
+};
+
+const hasMeaningfulSoapSection = (value: string | null | undefined): boolean => {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (isPlaceholderSoapSection(trimmed)) return false;
+  return /[A-Za-z]/.test(trimmed);
+};
+
+const hasMeaningfulSoapSections = (sections: SoapSections): boolean => {
+  return (
+    hasMeaningfulSoapSection(sections.subjective) ||
+    hasMeaningfulSoapSection(sections.objective) ||
+    hasMeaningfulSoapSection(sections.assessment) ||
+    hasMeaningfulSoapSection(sections.plan)
+  );
+};
+
+const normalizeTranscriptForAutoNote = (transcript: string): string => {
+  return transcript
+    .replace(/\r\n/g, "\n")
+    .replace(/\b(?:um+|uh+|erm+|mm[- ]hmm+|hmm+)\b/gi, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ +\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\bword list\b[\s:-]*[^\n\r]*/gi, "")
+    .trim();
+};
+
+const hasMeaningfulTranscriptForAutoNote = (transcript: string): boolean => {
+  const normalized = normalizeTranscriptForAutoNote(transcript);
+  if (!normalized) return false;
+
+  const withoutCountingTests = normalized
+    .replace(/\b(?:testing|test)\b[\s,:-]*(?:\d+\b[\s,.-]*)+/gi, "")
+    .replace(/\b\d+\b(?:[\s,.-]+\d+\b)+/g, "")
+    .trim();
+
+  if (!withoutCountingTests) return false;
+
+  const alphaMatches = withoutCountingTests.match(/[A-Za-z]{3,}/g) || [];
+  return alphaMatches.length >= 2 || withoutCountingTests.length >= 20;
+};
+
 const buildSoapFallbackFromTranscript = (transcript: string): SoapSections => {
-  const normalized = transcript.replace(/\s+/g, " ").trim();
+  const normalized = normalizeTranscriptForAutoNote(transcript).replace(/\s+/g, " ").trim();
   if (!normalized) {
     return { subjective: null, objective: null, assessment: null, plan: null };
   }
@@ -303,6 +491,7 @@ const generateSoapSections = async (params: {
 }): Promise<SoapSections> => {
   let customPrompt = "";
   let effectiveTemplateId = params.templateId;
+  const settings = await storage.getUserSettings(params.userId);
 
   if (!effectiveTemplateId && !params.noDefaultTemplate) {
     effectiveTemplateId = await storage.getDefaultTemplateId(params.userId);
@@ -315,47 +504,24 @@ const generateSoapSections = async (params: {
     }
   }
 
-  const languageNames: Record<string, string> = {
-    en: "English", es: "Spanish (Español)", fr: "French (Français)",
-    de: "German (Deutsch)", pt: "Portuguese (Português)",
-  };
-  const targetLanguage = languageNames[params.outputLanguage || "en"] || "English";
-  const languageInstruction = params.outputLanguage && params.outputLanguage !== "en"
-    ? `\nIMPORTANT: Generate all sections in ${targetLanguage}.`
-    : "";
-  const aiInstructionsSection = params.aiInstructions ? `\nUser instructions:\n${params.aiInstructions}` : "";
-
-  const systemPrompt = `You are a medical documentation assistant creating SOAP notes.
-${params.specialty ? `Specialty: ${params.specialty}` : ""}
-${params.patientName ? `Patient: ${params.patientName}` : ""}
-${params.context ? `Context: ${params.context}` : ""}
-${customPrompt ? `Template instructions:\n${customPrompt}` : ""}
-${customPrompt ? "IMPORTANT: Follow the template instructions exactly and prioritize them over generic defaults." : ""}
-${aiInstructionsSection}
-${languageInstruction}
-
-Return valid JSON only:
-{"subjective":"...","objective":"...","assessment":"...","plan":"..."}
-
-If a section is unavailable, return an empty string for that section.`;
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5.1",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `Transcript:\n${params.transcript}` },
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0.3,
+  const vocabulary = await getGlobalMedicalVocabulary();
+  const { note } = await generateClinicalNoteFromTranscript({
+    transcript: params.transcript,
+    patientName: params.patientName,
+    specialty: params.specialty,
+    noteStyle: settings?.noteStyle ?? undefined,
+    customPrompt,
+    aiInstructions: params.aiInstructions,
+    outputLanguage: params.outputLanguage,
+    context: params.context,
+    vocabularyTerms: vocabulary.terms,
+    label: "mobile-generate-soap-sections",
   });
 
-  const content = completion.choices[0]?.message?.content || "{}";
-  const parsed = JSON.parse(content);
-
-  const subjective = normalizeSoapSection(parsed.subjective ?? parsed.hpi);
-  const objective = normalizeSoapSection(parsed.objective);
-  const assessment = normalizeSoapSection(parsed.assessment);
-  const plan = normalizeSoapSection(parsed.plan);
+  const subjective = normalizeSoapSection(note.subjective ?? note.hpi);
+  const objective = normalizeSoapSection(note.objective);
+  const assessment = normalizeSoapSection(note.assessment);
+  const plan = normalizeSoapSection(note.plan);
 
   return { subjective, objective, assessment, plan };
 };
@@ -396,7 +562,9 @@ const persistTranscriptionMetric = (payload: Record<string, unknown>) => {
 };
 
 const logTranscriptionMetric = (payload: Record<string, unknown>) => {
-  console.log("[mobile-transcribe-metric]", JSON.stringify(payload));
+  if (shouldLogVerboseAiDetails) {
+    console.log("[mobile-transcribe-metric]", JSON.stringify(payload));
+  }
   persistTranscriptionMetric(payload);
 };
 
@@ -936,25 +1104,36 @@ const CreateNoteSchema = z.object({
   patientContext: z.string().optional(),
   templateId: z.number().optional(),
   icdCodes: z.string().optional(),
+  consumeNoteCredit: z.boolean().optional(),
 });
 
 router.post("/notes", requireMobileScope("notes:write"), async (req: Request, res: Response) => {
   try {
     const data = CreateNoteSchema.parse(req.body);
+    const { consumeNoteCredit, ...noteInput } = data;
+    if (consumeNoteCredit) {
+      const entitlement = await getMobileUserNoteCreditState({ userId: req.mobileUserId! });
+      if (!entitlement.canConsumeCredit) {
+        return res.status(402).json(createMobileNoteCreditExceededPayload(entitlement));
+      }
+    }
     const note = await storage.createNote({
-      ...data,
+      ...noteInput,
       userId: req.mobileUserId!,
-      patientName: data.patientName || null,
-      specialty: data.specialty || null,
-      subjective: data.subjective || null,
-      objective: data.objective || null,
-      assessment: data.assessment || null,
-      plan: data.plan || null,
-      transcript: data.transcript || null,
-      patientContext: data.patientContext || null,
-      templateId: data.templateId || null,
-      icdCodes: data.icdCodes || null,
+      patientName: noteInput.patientName || null,
+      specialty: noteInput.specialty || null,
+      subjective: noteInput.subjective || null,
+      objective: noteInput.objective || null,
+      assessment: noteInput.assessment || null,
+      plan: noteInput.plan || null,
+      transcript: noteInput.transcript || null,
+      patientContext: noteInput.patientContext || null,
+      templateId: noteInput.templateId || null,
+      icdCodes: noteInput.icdCodes || null,
     });
+    if (consumeNoteCredit) {
+      await storage.recordNoteCreditIfNeeded(req.mobileUserId!, note.id);
+    }
     
     res.status(201).json({ success: true, data: note });
   } catch (error: any) {
@@ -977,6 +1156,7 @@ const UpdateNoteSchema = z.object({
   patientContext: z.string().nullable().optional(),
   templateId: z.number().nullable().optional(),
   icdCodes: z.string().nullable().optional(),
+  consumeNoteCredit: z.boolean().optional(),
 });
 
 router.patch("/notes/:id", requireMobileScope("notes:write"), async (req: Request, res: Response) => {
@@ -990,7 +1170,20 @@ router.patch("/notes/:id", requireMobileScope("notes:write"), async (req: Reques
     }
     
     const data = UpdateNoteSchema.parse(req.body);
-    const updated = await storage.updateNote(noteId, data);
+    const { consumeNoteCredit, ...updateInput } = data;
+    if (consumeNoteCredit) {
+      const entitlement = await getMobileUserNoteCreditState({
+        userId: req.mobileUserId!,
+        existingNoteAlreadyConsumed: Boolean(existing.creditConsumedAt),
+      });
+      if (!entitlement.canConsumeCredit) {
+        return res.status(402).json(createMobileNoteCreditExceededPayload(entitlement));
+      }
+    }
+    const updated = await storage.updateNote(noteId, updateInput);
+    if (updated && consumeNoteCredit) {
+      await storage.recordNoteCreditIfNeeded(req.mobileUserId!, noteId);
+    }
     
     res.json({ success: true, data: updated });
   } catch (error: any) {
@@ -1127,10 +1320,6 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
       if (!hasWriteScope) {
         noteCreationError = "API key is missing notes:write scope";
       } else {
-        const noteTitle = parseOptionalText(req.body?.note_title) ||
-          parseOptionalText(req.body?.title) ||
-          deriveNoteTitleFromTranscript(transcript);
-
         const patientName = parseOptionalText(req.body?.patient_name) || parseOptionalText(req.body?.patientName);
         const specialty = parseOptionalText(req.body?.specialty);
         const patientContext = parseOptionalText(req.body?.patient_context) || parseOptionalText(req.body?.patientContext);
@@ -1176,6 +1365,11 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
         const mergedTranscript = appendTargetNote
           ? [parseOptionalText(appendTargetNote.transcript), transcript].filter(Boolean).join("\n\n").trim()
           : transcript;
+        const normalizedMergedTranscript = normalizeTranscriptForAutoNote(mergedTranscript);
+        const noteTitle = parseOptionalText(req.body?.note_title) ||
+          parseOptionalText(req.body?.title) ||
+          deriveNoteTitleFromTranscript(normalizedMergedTranscript || mergedTranscript);
+        const hasMeaningfulTranscript = hasMeaningfulTranscriptForAutoNote(mergedTranscript);
 
         const effectivePatientName = patientName ?? parseOptionalText(appendTargetNote?.patientName);
         const effectiveSpecialty = specialty ?? parseOptionalText(appendTargetNote?.specialty);
@@ -1203,7 +1397,7 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
           } else {
             try {
               soapSections = await generateSoapSections({
-                transcript: mergedTranscript,
+                transcript: normalizedMergedTranscript || mergedTranscript,
                 userId: req.mobileUserId!,
                 patientName: effectivePatientName || undefined,
                 specialty: effectiveSpecialty || undefined,
@@ -1233,49 +1427,61 @@ router.post("/transcribe", requireMobileScope("transcribe"), upload.single("audi
           }
         }
 
-        try {
-          if (appendTargetNote) {
-            createdNote = await storage.updateNote(appendTargetNote.id, {
-              transcript: mergedTranscript,
-              patientName: effectivePatientName || null,
-              specialty: effectiveSpecialty || null,
-              subjective: soapSections.subjective,
-              objective: soapSections.objective,
-              assessment: soapSections.assessment,
-              plan: soapSections.plan,
-              patientContext: effectivePatientContext || null,
-              templateId: effectiveTemplateId ?? null,
-            });
-            noteAppended = true;
-          } else {
-            createdNote = await storage.createNote({
-              userId: req.mobileUserId!,
-              title: noteTitle,
-              transcript: mergedTranscript,
-              patientName: effectivePatientName || null,
-              specialty: effectiveSpecialty || null,
-              subjective: soapSections.subjective,
-              objective: soapSections.objective,
-              assessment: soapSections.assessment,
-              plan: soapSections.plan,
-              patientContext: effectivePatientContext || null,
-              templateId: effectiveTemplateId ?? null,
-              icdCodes: null,
-            });
-          }
+        const hasMeaningfulSoap = hasMeaningfulSoapSections(soapSections);
+        if (!hasMeaningfulTranscript && !hasMeaningfulSoap) {
+          noteCreationError = appendTargetNote
+            ? "Recording did not add enough clinical content to update the note"
+            : "Transcript did not contain enough clinical content to create a note";
+        } else {
+          try {
+            if (appendTargetNote) {
+              createdNote = await storage.updateNote(appendTargetNote.id, {
+                transcript: mergedTranscript,
+                patientName: effectivePatientName || null,
+                specialty: effectiveSpecialty || null,
+                subjective: soapSections.subjective,
+                objective: soapSections.objective,
+                assessment: soapSections.assessment,
+                plan: soapSections.plan,
+                patientContext: effectivePatientContext || null,
+                templateId: effectiveTemplateId ?? null,
+              });
+              noteAppended = true;
+            } else {
+              createdNote = await storage.createNote({
+                userId: req.mobileUserId!,
+                title: noteTitle,
+                transcript: mergedTranscript,
+                patientName: effectivePatientName || null,
+                specialty: effectiveSpecialty || null,
+                subjective: soapSections.subjective,
+                objective: soapSections.objective,
+                assessment: soapSections.assessment,
+                plan: soapSections.plan,
+                patientContext: effectivePatientContext || null,
+                templateId: effectiveTemplateId ?? null,
+                icdCodes: null,
+              });
+            }
 
-          logTranscriptionMetric({
-            event: noteAppended ? "note_updated" : "note_created",
-            user_id: req.mobileUserId || null,
-            chunk_id: chunkId ?? null,
-            provider: providerUsed,
-            fallback_used: fallbackUsed,
-            session_id: sessionId || null,
-            details: JSON.stringify({ soap_generated: soapGenerated, note_appended: noteAppended }),
-          });
-        } catch (noteError: unknown) {
-          noteCreationError = noteError instanceof Error ? noteError.message : String(noteError);
-          console.error("[mobile-transcribe] note auto-create failed:", noteError);
+            logTranscriptionMetric({
+              event: noteAppended ? "note_updated" : "note_created",
+              user_id: req.mobileUserId || null,
+              chunk_id: chunkId ?? null,
+              provider: providerUsed,
+              fallback_used: fallbackUsed,
+              session_id: sessionId || null,
+              details: JSON.stringify({
+                soap_generated: soapGenerated,
+                note_appended: noteAppended,
+                meaningful_transcript: hasMeaningfulTranscript,
+                meaningful_soap: hasMeaningfulSoap,
+              }),
+            });
+          } catch (noteError: unknown) {
+            noteCreationError = noteError instanceof Error ? noteError.message : String(noteError);
+            console.error("[mobile-transcribe] note auto-create failed:", noteError);
+          }
         }
       }
     }
@@ -1321,13 +1527,33 @@ const GenerateSoapSchema = z.object({
   outputLanguage: z.string().optional(),
   context: z.string().optional(),
   noDefaultTemplate: z.boolean().optional(),
+  noteId: z.number().int().positive().optional(),
+  enforceNoteCredit: z.boolean().optional(),
 });
 
 router.post("/generate-soap", requireMobileScope("generate"), async (req: Request, res: Response) => {
   try {
-    const data = GenerateSoapSchema.parse(req.body);
     const userId = req.mobileUserId!;
-    
+    const data = GenerateSoapSchema.parse(req.body);
+    if (data.enforceNoteCredit) {
+      let existingNoteAlreadyConsumed = false;
+      if (data.noteId) {
+        const note = await storage.getNote(data.noteId);
+        if (!note || note.userId !== userId) {
+          return res.status(404).json({ error: "not_found", message: "Note not found" });
+        }
+        existingNoteAlreadyConsumed = Boolean(note.creditConsumedAt);
+      }
+
+      const entitlement = await getMobileUserNoteCreditState({
+        userId,
+        existingNoteAlreadyConsumed,
+      });
+      if (!entitlement.canConsumeCredit) {
+        return res.status(402).json(createMobileNoteCreditExceededPayload(entitlement));
+      }
+    }
+    const vocabulary = await getGlobalMedicalVocabulary();
     let customPrompt = "";
     let effectiveTemplateId = data.templateId;
     
@@ -1341,73 +1567,20 @@ router.post("/generate-soap", requireMobileScope("generate"), async (req: Reques
         customPrompt = template.prompt;
       }
     }
+    const settings = await storage.getUserSettings(userId);
 
-    const languageNames: Record<string, string> = {
-      en: "English", es: "Spanish (Español)", fr: "French (Français)",
-      de: "German (Deutsch)", pt: "Portuguese (Português)",
-    };
-    const targetLanguage = languageNames[data.outputLanguage || "en"] || "English";
-    const languageInstruction = data.outputLanguage && data.outputLanguage !== "en" 
-      ? `\n\nIMPORTANT: Generate ALL content in ${targetLanguage}.`
-      : "";
-
-    const contextSection = data.context ? `\nPATIENT BACKGROUND & CONTEXT:\n${data.context}\n` : "";
-    const aiInstructionsSection = data.aiInstructions ? `\n\nIMPORTANT - User Instructions:\n${data.aiInstructions}` : "";
-
-    let systemPrompt: string;
-    
-    if (customPrompt) {
-      const isHpiFormat = customPrompt.toLowerCase().includes('hpi') && 
-                         (customPrompt.toLowerCase().includes('section 1. hpi') || 
-                          customPrompt.toLowerCase().includes('required structure') ||
-                          customPrompt.toLowerCase().includes('hpi must appear'));
-      
-      if (isHpiFormat) {
-        systemPrompt = `You are a medical documentation assistant generating clinical notes in HPI + Plan format.
-${data.specialty ? `Specialty: ${data.specialty}` : ""}
-${data.patientName ? `Patient: ${data.patientName}` : ""}
-${contextSection}
-TEMPLATE INSTRUCTIONS:
-${customPrompt}
-${aiInstructionsSection}${languageInstruction}
-
-Return valid JSON: {"hpi": "...", "plan": "..."}`;
-      } else {
-        systemPrompt = `You are a medical documentation assistant.
-${data.specialty ? `Specialty: ${data.specialty}` : ""}
-${data.patientName ? `Patient: ${data.patientName}` : ""}
-${contextSection}
-TEMPLATE INSTRUCTIONS:
-${customPrompt}
-${aiInstructionsSection}${languageInstruction}
-
-Return valid JSON: {"subjective": "...", "objective": "...", "assessment": "...", "plan": "..."}`;
-      }
-    } else {
-      systemPrompt = `You are a medical documentation assistant creating SOAP notes.
-${data.specialty ? `Specialty: ${data.specialty}` : ""}
-${data.patientName ? `Patient: ${data.patientName}` : ""}
-${contextSection}${aiInstructionsSection}${languageInstruction}
-
-Return valid JSON: {"subjective": "...", "objective": "...", "assessment": "...", "plan": "..."}`;
-    }
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.1",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Transcript:\n${data.transcript}` },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.3,
+    const { note: soapNote } = await generateClinicalNoteFromTranscript({
+      transcript: data.transcript,
+      patientName: data.patientName,
+      specialty: data.specialty,
+      noteStyle: settings?.noteStyle ?? undefined,
+      customPrompt,
+      aiInstructions: data.aiInstructions,
+      outputLanguage: data.outputLanguage,
+      context: data.context,
+      vocabularyTerms: vocabulary.terms,
+      label: "mobile-generate-soap-route",
     });
-
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      return res.status(500).json({ error: "ai_error", message: "No response from AI" });
-    }
-
-    const soapNote = JSON.parse(content);
     res.json({ success: true, data: soapNote });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -1422,19 +1595,11 @@ Return valid JSON: {"subjective": "...", "objective": "...", "assessment": "..."
 router.post("/generate-title", requireMobileScope("generate"), async (req: Request, res: Response) => {
   try {
     const { transcript } = z.object({ transcript: z.string().min(1) }).parse(req.body);
-    
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.1",
-      messages: [
-        { role: "system", content: 'Generate a brief clinical note title (3-6 words) from the transcript. Return JSON: {"title": "..."}' },
-        { role: "user", content: transcript.substring(0, 2000) },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.3,
+    const title = await generateClinicalTitleFromTranscript({
+      transcript,
+      label: "mobile-generate-title",
     });
-
-    const result = JSON.parse(completion.choices[0]?.message?.content || "{}");
-    res.json({ success: true, data: { title: result.title || "New Note" } });
+    res.json({ success: true, data: { title: title || "New Note" } });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "validation_error", details: error.errors });
@@ -1468,7 +1633,7 @@ router.post("/generate-codes", requireMobileScope("generate"), async (req: Reque
     }
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.1",
+      model: getAdminAiTextModel(),
       messages: [
         { role: "system", content: `Analyze the clinical documentation and suggest ICD-10 and CPT codes. Return JSON:
 {"codes": [{"code": "ICD-10 code", "description": "...", "confidence": 0.0-1.0}], "cptCodes": [{"code": "CPT code", "description": "...", "confidence": 0.0-1.0}]}` },

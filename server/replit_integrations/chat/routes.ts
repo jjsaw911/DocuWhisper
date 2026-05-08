@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { chatStorage } from "./storage";
 import { openai } from "../../openaiClient";
+import { getAdminAiTextModel } from "../../aiGenerationSettings";
 
 export function registerChatRoutes(app: Express): void {
   const getParamAsString = (param: string | string[] | undefined): string =>
@@ -80,7 +81,7 @@ export function registerChatRoutes(app: Express): void {
 
       // Stream response from OpenAI
       const stream = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: chatMessages,
         stream: true,
         max_completion_tokens: 2048,

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -38,7 +39,8 @@ import {
   X,
   Key,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Wifi
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -69,11 +71,14 @@ interface Invite {
 
 interface AdminCheckData {
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 interface AdminAiSettings {
   preferredSource: "personal" | "replit";
   effectiveSource: "personal" | "replit";
+  textModel: "gpt-5.1" | "gpt-5-mini" | "gpt-4o" | "gpt-4o-mini";
+  monthlyBudgetUsd: number | null;
   hasPersonalKey: boolean;
   hasReplitKey: boolean;
   hasSavedPersonalKey: boolean;
@@ -89,6 +94,28 @@ interface AdminAiUsageResponse {
   totalErrors: number;
   errorRate: number;
   totalTokens: number;
+  estimatedCostUsd: number;
+  estimatedCostByModel: { model: string; usd: number }[];
+  currentSpendUsd: number;
+  monthToDateSpendUsd: number;
+  monthlyBudgetUsd: number | null;
+  remainingBudgetUsd: number | null;
+  spendSource: "actual" | "estimated";
+  monthToDateSpendSource: "actual" | "estimated";
+  openAiCosts: {
+    available: boolean;
+    totalUsd: number | null;
+    currency: string | null;
+    source: "openai_costs_api";
+    error: string | null;
+  };
+  monthOpenAiCosts: {
+    available: boolean;
+    totalUsd: number | null;
+    currency: string | null;
+    source: "openai_costs_api";
+    error: string | null;
+  };
   byProvider: {
     personal: { requests: number; errors: number; totalTokens: number };
     replit: { requests: number; errors: number; totalTokens: number };
@@ -103,6 +130,7 @@ interface AdminAiUsageResponse {
     model: string | null;
     success: boolean;
     totalTokens: number;
+    estimatedCostUsd: number | null;
   }[];
 }
 
@@ -221,6 +249,30 @@ interface AdminCustomerUsageResponse {
   }[];
 }
 
+interface AdminLiveConnectionEditor {
+  userId: string;
+  userName: string;
+  email: string | null;
+  lastActivity: string;
+}
+
+interface AdminLiveConnectionRoom {
+  noteId: number;
+  noteTitle: string;
+  patientName: string | null;
+  editorCount: number;
+  version: number;
+  lastActivity: string;
+  editors: AdminLiveConnectionEditor[];
+}
+
+interface AdminLiveConnectionsResponse {
+  generatedAt: string;
+  totalRooms: number;
+  totalConnections: number;
+  rooms: AdminLiveConnectionRoom[];
+}
+
 interface Organization {
   id: number;
   name: string;
@@ -238,6 +290,8 @@ interface UserInfo {
   id: number;
   userId: string;
   email?: string | null;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
   firstName?: string;
   lastName?: string;
   preferredName?: string;
@@ -273,6 +327,8 @@ interface InternalMessage {
   message: string;
   category: string;
   createdAt: string;
+  isRead: boolean;
+  readAt?: string | null;
 }
 
 const EMR_LICENSE_TYPES = [
@@ -317,6 +373,42 @@ const TRIAL_GRANT_TYPES = [
   { value: "days_90", label: "90-Day Trial" },
   { value: "lifetime", label: "Lifetime Access" },
 ];
+
+const ADMIN_TEXT_MODEL_OPTIONS = [
+  {
+    value: "gpt-5.1",
+    label: "GPT-5.1",
+    description: "Best current note quality in this app. Current default.",
+  },
+  {
+    value: "gpt-5-mini",
+    label: "GPT-5 mini",
+    description: "Best first step for lowering cost while keeping good structured note quality.",
+  },
+  {
+    value: "gpt-4o",
+    label: "GPT-4o",
+    description: "Strong general model, but not a cost saver versus the current GPT-5.1 pricing.",
+  },
+  {
+    value: "gpt-4o-mini",
+    label: "GPT-4o mini",
+    description: "Lowest-cost option here, with the biggest quality tradeoff.",
+  },
+] as const;
+
+function formatCurrency(value: number | null | undefined, currency = "USD") {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: value >= 100 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
 
 export default function Admin() {
   const { user } = useAuth();
@@ -373,11 +465,14 @@ export default function Admin() {
   const [newlyCreatedApiKey, setNewlyCreatedApiKey] = useState<string | null>(null);
   const [copiedApiKey, setCopiedApiKey] = useState(false);
   const [preferredAiSource, setPreferredAiSource] = useState<"personal" | "replit">("personal");
+  const [selectedTextModel, setSelectedTextModel] = useState<AdminAiSettings["textModel"]>("gpt-5.1");
+  const [monthlyBudgetInput, setMonthlyBudgetInput] = useState("");
   const [personalAiKeyInput, setPersonalAiKeyInput] = useState("");
   const [aiUsageWindowHours, setAiUsageWindowHours] = useState("24");
   const [customerUsageWindowHours, setCustomerUsageWindowHours] = useState("168");
   const [apiUsageWindowHours, setApiUsageWindowHours] = useState("24");
   const [transcriptionUsageWindowHours, setTranscriptionUsageWindowHours] = useState("24");
+  const [selectedInternalMessageIds, setSelectedInternalMessageIds] = useState<number[]>([]);
 
   const { data: adminCheck, isLoading: adminLoading } = useQuery<AdminCheckData>({
     queryKey: ["/api/admin/check"],
@@ -480,25 +575,112 @@ export default function Admin() {
     enabled: !!user && adminCheck?.isAdmin === true,
   });
 
+  const {
+    data: liveConnections,
+    isLoading: liveConnectionsLoading,
+    refetch: refetchLiveConnections,
+  } = useQuery<AdminLiveConnectionsResponse>({
+    queryKey: ["/api/admin/live-connections"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    refetchInterval: 10_000,
+  });
+
+  useEffect(() => {
+    if (!internalMessages) return;
+    setSelectedInternalMessageIds((current) =>
+      current.filter((id) => internalMessages.some((message) => message.id === id)),
+    );
+  }, [internalMessages]);
+
   useEffect(() => {
     if (!adminAiSettings) return;
     setPreferredAiSource(adminAiSettings.preferredSource);
+    setSelectedTextModel(adminAiSettings.textModel);
+    setMonthlyBudgetInput(
+      typeof adminAiSettings.monthlyBudgetUsd === "number" ? String(adminAiSettings.monthlyBudgetUsd) : "",
+    );
   }, [adminAiSettings]);
 
+  const markInternalMessagesReadMutation = useMutation({
+    mutationFn: async (messageIds: number[]) => {
+      const response = await apiRequest("PATCH", "/api/admin/internal-messages/read", { messageIds });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/internal-messages"] });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to update read state",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteInternalMessagesMutation = useMutation({
+    mutationFn: async (messageIds: number[]) => {
+      const response = await apiRequest("DELETE", "/api/admin/internal-messages", { messageIds });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/internal-messages"] });
+      setSelectedInternalMessageIds([]);
+      toast({
+        title: "Messages deleted",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to delete messages",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleAdminStatusMutation = useMutation({
+    mutationFn: async ({ userId, isAdmin }: { userId: string; isAdmin: boolean }) => {
+      const response = await apiRequest("PUT", `/api/admin/users/${userId}/admin`, { isAdmin });
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/check"] });
+      toast({
+        title: variables.isAdmin ? "Admin access granted" : "Admin access removed",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to update admin access",
+        description: error?.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const saveAiSettingsMutation = useMutation({
-    mutationFn: async (preferredSource: "personal" | "replit") => {
-      const response = await apiRequest("PUT", "/api/admin/ai-settings", { preferredSource });
+    mutationFn: async (payload: {
+      preferredSource: "personal" | "replit";
+      textModel: AdminAiSettings["textModel"];
+      monthlyBudgetUsd: number | null;
+    }) => {
+      const response = await apiRequest("PUT", "/api/admin/ai-settings", payload);
       return response.json();
     },
     onSuccess: (data: AdminAiSettings) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-usage"] });
       setPreferredAiSource(data.preferredSource);
+      setSelectedTextModel(data.textModel);
+      setMonthlyBudgetInput(typeof data.monthlyBudgetUsd === "number" ? String(data.monthlyBudgetUsd) : "");
+      const selectedModelLabel =
+        ADMIN_TEXT_MODEL_OPTIONS.find((option) => option.value === data.textModel)?.label || data.textModel;
       toast({
         title: "AI settings updated",
         description:
           data.effectiveSource === data.preferredSource
-            ? `Now using ${data.effectiveSource === "personal" ? "personal OpenAI key" : "Replit AI key"}.`
-            : `Preferred source unavailable. Using ${data.effectiveSource === "personal" ? "personal OpenAI key" : "Replit AI key"} as fallback.`,
+            ? `Now using ${data.effectiveSource === "personal" ? "personal OpenAI key" : "Replit AI key"} with ${selectedModelLabel}.`
+            : `Preferred source unavailable. Using ${data.effectiveSource === "personal" ? "personal OpenAI key" : "Replit AI key"} as fallback with ${selectedModelLabel}.`,
       });
     },
     onError: () => {
@@ -508,6 +690,13 @@ export default function Admin() {
       });
     },
   });
+
+  const parsedMonthlyBudgetUsd =
+    monthlyBudgetInput.trim().length === 0 ? null : Number(monthlyBudgetInput.trim());
+  const isMonthlyBudgetValid =
+    parsedMonthlyBudgetUsd === null ||
+    (Number.isFinite(parsedMonthlyBudgetUsd) && parsedMonthlyBudgetUsd >= 0 && parsedMonthlyBudgetUsd <= 1_000_000);
+  const persistedMonthlyBudgetUsd = adminAiSettings?.monthlyBudgetUsd ?? null;
 
   const savePersonalAiKeyMutation = useMutation({
     mutationFn: async (personalApiKey: string) => {
@@ -1001,6 +1190,27 @@ export default function Admin() {
     });
   };
 
+  const unreadInternalMessageCount = internalMessages?.filter((message) => !message.isRead).length || 0;
+  const allInternalMessagesSelected =
+    !!internalMessages?.length && selectedInternalMessageIds.length === internalMessages.length;
+
+  const toggleInternalMessageSelection = (messageId: number, checked: boolean) => {
+    setSelectedInternalMessageIds((current) =>
+      checked ? Array.from(new Set([...current, messageId])) : current.filter((id) => id !== messageId),
+    );
+  };
+
+  const toggleAllInternalMessages = (checked: boolean) => {
+    setSelectedInternalMessageIds(checked ? (internalMessages || []).map((message) => message.id) : []);
+  };
+
+  const openInternalMessage = (message: InternalMessage) => {
+    if (message.isRead || markInternalMessagesReadMutation.isPending) {
+      return;
+    }
+    markInternalMessagesReadMutation.mutate([message.id]);
+  };
+
   if (adminLoading) {
     return (
       <div className="h-full overflow-auto bg-background p-6">
@@ -1078,6 +1288,10 @@ export default function Admin() {
               <Settings className="mr-2 h-4 w-4" />
               AI Control
             </TabsTrigger>
+            <TabsTrigger value="live" data-testid="tab-live-connections">
+              <Wifi className="mr-2 h-4 w-4" />
+              Live
+            </TabsTrigger>
             <TabsTrigger value="internal-inbox" data-testid="tab-internal-inbox">
               <MessageSquare className="mr-2 h-4 w-4" />
               Internal Inbox
@@ -1105,6 +1319,7 @@ export default function Admin() {
                         <TableRow>
                           <TableHead>Email</TableHead>
                           <TableHead>Name</TableHead>
+                          <TableHead>Role</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Joined</TableHead>
                           <TableHead>Actions</TableHead>
@@ -1124,6 +1339,23 @@ export default function Admin() {
                               >
                                 {userInfo.preferredName || `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || "-"}
                               </button>
+                            </TableCell>
+                            <TableCell>
+                              {userInfo.isSuperAdmin ? (
+                                <Badge variant="default" data-testid={`badge-role-${userInfo.userId}`}>
+                                  <Crown className="h-3 w-3 mr-1" />
+                                  Super Admin
+                                </Badge>
+                              ) : userInfo.isAdmin ? (
+                                <Badge variant="secondary" data-testid={`badge-role-${userInfo.userId}`}>
+                                  <Shield className="h-3 w-3 mr-1" />
+                                  Admin
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" data-testid={`badge-role-${userInfo.userId}`}>
+                                  User
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell>
                               {userInfo.subscription ? (
@@ -1168,6 +1400,23 @@ export default function Admin() {
                                 >
                                   <Copy className="h-3 w-3" />
                                 </Button>
+                                {adminCheck?.isSuperAdmin === true && !userInfo.isSuperAdmin ? (
+                                  <Button
+                                    size="sm"
+                                    variant={userInfo.isAdmin ? "secondary" : "default"}
+                                    onClick={() =>
+                                      toggleAdminStatusMutation.mutate({
+                                        userId: userInfo.userId,
+                                        isAdmin: !userInfo.isAdmin,
+                                      })
+                                    }
+                                    disabled={toggleAdminStatusMutation.isPending}
+                                    data-testid={`button-toggle-admin-${userInfo.userId}`}
+                                  >
+                                    <Shield className="h-3 w-3 mr-1" />
+                                    {userInfo.isAdmin ? "Remove Admin" : "Make Admin"}
+                                  </Button>
+                                ) : null}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -2075,17 +2324,102 @@ export default function Admin() {
                       />
                     </div>
 
-                    <div className="flex justify-end">
-                      <Button
-                        onClick={() => saveAiSettingsMutation.mutate(preferredAiSource)}
-                        disabled={saveAiSettingsMutation.isPending}
-                        data-testid="button-save-admin-ai-settings"
+                    <div className="rounded-md border p-4 space-y-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="admin-ai-text-model">Text generation model</Label>
+                        <p className="text-sm text-muted-foreground">
+                          This controls SOAP note generation and the other text-generation tools across the app.
+                        </p>
+                      </div>
+                      <Select
+                        value={selectedTextModel}
+                        onValueChange={(value) => setSelectedTextModel(value as AdminAiSettings["textModel"])}
                       >
-                        {saveAiSettingsMutation.isPending ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : null}
-                        Save AI Setting
-                      </Button>
+                        <SelectTrigger id="admin-ai-text-model" data-testid="select-admin-ai-text-model">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ADMIN_TEXT_MODEL_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="rounded-md bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                        {ADMIN_TEXT_MODEL_OPTIONS.map((option) => (
+                          <p key={option.value}>
+                            <span className="font-medium text-foreground">{option.label}:</span> {option.description}
+                          </p>
+                        ))}
+                      </div>
+                      <div className="flex justify-end">
+                        <Button
+                          onClick={() =>
+                            saveAiSettingsMutation.mutate({
+                              preferredSource: preferredAiSource,
+                              textModel: selectedTextModel,
+                              monthlyBudgetUsd: persistedMonthlyBudgetUsd,
+                            })
+                          }
+                          disabled={saveAiSettingsMutation.isPending}
+                          data-testid="button-save-admin-ai-model-settings"
+                        >
+                          {saveAiSettingsMutation.isPending ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Save Provider and Model
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border p-4 space-y-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="admin-ai-monthly-budget">Monthly OpenAI budget</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Optional. Leave it blank if you do not want a budget cap shown in Admin.
+                        </p>
+                      </div>
+                      <Input
+                        id="admin-ai-monthly-budget"
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        placeholder="e.g. 100"
+                        value={monthlyBudgetInput}
+                        onChange={(e) => setMonthlyBudgetInput(e.target.value)}
+                        data-testid="input-admin-ai-monthly-budget"
+                      />
+                      {!isMonthlyBudgetValid ? (
+                        <p className="text-xs text-destructive">Enter a valid non-negative dollar amount.</p>
+                      ) : null}
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => setMonthlyBudgetInput("")}
+                          disabled={saveAiSettingsMutation.isPending}
+                          data-testid="button-clear-admin-ai-budget"
+                        >
+                          Clear Budget
+                        </Button>
+                        <Button
+                          onClick={() =>
+                            saveAiSettingsMutation.mutate({
+                              preferredSource: preferredAiSource,
+                              textModel: selectedTextModel,
+                              monthlyBudgetUsd: parsedMonthlyBudgetUsd,
+                            })
+                          }
+                          disabled={saveAiSettingsMutation.isPending || !isMonthlyBudgetValid}
+                          data-testid="button-save-admin-ai-budget"
+                        >
+                          {saveAiSettingsMutation.isPending ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Save Budget
+                        </Button>
+                      </div>
                     </div>
 
                     <div className="rounded-md border p-4 space-y-3">
@@ -2200,6 +2534,43 @@ export default function Admin() {
                       </div>
                     </div>
 
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Spend in selected window ({adminAiUsage.spendSource === "actual" ? "OpenAI Costs API" : "Estimated"})
+                        </p>
+                        <p className="text-xl font-semibold">
+                          {formatCurrency(
+                            adminAiUsage.currentSpendUsd,
+                            adminAiUsage.openAiCosts.currency || "USD",
+                          )}
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Estimated app spend</p>
+                        <p className="text-xl font-semibold">{formatCurrency(adminAiUsage.estimatedCostUsd)}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Month-to-date spend ({adminAiUsage.monthToDateSpendSource === "actual" ? "OpenAI Costs API" : "Estimated"})
+                        </p>
+                        <p className="text-xl font-semibold">
+                          {formatCurrency(
+                            adminAiUsage.monthToDateSpendUsd,
+                            adminAiUsage.monthOpenAiCosts.currency || "USD",
+                          )}
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Monthly budget</p>
+                        <p className="text-xl font-semibold">{formatCurrency(adminAiUsage.monthlyBudgetUsd)}</p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Budget remaining</p>
+                        <p className="text-xl font-semibold">{formatCurrency(adminAiUsage.remainingBudgetUsd)}</p>
+                      </div>
+                    </div>
+
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="rounded-md border p-3">
                         <p className="text-sm font-medium">Provider split</p>
@@ -2221,6 +2592,31 @@ export default function Admin() {
                         )}
                       </div>
                     </div>
+
+                    {adminAiUsage.estimatedCostByModel.length > 0 ? (
+                      <div className="rounded-md border p-3">
+                        <p className="text-sm font-medium">Estimated spend by model</p>
+                        <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                          {adminAiUsage.estimatedCostByModel.slice(0, 6).map((entry) => (
+                            <p key={entry.model}>
+                              {entry.model}: {formatCurrency(entry.usd)}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {!adminAiUsage.openAiCosts.available && adminAiUsage.openAiCosts.error ? (
+                      <p className="text-xs text-muted-foreground">
+                        OpenAI Costs API unavailable for the current key. Showing app-side estimate instead. Details:{" "}
+                        {adminAiUsage.openAiCosts.error}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Actual spend is pulled from OpenAI when the current personal key can access the organization Costs API.
+                        Remaining budget is calculated against the monthly budget you set above.
+                      </p>
+                    )}
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">No AI usage data yet.</p>
@@ -2611,12 +3007,111 @@ export default function Admin() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="live" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Wifi className="h-5 w-5" />
+                      Live Collaboration Connections
+                    </CardTitle>
+                    <CardDescription>
+                      Current websocket collaboration connections for notes. This is live-edit presence, not all signed-in sessions.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refetchLiveConnections()}
+                    disabled={liveConnectionsLoading}
+                    data-testid="button-refresh-live-connections"
+                  >
+                    {liveConnectionsLoading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Refresh
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {liveConnectionsLoading && !liveConnections ? (
+                  <Skeleton className="h-40 w-full" />
+                ) : liveConnections && liveConnections.rooms.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap gap-3">
+                      <Badge variant="secondary" data-testid="badge-live-total-connections">
+                        {liveConnections.totalConnections} connection{liveConnections.totalConnections === 1 ? "" : "s"}
+                      </Badge>
+                      <Badge variant="secondary" data-testid="badge-live-total-rooms">
+                        {liveConnections.totalRooms} note room{liveConnections.totalRooms === 1 ? "" : "s"}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        Updated {formatDate(liveConnections.generatedAt)}
+                      </span>
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Note</TableHead>
+                          <TableHead>Patient</TableHead>
+                          <TableHead>Connections</TableHead>
+                          <TableHead>People</TableHead>
+                          <TableHead>Last Activity</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {liveConnections.rooms.map((room) => (
+                          <TableRow key={room.noteId} data-testid={`row-live-room-${room.noteId}`}>
+                            <TableCell className="max-w-[280px]">
+                              <div className="font-medium truncate">{room.noteTitle}</div>
+                              <div className="text-xs text-muted-foreground">Note #{room.noteId}</div>
+                            </TableCell>
+                            <TableCell>{room.patientName || "-"}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{room.editorCount}</Badge>
+                            </TableCell>
+                            <TableCell className="max-w-[360px]">
+                              <div className="space-y-1">
+                                {room.editors.map((editor) => (
+                                  <div key={`${room.noteId}-${editor.userId}`} className="text-sm">
+                                    <div className="font-medium">{editor.userName}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {editor.email || editor.userId}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">{formatDate(room.lastActivity)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-muted-foreground">
+                    <Wifi className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                    <p>No live collaboration connections right now</p>
+                    <p className="text-sm">This view will populate when someone has a note open in live-edit mode.</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="internal-inbox" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <MessageSquare className="h-5 w-5" />
                   Internal Inbox
+                  {unreadInternalMessageCount > 0 && (
+                    <Badge className="ml-2">{unreadInternalMessageCount} unread</Badge>
+                  )}
                 </CardTitle>
                 <CardDescription>
                   User-submitted internal messages (no external mailbox required)
@@ -2626,10 +3121,38 @@ export default function Admin() {
                 {internalMessagesLoading ? (
                   <Skeleton className="h-48 w-full" />
                 ) : internalMessages && internalMessages.length > 0 ? (
-                  <div className="overflow-x-auto">
+                  <div className="space-y-4 overflow-x-auto">
+                    <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={allInternalMessagesSelected}
+                          onCheckedChange={(checked) => toggleAllInternalMessages(checked === true)}
+                          data-testid="checkbox-internal-messages-select-all"
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {selectedInternalMessageIds.length > 0
+                            ? `${selectedInternalMessageIds.length} selected`
+                            : "Select messages to delete"}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => deleteInternalMessagesMutation.mutate(selectedInternalMessageIds)}
+                        disabled={selectedInternalMessageIds.length === 0 || deleteInternalMessagesMutation.isPending}
+                        data-testid="button-internal-messages-delete-selected"
+                      >
+                        {deleteInternalMessagesMutation.isPending ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : null}
+                        Delete selected
+                      </Button>
+                    </div>
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-12"></TableHead>
+                          <TableHead>Status</TableHead>
                           <TableHead>Date</TableHead>
                           <TableHead>From</TableHead>
                           <TableHead>Category</TableHead>
@@ -2639,7 +3162,27 @@ export default function Admin() {
                       </TableHeader>
                       <TableBody>
                         {internalMessages.map((msg) => (
-                          <TableRow key={msg.id} data-testid={`row-internal-message-${msg.id}`}>
+                          <TableRow
+                            key={msg.id}
+                            data-testid={`row-internal-message-${msg.id}`}
+                            className={msg.isRead ? "" : "bg-primary/5"}
+                            onClick={() => openInternalMessage(msg)}
+                          >
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedInternalMessageIds.includes(msg.id)}
+                                onCheckedChange={(checked) => toggleInternalMessageSelection(msg.id, checked === true)}
+                                data-testid={`checkbox-internal-message-${msg.id}`}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={msg.isRead ? "secondary" : "default"}>
+                                {msg.isRead ? "Read" : "Unread"}
+                              </Badge>
+                              {msg.readAt && (
+                                <div className="mt-1 text-xs text-muted-foreground">{formatDate(msg.readAt)}</div>
+                              )}
+                            </TableCell>
                             <TableCell className="whitespace-nowrap">{formatDate(msg.createdAt)}</TableCell>
                             <TableCell className="max-w-[220px]">
                               <div className="truncate font-medium">{msg.userEmail || "-"}</div>

@@ -7,6 +7,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { openai } from "../../openaiClient";
 
+export { openai };
+
 export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "ogg" | "unknown";
 
 /**

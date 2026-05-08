@@ -215,7 +215,7 @@ export default function Landing() {
                   { feature: "Practice/Team Management", us: true, heidi: false, nuance: true },
                   { feature: "Task Management", us: true, heidi: false, nuance: false },
                   { feature: "Analytics Dashboard", us: true, heidi: false, nuance: true },
-                  { feature: "Starting Price", us: "$59/mo or $590/yr", heidi: "$99/mo", nuance: "Enterprise" },
+                  { feature: "Starting Price", us: "$79/mo", heidi: "$99/mo", nuance: "Enterprise" },
                 ].map((row, i) => (
                   <div key={i} className={`grid grid-cols-4 gap-4 py-3 ${i % 2 === 0 ? 'bg-muted/30' : ''} rounded-lg px-2`}>
                     <div className="font-medium">{row.feature}</div>
@@ -299,7 +299,7 @@ export default function Landing() {
                   </div>
                   <h3 className="text-xl font-semibold mb-2">Competitive Solo Pricing</h3>
                   <p className="text-muted-foreground mb-3">
-                    At <span className="font-semibold text-primary">$59/month</span> or <span className="font-semibold text-primary">$590/year</span>, DocuWhisper stays affordable for solo clinicians while still including the full documentation workflow.
+                    At <span className="font-semibold text-primary">$79/month</span>, DocuWhisper stays affordable for solo clinicians while still including the full documentation workflow.
                   </p>
                   <p className="text-sm text-muted-foreground">
                     Priced to stay sustainable without stripping out the features independent practices actually use.
@@ -357,10 +357,10 @@ export default function Landing() {
                   <div className="text-center mb-6">
                     <h3 className="text-2xl font-bold mb-2">Solo</h3>
                     <div className="flex items-baseline justify-center gap-1">
-                      <span className="text-5xl font-bold">$59</span>
+                      <span className="text-5xl font-bold">$79</span>
                       <span className="text-muted-foreground">/month</span>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-2">$590/year if you prefer annual billing. Cancel anytime.</p>
+                    <p className="text-sm text-muted-foreground mt-2">Billed monthly. Cancel anytime. Annual discounts available separately.</p>
                   </div>
                   <ul className="space-y-3 mb-8">
                     {[

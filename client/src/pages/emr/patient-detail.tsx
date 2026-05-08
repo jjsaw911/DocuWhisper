@@ -1003,7 +1003,7 @@ export default function PatientDetailPage() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Gender</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}>
+                            <Select onValueChange={field.onChange} value={field.value ?? undefined}>
                               <FormControl>
                                 <SelectTrigger data-testid="select-gender">
                                   <SelectValue placeholder="Select" />

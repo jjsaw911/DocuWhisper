@@ -1,7 +1,17 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  canViewBetaSoapDebug,
+  formatSoapDebugLabel,
+  formatSoapDebugSecondary,
+  readSoapDebugFailureFromError,
+  readSoapDebugInfoFromResponse,
+  saveSoapDebugInfo,
+  type SoapDebugInfo,
+} from "@/lib/soap-debug";
+import { getNoteCreditError } from "@/lib/subscription-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -90,6 +100,35 @@ type StructuredSegment = {
   timestamp: number;
 };
 
+const normalizeSpeakerCoverageText = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const normalizeRecoveryTranscriptText = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const recoveryTranscriptsMatch = (left?: string | null, right?: string | null) => {
+  const normalizedLeft = normalizeRecoveryTranscriptText(left || "");
+  const normalizedRight = normalizeRecoveryTranscriptText(right || "");
+
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+
+  const [shorter, longer] =
+    normalizedLeft.length <= normalizedRight.length
+      ? [normalizedLeft, normalizedRight]
+      : [normalizedRight, normalizedLeft];
+
+  return shorter.length >= 48 && longer.includes(shorter);
+};
+
 type ResumeNoteData = {
   id: number;
   title: string;
@@ -97,14 +136,36 @@ type ResumeNoteData = {
   patientName: string | null;
   patientContext: string | null;
   icdCodes?: unknown;
+  soapSourceHash?: string | null;
+  soapStale?: boolean;
+};
+
+type SessionSavedNote = {
+  id: number;
+  [key: string]: unknown;
 };
 
 type InflightScribeRecovery = {
+  id?: string;
   transcript: string;
   patientName: string;
   contextText: string;
   savedAt: string;
   reason?: string;
+  noteId?: number | null;
+  noteTitle?: string | null;
+};
+
+type RecoverableDraft = {
+  id: string;
+  transcript: string;
+  patientName: string;
+  specialty: string;
+  contextText: string;
+  savedAt: string;
+  source: "backup" | "inflight" | "manual_defer" | "soap_error";
+  noteId?: number | null;
+  noteTitle?: string | null;
 };
 
 type TranscriptionProviderStatus = {
@@ -154,6 +215,7 @@ export default function Session() {
   const [resumeNoteData, setResumeNoteData] = useState<ResumeNoteData | null>(null);
   const [isManualImportDialogOpen, setIsManualImportDialogOpen] = useState(false);
   const [manualTranscriptInput, setManualTranscriptInput] = useState("");
+  const [isSoapDeferred, setIsSoapDeferred] = useState(false);
   
   // Refs to avoid stale closures in async callbacks
   const isResumeModeRef = useRef(!!resumeNoteId);
@@ -161,6 +223,7 @@ export default function Session() {
   const hasAutoStartedRef = useRef(false);
   const hasImportedFromNoteRef = useRef(false);
   const startRecordingRef = useRef<(() => Promise<void>) | null>(null);
+  const isSoapDeferredRef = useRef(false);
 
   const [patientName, setPatientName] = useState("");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -197,12 +260,14 @@ export default function Session() {
         }
       | undefined;
   } | null>(null);
+  const [soapDebugInfo, setSoapDebugInfo] = useState<SoapDebugInfo | null>(null);
   
   // New features: Visit mode, Context, AI command
   const [visitMode, setVisitMode] = useState<VisitMode>("transcribing");
   const [contextText, setContextText] = useState("");
   const [aiCommand, setAiCommand] = useState("");
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const canViewSoapDebug = useMemo(() => canViewBetaSoapDebug(user), [user]);
   
   // AI Differential search
   const [differentialResults, setDifferentialResults] = useState<{
@@ -254,10 +319,12 @@ export default function Session() {
     resumeNoteData: ResumeNoteData | null;
     sessionId: string;
     sessionDurationSeconds: number;
+    draftRecoveryId: string;
   };
 
   type AutoGenerateAndSaveOptions = {
     background?: boolean;
+    forceSoapGeneration?: boolean;
     patientName?: string;
     contextText?: string;
     selectedTemplateId?: string;
@@ -266,6 +333,7 @@ export default function Session() {
     resumeMode?: boolean;
     resumeNoteData?: ResumeNoteData | null;
     sessionDurationSeconds?: number;
+    draftRecoveryId?: string;
   };
 
   const VAD_RMS_THRESHOLD = 0.02;
@@ -309,28 +377,114 @@ export default function Session() {
   const INFLIGHT_SCRIBE_RECOVERY_KEY = user?.id
     ? `docuwhisper_inflight_scribe_recovery:${user.id}`
     : "docuwhisper_inflight_scribe_recovery";
+  const RECOVERABLE_DRAFTS_KEY = user?.id
+    ? `docuwhisper_recoverable_drafts:${user.id}`
+    : "docuwhisper_recoverable_drafts";
   const [hasBackup, setHasBackup] = useState(false);
   const [interruptedScribeRecovery, setInterruptedScribeRecovery] = useState<InflightScribeRecovery | null>(null);
+  const [recoverableDrafts, setRecoverableDrafts] = useState<RecoverableDraft[]>([]);
+  const [isRecoverDraftsDialogOpen, setIsRecoverDraftsDialogOpen] = useState(false);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(true);
+  const activeDraftIdRef = useRef<string>(resumeNoteId ? `resume:${resumeNoteId}` : crypto.randomUUID());
+  const suppressRecoveryPersistenceRef = useRef(false);
   
-  const saveBackup = useCallback((transcript: string, patientName: string, specialty: string) => {
+  const loadRecoverableDrafts = useCallback((): RecoverableDraft[] => {
+    try {
+      const raw = localStorage.getItem(RECOVERABLE_DRAFTS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => ({
+          id: typeof item?.id === "string" && item.id.trim() ? item.id : crypto.randomUUID(),
+          transcript: typeof item?.transcript === "string" ? item.transcript.trim() : "",
+          patientName: typeof item?.patientName === "string" ? item.patientName : "",
+          specialty: typeof item?.specialty === "string" ? item.specialty : "general",
+          contextText: typeof item?.contextText === "string" ? item.contextText : "",
+          savedAt: typeof item?.savedAt === "string" ? item.savedAt : new Date().toISOString(),
+          source:
+            item?.source === "inflight" ||
+            item?.source === "manual_defer" ||
+            item?.source === "soap_error"
+              ? item.source
+              : "backup",
+          noteId: typeof item?.noteId === "number" ? item.noteId : null,
+          noteTitle: typeof item?.noteTitle === "string" ? item.noteTitle : null,
+        }))
+        .filter((item) => item.transcript)
+        .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+    } catch (error) {
+      console.error("[Recovery] Failed to load recoverable drafts:", error);
+      return [];
+    }
+  }, [RECOVERABLE_DRAFTS_KEY]);
+
+  const persistRecoverableDrafts = useCallback((drafts: RecoverableDraft[]) => {
+    const nextDrafts = drafts
+      .filter((draft) => draft.transcript.trim())
+      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
+      .slice(0, 10);
+    localStorage.setItem(RECOVERABLE_DRAFTS_KEY, JSON.stringify(nextDrafts));
+    setRecoverableDrafts(nextDrafts);
+  }, [RECOVERABLE_DRAFTS_KEY]);
+
+  const saveRecoverableDraft = useCallback((draft: RecoverableDraft) => {
+    const existing = loadRecoverableDrafts();
+    const nextDraft: RecoverableDraft = {
+      ...draft,
+      transcript: draft.transcript.trim(),
+      savedAt: draft.savedAt || new Date().toISOString(),
+    };
+    const merged = [nextDraft, ...existing.filter((item) => item.id !== nextDraft.id)];
+    persistRecoverableDrafts(merged);
+  }, [loadRecoverableDrafts, persistRecoverableDrafts]);
+
+  const removeRecoverableDraft = useCallback((draftId: string) => {
+    const nextDrafts = loadRecoverableDrafts().filter((draft) => draft.id !== draftId);
+    persistRecoverableDrafts(nextDrafts);
+  }, [loadRecoverableDrafts, persistRecoverableDrafts]);
+
+  const saveBackup = useCallback((
+    transcript: string,
+    patientName: string,
+    specialty: string,
+    options?: {
+      contextText?: string;
+      source?: RecoverableDraft["source"];
+      noteId?: number | null;
+      noteTitle?: string | null;
+      draftId?: string;
+    },
+  ) => {
     if (transcript && transcript.trim()) {
+      const draftId = options?.draftId || activeDraftIdRef.current || crypto.randomUUID();
+      activeDraftIdRef.current = draftId;
       const backup = {
+        id: draftId,
         transcript: transcript.trim(),
         patientName,
         specialty,
+        contextText: options?.contextText ?? contextText,
         savedAt: new Date().toISOString(),
+        source: options?.source ?? "backup",
+        noteId: options?.noteId ?? resumeNoteDataRef.current?.id ?? null,
+        noteTitle: options?.noteTitle ?? resumeNoteDataRef.current?.title ?? null,
       };
       localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+      setHasBackup(true);
+      saveRecoverableDraft(backup);
       console.log(`[Backup] Saved ${transcript.length} chars to localStorage`);
     }
-  }, []);
+  }, [contextText, saveRecoverableDraft]);
   
   const loadBackup = useCallback(() => {
     try {
       const saved = localStorage.getItem(BACKUP_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.transcript === "string" && parsed.transcript.trim()) {
+          return parsed as Partial<RecoverableDraft> & { transcript: string };
+        }
       }
     } catch (e) {
       console.error("[Backup] Failed to load:", e);
@@ -345,8 +499,25 @@ export default function Session() {
 
   const saveInflightScribeRecovery = useCallback((payload: InflightScribeRecovery) => {
     if (!payload.transcript.trim()) return;
-    localStorage.setItem(INFLIGHT_SCRIBE_RECOVERY_KEY, JSON.stringify(payload));
-  }, [INFLIGHT_SCRIBE_RECOVERY_KEY]);
+    const nextPayload: InflightScribeRecovery = {
+      ...payload,
+      id: payload.id || activeDraftIdRef.current,
+      noteId: payload.noteId ?? resumeNoteDataRef.current?.id ?? null,
+      noteTitle: payload.noteTitle ?? resumeNoteDataRef.current?.title ?? null,
+    };
+    localStorage.setItem(INFLIGHT_SCRIBE_RECOVERY_KEY, JSON.stringify(nextPayload));
+    saveRecoverableDraft({
+      id: nextPayload.id || activeDraftIdRef.current,
+      transcript: nextPayload.transcript,
+      patientName: nextPayload.patientName,
+      specialty: "general",
+      contextText: nextPayload.contextText,
+      savedAt: nextPayload.savedAt,
+      source: "inflight",
+      noteId: nextPayload.noteId ?? null,
+      noteTitle: nextPayload.noteTitle ?? null,
+    });
+  }, [INFLIGHT_SCRIBE_RECOVERY_KEY, saveRecoverableDraft]);
 
   const loadInflightScribeRecovery = useCallback((): InflightScribeRecovery | null => {
     try {
@@ -357,11 +528,14 @@ export default function Session() {
         return null;
       }
       return {
+        id: typeof parsed.id === "string" ? parsed.id : undefined,
         transcript: parsed.transcript,
         patientName: typeof parsed.patientName === "string" ? parsed.patientName : "",
         contextText: typeof parsed.contextText === "string" ? parsed.contextText : "",
         savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : new Date().toISOString(),
         reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+        noteId: typeof parsed.noteId === "number" ? parsed.noteId : null,
+        noteTitle: typeof parsed.noteTitle === "string" ? parsed.noteTitle : null,
       };
     } catch (error) {
       console.error("[Recovery] Failed to parse interrupted scribe payload:", error);
@@ -373,6 +547,95 @@ export default function Session() {
     localStorage.removeItem(INFLIGHT_SCRIBE_RECOVERY_KEY);
     setInterruptedScribeRecovery(null);
   }, [INFLIGHT_SCRIBE_RECOVERY_KEY]);
+
+  const clearDraftRecoveryById = useCallback((draftId?: string | null) => {
+    if (!draftId) return;
+
+    removeRecoverableDraft(draftId);
+
+    const backup = loadBackup();
+    if (backup?.id === draftId) {
+      clearBackup();
+    }
+
+    const inflight = loadInflightScribeRecovery();
+    if (inflight?.id === draftId) {
+      clearInflightScribeRecovery();
+    }
+
+    if (activeDraftIdRef.current === draftId) {
+      activeDraftIdRef.current = crypto.randomUUID();
+    }
+  }, [clearBackup, clearInflightScribeRecovery, loadBackup, loadInflightScribeRecovery, removeRecoverableDraft]);
+
+  const clearDraftRecoveryAfterSuccessfulSave = useCallback(
+    (options: { draftId?: string | null; transcript?: string | null; noteId?: number | null }) => {
+      const matchesRecovery = (draft: {
+        id?: string | null;
+        noteId?: number | null;
+        transcript?: string | null;
+      }) => {
+        if (options.draftId && draft.id === options.draftId) {
+          return true;
+        }
+
+        if (options.noteId != null && draft.noteId === options.noteId) {
+          return true;
+        }
+
+        if (
+          options.transcript &&
+          draft.noteId == null &&
+          recoveryTranscriptsMatch(draft.transcript || "", options.transcript)
+        ) {
+          return true;
+        }
+
+        return false;
+      };
+
+      const nextDrafts = loadRecoverableDrafts().filter((draft) => !matchesRecovery(draft));
+      persistRecoverableDrafts(nextDrafts);
+
+      const backup = loadBackup();
+      if (
+        backup?.transcript &&
+        matchesRecovery({
+          id: typeof backup.id === "string" ? backup.id : null,
+          noteId: typeof backup.noteId === "number" ? backup.noteId : null,
+          transcript: backup.transcript,
+        })
+      ) {
+        clearBackup();
+      }
+
+      const inflight = loadInflightScribeRecovery();
+      if (
+        inflight?.transcript &&
+        matchesRecovery({
+          id: inflight.id ?? null,
+          noteId: inflight.noteId ?? null,
+          transcript: inflight.transcript,
+        })
+      ) {
+        clearInflightScribeRecovery();
+      }
+
+      if (options.draftId && activeDraftIdRef.current === options.draftId) {
+        activeDraftIdRef.current = crypto.randomUUID();
+      }
+
+      suppressRecoveryPersistenceRef.current = true;
+    },
+    [
+      clearBackup,
+      clearInflightScribeRecovery,
+      loadBackup,
+      loadInflightScribeRecovery,
+      loadRecoverableDrafts,
+      persistRecoverableDrafts,
+    ],
+  );
   
   // Check for existing backup on mount
   useEffect(() => {
@@ -389,6 +652,68 @@ export default function Session() {
     }
   }, [loadInflightScribeRecovery]);
 
+  useEffect(() => {
+    setRecoverableDrafts(loadRecoverableDrafts());
+  }, [loadRecoverableDrafts]);
+
+  useEffect(() => {
+    if (recoverableDrafts.length === 0) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await apiRequest("GET", "/api/notes");
+        const notes = (await response.json()) as Array<{ id?: number; transcript?: string | null }>;
+        if (cancelled || !Array.isArray(notes) || notes.length === 0) return;
+
+        const noteIds = new Set(
+          notes
+            .map((note) => (typeof note.id === "number" ? note.id : null))
+            .filter((id): id is number => id !== null),
+        );
+        const isSavedDraft = (draft: {
+          noteId?: number | null;
+          transcript?: string | null;
+        }) => {
+          if (draft.noteId != null && noteIds.has(draft.noteId)) {
+            return true;
+          }
+
+          return notes.some((note) => recoveryTranscriptsMatch(draft.transcript || "", note.transcript || ""));
+        };
+
+        const nextDrafts = recoverableDrafts.filter((draft) => !isSavedDraft(draft));
+        if (nextDrafts.length === recoverableDrafts.length || cancelled) return;
+
+        persistRecoverableDrafts(nextDrafts);
+
+        const backup = loadBackup();
+        if (backup && isSavedDraft(backup)) {
+          clearBackup();
+        }
+
+        const inflight = loadInflightScribeRecovery();
+        if (inflight && isSavedDraft(inflight)) {
+          clearInflightScribeRecovery();
+        }
+      } catch (error) {
+        console.error("[Recovery] Failed to prune stale recoverable drafts:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    clearBackup,
+    clearInflightScribeRecovery,
+    loadBackup,
+    loadInflightScribeRecovery,
+    persistRecoverableDrafts,
+    recoverableDrafts,
+  ]);
+
   // Load existing note data when in resume mode
   useEffect(() => {
     if (resumeNoteId) {
@@ -403,7 +728,10 @@ export default function Session() {
             patientName: note.patientName,
             patientContext: note.patientContext,
             icdCodes: note.icdCodes,
+            soapSourceHash: note.soapSourceHash ?? null,
+            soapStale: Boolean(note.soapStale),
           };
+          activeDraftIdRef.current = `resume:${note.id}`;
           setResumeNoteData(noteData);
           // Update refs for async callbacks
           resumeNoteDataRef.current = noteData;
@@ -578,33 +906,172 @@ export default function Session() {
     );
   };
 
+  const resolveRequestedTemplateId = (templateValue?: string) => {
+    if (!templateValue || templateValue === "default" || templateValue === "none") {
+      return undefined;
+    }
+
+    const parsed = Number.parseInt(templateValue, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
   const buildIcdCodesWithVisitTime = (
     icdCodesPayload: any,
     sessionDurationSeconds?: number,
     priorVisitMinutes?: number,
   ) => {
-    if (!icdCodesPayload || typeof icdCodesPayload !== "object") {
-      return icdCodesPayload;
-    }
-
     const recordedMinutes =
       typeof sessionDurationSeconds === "number" && sessionDurationSeconds > 0
         ? Math.max(1, Math.round(sessionDurationSeconds / 60))
         : undefined;
+    const payloadObject =
+      icdCodesPayload && typeof icdCodesPayload === "object" ? icdCodesPayload : undefined;
     const payloadMinutes =
-      normalizeVisitTimeMinutes(icdCodesPayload.visitTimeMinutes) ??
-      normalizeVisitTimeMinutes(icdCodesPayload.timeSpentMinutes) ??
-      normalizeVisitTimeMinutes(icdCodesPayload.billableTimeMinutes);
+      normalizeVisitTimeMinutes(payloadObject?.visitTimeMinutes) ??
+      normalizeVisitTimeMinutes(payloadObject?.timeSpentMinutes) ??
+      normalizeVisitTimeMinutes(payloadObject?.billableTimeMinutes);
     const baseMinutes = payloadMinutes ?? recordedMinutes;
     const cumulativeMinutes =
       (typeof priorVisitMinutes === "number" ? priorVisitMinutes : 0) + (baseMinutes ?? 0);
 
+    if (!payloadObject) {
+      return cumulativeMinutes > 0 ? { visitTimeMinutes: cumulativeMinutes } : null;
+    }
+
     return {
-      ...icdCodesPayload,
+      ...payloadObject,
       ...(cumulativeMinutes > 0
         ? { visitTimeMinutes: cumulativeMinutes }
         : {}),
     };
+  };
+
+  const parseStoredIcdCodes = (payload: unknown) => {
+    if (!payload) return null;
+    if (typeof payload === "string") {
+      try {
+        return JSON.parse(payload);
+      } catch {
+        return null;
+      }
+    }
+    return typeof payload === "object" ? payload : null;
+  };
+
+  const buildNoteSectionsFromSoap = (soapPayload: {
+    subjective?: string;
+    objective?: string;
+    assessment?: string;
+    plan?: string;
+    hpi?: string;
+  }) => {
+    if (soapPayload?.hpi) {
+      return {
+        subjective: soapPayload.hpi,
+        objective: "",
+        assessment: "",
+        plan: soapPayload.plan || "",
+      };
+    }
+
+    return {
+      subjective: soapPayload?.subjective || "",
+      objective: soapPayload?.objective || "",
+      assessment: soapPayload?.assessment || "",
+      plan: soapPayload?.plan || "",
+    };
+  };
+
+  const getUsableSpeakerSegments = useCallback(
+    (transcript: string, segments?: StructuredSegment[]) => {
+      if (!segments || segments.length === 0) {
+        return undefined;
+      }
+
+      const normalizedTranscript = normalizeSpeakerCoverageText(transcript);
+      if (!normalizedTranscript) {
+        return undefined;
+      }
+
+      const normalizedSegmentTranscript = normalizeSpeakerCoverageText(
+        segments
+          .map((segment) => segment.text)
+          .filter((text) => typeof text === "string" && text.trim().length > 0)
+          .join(" "),
+      );
+
+      if (!normalizedSegmentTranscript) {
+        return undefined;
+      }
+
+      return normalizedSegmentTranscript === normalizedTranscript ? segments : undefined;
+    },
+    [],
+  );
+
+  const upsertSavedNoteInCache = useCallback(
+    (savedNote: SessionSavedNote | null | undefined) => {
+      if (!savedNote || typeof savedNote.id !== "number") {
+        return;
+      }
+
+      const noteQueryKeys: Array<[string, string | number]> = [
+        ["/api/notes", savedNote.id.toString()],
+        ["/api/notes", savedNote.id],
+      ];
+
+      for (const queryKey of noteQueryKeys) {
+        queryClient.setQueryData(queryKey, savedNote);
+      }
+
+      queryClient.setQueryData<SessionSavedNote[] | undefined>(["/api/notes"], (existing) => {
+        if (!existing) {
+          return [savedNote];
+        }
+
+        const existingIndex = existing.findIndex((note) => note.id === savedNote.id);
+        if (existingIndex === -1) {
+          return [savedNote, ...existing];
+        }
+
+        const next = [...existing];
+        next[existingIndex] = {
+          ...next[existingIndex],
+          ...savedNote,
+        };
+        return next;
+      });
+    },
+    [queryClient],
+  );
+
+  const saveResumeTranscriptDraft = async (params: {
+    resumeNote: ResumeNoteData;
+    transcript: string;
+    patientName?: string;
+    contextText?: string;
+  }) => {
+    const response = await apiRequest("PATCH", `/api/notes/${params.resumeNote.id}`, {
+      transcript: params.transcript,
+      patientName: params.patientName || null,
+      patientContext: params.contextText || null,
+    });
+    return response.json();
+  };
+
+  const saveTranscriptOnlyDraftNote = async (params: {
+    transcript: string;
+    patientName?: string;
+    contextText?: string;
+  }) => {
+    const response = await apiRequest("POST", "/api/notes", {
+      title: getChiefComplaintPreview(params.transcript) || getFallbackTitle(params.patientName),
+      patientName: params.patientName || null,
+      specialty: "general",
+      transcript: params.transcript,
+      patientContext: params.contextText || null,
+    });
+    return response.json();
   };
 
   const addTranscriptEntry = (text: string, type: "system" | "content" = "system", recordingTimeSec?: number) => {
@@ -1265,6 +1732,7 @@ export default function Session() {
 
   const startRecording = async () => {
     try {
+      suppressRecoveryPersistenceRef.current = false;
       // Use selected microphone if available
       const audioConstraints = selectedMicrophoneId 
         ? { deviceId: { exact: selectedMicrophoneId } } 
@@ -1295,9 +1763,12 @@ export default function Session() {
       structuredSegmentsRef.current = [];
       setVadStats({ uploaded: 0, dropped: 0, lastRms: 0 });
       
-      // Reset transcript state - but PRESERVE existing transcript in resume mode
-      // Use refs to avoid stale closure issues
-      if (!isResumeModeRef.current || !resumeNoteDataRef.current?.transcript) {
+      // Preserve transcript when resuming an existing note or when the clinician explicitly
+      // deferred SOAP generation to continue the same visit after testing.
+      const shouldPreserveTranscript =
+        (isResumeModeRef.current && !!resumeNoteDataRef.current?.transcript) ||
+        isSoapDeferredRef.current;
+      if (!shouldPreserveTranscript) {
         committedTextRef.current = "";
       }
       // Always reset these - they're for new recording session
@@ -1676,26 +2147,34 @@ export default function Session() {
       const fallbackTitle = getFallbackTitle(patientNameValue);
       if (!transcript.trim()) return fallbackTitle;
 
+      const preview = getChiefComplaintPreview(transcript);
       try {
         const titleResponse = await apiRequest("POST", "/api/generate-title", { transcript });
         const titleData = await titleResponse.json();
         const generatedTitle = typeof titleData?.title === "string" ? titleData.title.trim() : "";
         if (generatedTitle) return generatedTitle;
       } catch {
-        // Fall back to local chief-complaint preview if title generation API fails.
+        // Fall back to local title if title generation API fails.
       }
 
-      const preview = getChiefComplaintPreview(transcript);
-      return preview || fallbackTitle;
+      if (preview && preview !== "Chief complaint") {
+        return preview;
+      }
+
+      return fallbackTitle;
     },
     []
   );
 
   const resetSessionForNextRecording = useCallback(() => {
+    suppressRecoveryPersistenceRef.current = true;
     setRecordingState("idle");
     setDuration(0);
     setTranscriptEntries([]);
     setSoapNote(null);
+    setSoapDebugInfo(null);
+    setIsSoapDeferred(false);
+    isSoapDeferredRef.current = false;
     setPatientName("");
     setContextText("");
     setActiveTab("transcript");
@@ -1721,13 +2200,124 @@ export default function Session() {
     isTranscribingRef.current = false;
     transcribeLockSessionRef.current = null;
     recordingSessionIdRef.current = "";
+    activeDraftIdRef.current = crypto.randomUUID();
     nextChunkIdRef.current = 0;
     nextExpectedChunkIdRef.current = 1;
 
     clearBackup();
   }, [clearBackup]);
 
-  const finalizeSnapshotInBackground = async (snapshot: FinalizeSnapshot) => {
+  const queueSessionDraftForLater = useCallback(async () => {
+    const transcript = (
+      committedTextRef.current.trim() ||
+      transcriptEntries
+        .filter((entry) => entry.type === "content")
+        .map((entry) => entry.text)
+        .join("\n")
+        .trim()
+    ).trim();
+
+    if (!transcript) {
+      resetSessionForNextRecording();
+      return;
+    }
+
+    const patientNameSnapshot = patientName.trim();
+    const contextTextSnapshot = contextText;
+    const resumeNote = resumeNoteDataRef.current;
+    const draftRecoveryIdSnapshot = activeDraftIdRef.current;
+    const noteData = soapNote ? buildNoteSectionsFromSoap(soapNote) : null;
+    const title = getChiefComplaintPreview(transcript) || getFallbackTitle(patientNameSnapshot);
+
+    saveBackup(transcript, patientNameSnapshot, "general", {
+      contextText: contextTextSnapshot,
+      source: "manual_defer",
+      noteId: resumeNote?.id ?? null,
+      noteTitle: resumeNote?.title ?? title,
+      draftId: draftRecoveryIdSnapshot,
+    });
+    saveInflightScribeRecovery({
+      id: draftRecoveryIdSnapshot,
+      transcript,
+      patientName: patientNameSnapshot,
+      contextText: contextTextSnapshot,
+      savedAt: new Date().toISOString(),
+      reason: "manual-next-patient",
+      noteId: resumeNote?.id ?? null,
+      noteTitle: resumeNote?.title ?? title,
+    });
+
+    resetSessionForNextRecording();
+
+    void (async () => {
+      try {
+        let savedNote: SessionSavedNote;
+        if (resumeNote) {
+          const response = await apiRequest("PATCH", `/api/notes/${resumeNote.id}`, {
+            title: resumeNote.title || title,
+            patientName: patientNameSnapshot || null,
+            transcript,
+            patientContext: contextTextSnapshot || null,
+            ...(noteData || {}),
+          });
+          savedNote = await response.json();
+        } else {
+          const response = await apiRequest("POST", "/api/notes", {
+            title,
+            patientName: patientNameSnapshot || null,
+            specialty: "general",
+            transcript,
+            patientContext: contextTextSnapshot || null,
+            ...(noteData || {}),
+          });
+          savedNote = await response.json();
+        }
+
+        upsertSavedNoteInCache(savedNote);
+        queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+        if (savedNote.id) {
+          queryClient.invalidateQueries({ queryKey: ["/api/notes", savedNote.id.toString()] });
+        }
+        clearDraftRecoveryAfterSuccessfulSave({
+          draftId: draftRecoveryIdSnapshot,
+          noteId: savedNote.id,
+          transcript,
+        });
+        toast({
+          title: "Ready for the next patient",
+          description: "The current session was saved to Scribe in the background.",
+        });
+      } catch (error) {
+        console.error("Failed to queue session draft:", error);
+        toast({
+          title: "Next patient started",
+          description: "The current work was preserved for recovery, but the background draft save failed.",
+        });
+      }
+    })();
+  }, [
+    buildNoteSectionsFromSoap,
+    clearDraftRecoveryAfterSuccessfulSave,
+    contextText,
+    getFallbackTitle,
+    patientName,
+    queryClient,
+    resetSessionForNextRecording,
+    saveBackup,
+    saveInflightScribeRecovery,
+    soapNote,
+    toast,
+    transcriptEntries,
+    upsertSavedNoteInCache,
+  ]);
+
+  const finalizeSnapshot = async (
+    snapshot: FinalizeSnapshot,
+    options?: {
+      background?: boolean;
+      forceSoapGeneration?: boolean;
+    },
+  ) => {
     try {
       let transcript = snapshot.transcript.trim();
       const ordered = new Map<number, OrderedChunkEntry>(snapshot.orderedChunks);
@@ -1813,7 +2403,8 @@ export default function Session() {
       }
 
       await autoGenerateAndSave(transcript, {
-        background: true,
+        background: options?.background === true,
+        forceSoapGeneration: options?.forceSoapGeneration,
         patientName: snapshot.patientName,
         contextText: snapshot.contextText,
         selectedTemplateId: snapshot.selectedTemplateId,
@@ -1824,18 +2415,101 @@ export default function Session() {
         sessionDurationSeconds: snapshot.sessionDurationSeconds,
       });
     } catch (error) {
-      console.error("Background finalization failed:", error);
+      console.error("Finalization failed:", error);
       toast({
         title: "Processing failed",
-        description: "There was an issue processing the recording in background.",
+        description:
+          options?.background === true
+            ? "There was an issue processing the recording in background."
+            : "There was an issue finishing the recording.",
         variant: "destructive",
       });
+      if (options?.background !== true) {
+        setRecordingState("idle");
+      }
     }
   };
 
+  const waitForPendingChunksToFinish = async (sessionId: string, timeoutMs: number = 90_000) => {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const remainingChunks = pendingChunksRef.current.filter((chunk) => !chunk.processed).length;
+      const sameSession = recordingSessionIdRef.current === sessionId;
+
+      if ((!sameSession || remainingChunks === 0) && !isTranscribingRef.current) {
+        pendingChunksRef.current = pendingChunksRef.current.filter((chunk) => !chunk.processed);
+        flushOrderedChunks();
+        finalizePartial();
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    throw new Error("Timed out waiting for pending transcription to finish");
+  };
+
+  const transcribeShortRecordingOnly = useCallback(async (audioBlob: Blob) => {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "recording.webm");
+    formData.append("language", transcriptionLanguage);
+
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || "Transcription failed");
+    }
+
+    return response.json();
+  }, [transcriptionLanguage]);
+
+  const queueBackgroundFinalization = useCallback(
+    (snapshot: FinalizeSnapshot) => {
+      const generationId = startScribeGeneration(
+        user?.id,
+        getChiefComplaintPreview(snapshot.transcript),
+        snapshot.resumeNoteData?.id,
+      );
+
+      saveInflightScribeRecovery({
+        id: snapshot.draftRecoveryId,
+        transcript: snapshot.transcript,
+        patientName: snapshot.patientName,
+        contextText: snapshot.contextText,
+        savedAt: new Date().toISOString(),
+        reason: snapshot.resumeMode ? "background-resume-finalization" : "background-finalization",
+        noteId: snapshot.resumeNoteData?.id ?? null,
+        noteTitle: snapshot.resumeNoteData?.title ?? null,
+      });
+
+      void finalizeSnapshot(snapshot, {
+        background: true,
+        forceSoapGeneration: true,
+      }).finally(() => {
+        finishScribeGeneration(user?.id, generationId);
+      });
+
+      toast({
+        title: "Processing in background",
+        description: snapshot.resumeMode
+          ? "You can start the next patient now. The resumed note will finish updating in the background."
+          : "You can start the next patient now. This note will finish saving in the background.",
+      });
+
+      resetSessionForNextRecording();
+    },
+    [finalizeSnapshot, resetSessionForNextRecording, saveInflightScribeRecovery, toast, user?.id],
+  );
+
   const finalizeRecording = async () => {
     setRecordingState("processing");
-    addTranscriptEntry("Finishing transcription in background...");
+    addTranscriptEntry("Finalizing note...");
 
     try {
       finalizePartial();
@@ -1855,6 +2529,7 @@ export default function Session() {
         resumeNoteData: resumeNoteDataRef.current,
         sessionId: recordingSessionIdRef.current,
         sessionDurationSeconds: duration,
+        draftRecoveryId: activeDraftIdRef.current,
       };
 
       const hasPendingChunks = snapshot.pendingChunks.some((chunk) => !chunk.processed);
@@ -1871,24 +2546,7 @@ export default function Session() {
         return;
       }
 
-      const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(snapshot.transcript));
-      saveInflightScribeRecovery({
-        transcript: snapshot.transcript,
-        patientName: snapshot.patientName,
-        contextText: snapshot.contextText,
-        savedAt: new Date().toISOString(),
-        reason: "background-finalization",
-      });
-      void finalizeSnapshotInBackground(snapshot).finally(() => {
-        finishScribeGeneration(user?.id, generationId);
-      });
-
-      toast({
-        title: "Processing in background",
-        description: "You can start a new session now. This note will save when processing finishes.",
-      });
-
-      resetSessionForNextRecording();
+      queueBackgroundFinalization(snapshot);
     } catch (error) {
       console.error("Finalization failed:", error);
       toast({
@@ -1903,48 +2561,108 @@ export default function Session() {
   // Automatic SOAP generation and save after transcription
   const autoGenerateAndSave = async (transcript: string, options?: AutoGenerateAndSaveOptions) => {
     const background = options?.background === true;
+    const patientNameSnapshot = options?.patientName ?? patientName;
+    const contextTextSnapshot = options?.contextText ?? contextText;
+    const selectedTemplateIdSnapshot = options?.selectedTemplateId ?? selectedTemplateId;
+    const transcriptionLanguageSnapshot = options?.transcriptionLanguage ?? transcriptionLanguage;
+    const sessionDurationSecondsSnapshot = options?.sessionDurationSeconds ?? duration;
+    const currentIsResumeMode = options?.resumeMode ?? isResumeModeRef.current;
+    const currentResumeNoteData = options?.resumeNoteData ?? resumeNoteDataRef.current;
+    const draftRecoveryIdSnapshot = options?.draftRecoveryId ?? activeDraftIdRef.current;
+    const shouldRegenerateResumeNote = Boolean(currentIsResumeMode && currentResumeNoteData);
 
     try {
-      const patientNameSnapshot = options?.patientName ?? patientName;
-      const contextTextSnapshot = options?.contextText ?? contextText;
-      const selectedTemplateIdSnapshot = options?.selectedTemplateId ?? selectedTemplateId;
-      const transcriptionLanguageSnapshot = options?.transcriptionLanguage ?? transcriptionLanguage;
-      const sessionDurationSecondsSnapshot = options?.sessionDurationSeconds ?? duration;
-
-      // Step 1: Generate SOAP note
       const segments =
         options?.speakerSegments && options.speakerSegments.length > 0
           ? options.speakerSegments
           : structuredSegmentsRef.current.length > 0
             ? structuredSegmentsRef.current
             : undefined;
+      const usableSpeakerSegments = getUsableSpeakerSegments(transcript, segments);
+      const priorVisitMinutes = extractVisitTimeMinutesFromPayload(currentResumeNoteData?.icdCodes);
+      const visitTimePayload = buildIcdCodesWithVisitTime(
+        null,
+        sessionDurationSecondsSnapshot,
+        currentIsResumeMode ? priorVisitMinutes : undefined,
+      );
+
+      if (shouldRegenerateResumeNote && currentResumeNoteData) {
+        const regenerateResponse = await apiRequest(
+          "POST",
+          `/api/notes/${currentResumeNoteData.id}/regenerate-from-transcript`,
+          {
+            transcript,
+            patientName: patientNameSnapshot || null,
+            specialty: "general",
+            templateId: resolveRequestedTemplateId(selectedTemplateIdSnapshot),
+            outputLanguage: transcriptionLanguageSnapshot,
+            context: contextTextSnapshot || null,
+            speakerSegments: usableSpeakerSegments,
+            icdCodes: visitTimePayload ? JSON.stringify(visitTimePayload) : null,
+            consumeNoteCredit: true,
+          },
+        );
+        const generatedSoapDebugInfo = canViewSoapDebug
+          ? readSoapDebugInfoFromResponse(regenerateResponse)
+          : null;
+        const updatedNote = (await regenerateResponse.json()) as SessionSavedNote;
+
+        upsertSavedNoteInCache(updatedNote);
+        queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/notes", currentResumeNoteData.id.toString()] });
+        queryClient.invalidateQueries({ queryKey: ["/api/subscription"] });
+        clearDraftRecoveryAfterSuccessfulSave({
+          draftId: draftRecoveryIdSnapshot,
+          noteId: currentResumeNoteData.id,
+          transcript,
+        });
+
+        if (generatedSoapDebugInfo) {
+          saveSoapDebugInfo(currentResumeNoteData.id, generatedSoapDebugInfo);
+        }
+
+        if (background) {
+          toast({
+            title: "Background processing complete",
+            description: "Your resumed note was recreated from the updated transcript.",
+          });
+        } else {
+          toast({
+            title: "Session updated",
+            description: "The note was recreated from the updated transcript.",
+          });
+          navigate(`/notes/${currentResumeNoteData.id}`);
+        }
+
+        return;
+      }
+
+      // Step 1: Generate SOAP note
       const soapResponse = await apiRequest("POST", "/api/generate-soap", {
         transcript,
         patientName: patientNameSnapshot,
         specialty: "general",
-        templateId: selectedTemplateIdSnapshot !== "default" ? parseInt(selectedTemplateIdSnapshot, 10) : undefined,
+        templateId: resolveRequestedTemplateId(selectedTemplateIdSnapshot),
         outputLanguage: transcriptionLanguageSnapshot,
         context: contextTextSnapshot || undefined,
-        speakerSegments: segments,
+        speakerSegments: usableSpeakerSegments,
+        noteId: currentResumeNoteData?.id,
+        enforceNoteCredit: true,
       });
+      const generatedSoapDebugInfo = canViewSoapDebug
+        ? readSoapDebugInfoFromResponse(soapResponse)
+        : null;
       const soapData = await soapResponse.json();
-      // Use refs/options to avoid stale closure issues.
-      const currentIsResumeMode = options?.resumeMode ?? isResumeModeRef.current;
-      const currentResumeNoteData = options?.resumeNoteData ?? resumeNoteDataRef.current;
-      const priorVisitMinutes = currentIsResumeMode
-        ? extractVisitTimeMinutesFromPayload(currentResumeNoteData?.icdCodes)
-        : undefined;
-      const icdCodesData = buildIcdCodesWithVisitTime(
-        soapData.icdCodes || null,
-        sessionDurationSecondsSnapshot,
-        priorVisitMinutes,
-      );
+
+      setIsSoapDeferred(false);
+      isSoapDeferredRef.current = false;
       
       if (!background) {
         setSoapNote({
           ...soapData,
-          icdCodes: icdCodesData || undefined,
+          icdCodes: undefined,
         });
+        setSoapDebugInfo(generatedSoapDebugInfo);
         addTranscriptEntry("Saving note...");
       }
 
@@ -1954,51 +2672,35 @@ export default function Session() {
       
       if (currentIsResumeMode && currentResumeNoteData) {
         // Update existing note (resume mode)
-        // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
-        const noteData = soapData.hpi ? {
-          subjective: soapData.hpi,
-          objective: "",
-          assessment: "",
-          plan: soapData.plan || "",
-        } : {
-          subjective: soapData.subjective || "",
-          objective: soapData.objective || "",
-          assessment: soapData.assessment || "",
-          plan: soapData.plan || "",
-        };
+        const noteData = buildNoteSectionsFromSoap(soapData);
         console.log("[Save] HPI format detected:", !!soapData.hpi, "Saving noteData:", noteData);
         
         const updateResponse = await apiRequest("PATCH", `/api/notes/${currentResumeNoteData.id}`, {
+          patientName: patientNameSnapshot || null,
           ...noteData,
           transcript,
           patientContext: contextTextSnapshot || null,
-          icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
+          icdCodes: visitTimePayload ? JSON.stringify(visitTimePayload) : null,
+          consumeNoteCredit: true,
         });
-        await updateResponse.json();
-        savedNoteId = currentResumeNoteData.id;
+        const updatedNote = (await updateResponse.json()) as SessionSavedNote;
+        upsertSavedNoteInCache(updatedNote);
+        savedNoteId = typeof updatedNote?.id === "number" ? updatedNote.id : currentResumeNoteData.id;
+        if (generatedSoapDebugInfo) {
+          saveSoapDebugInfo(savedNoteId, generatedSoapDebugInfo);
+        }
         
         if (!background) {
           toast({
             title: "Session updated",
-            description: `Your additional recording has been added${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
+            description: "Your additional recording has been added. Generate billing codes later from the note page if needed.",
           });
         }
       } else {
         // Create new note
         const title = await resolveChiefComplaintTitle(transcript, patientNameSnapshot || undefined);
 
-        // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
-        const noteData = soapData.hpi ? {
-          subjective: soapData.hpi,
-          objective: "",
-          assessment: "",
-          plan: soapData.plan || "",
-        } : {
-          subjective: soapData.subjective || "",
-          objective: soapData.objective || "",
-          assessment: soapData.assessment || "",
-          plan: soapData.plan || "",
-        };
+        const noteData = buildNoteSectionsFromSoap(soapData);
         console.log("[Save New] HPI format detected:", !!soapData.hpi, "Saving noteData:", noteData);
 
         const saveResponse = await apiRequest("POST", "/api/notes", {
@@ -2008,15 +2710,20 @@ export default function Session() {
           ...noteData,
           transcript,
           patientContext: contextTextSnapshot || null,
-          icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
+          icdCodes: visitTimePayload ? JSON.stringify(visitTimePayload) : null,
+          consumeNoteCredit: true,
         });
-        const savedNote = await saveResponse.json();
+        const savedNote = (await saveResponse.json()) as SessionSavedNote;
+        upsertSavedNoteInCache(savedNote);
         savedNoteId = savedNote.id;
+        if (generatedSoapDebugInfo) {
+          saveSoapDebugInfo(savedNoteId, generatedSoapDebugInfo);
+        }
         
         if (!background) {
           toast({
             title: "Session complete",
-            description: `Your note has been saved automatically${icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : ""}.`,
+            description: "Your note has been saved. Generate billing codes later from the note page if needed.",
           });
         }
       }
@@ -2024,8 +2731,12 @@ export default function Session() {
       // Clear backup and refresh notes list.
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notes", savedNoteId.toString()] });
-      clearInflightScribeRecovery();
-      clearBackup();
+      queryClient.invalidateQueries({ queryKey: ["/api/subscription"] });
+      clearDraftRecoveryAfterSuccessfulSave({
+        draftId: draftRecoveryIdSnapshot,
+        noteId: savedNoteId,
+        transcript,
+      });
 
       if (background) {
         toast({
@@ -2038,9 +2749,56 @@ export default function Session() {
 
     } catch (error) {
       console.error("Auto-save failed:", error);
+      let fallbackDraftId: number | null = null;
+      if (!currentResumeNoteData) {
+        try {
+          const fallbackDraft = await saveTranscriptOnlyDraftNote({
+            transcript,
+            patientName: patientNameSnapshot,
+            contextText: contextTextSnapshot,
+          });
+          fallbackDraftId = typeof fallbackDraft?.id === "number" ? fallbackDraft.id : null;
+          queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
+          if (fallbackDraftId !== null) {
+            queryClient.invalidateQueries({ queryKey: ["/api/notes", fallbackDraftId.toString()] });
+          }
+        } catch (fallbackError) {
+          console.error("Fallback draft save failed:", fallbackError);
+        }
+      }
+      saveBackup(transcript, patientNameSnapshot, "general", {
+        contextText: contextTextSnapshot,
+        source: "soap_error",
+        noteId: currentResumeNoteData?.id ?? null,
+        noteTitle: currentResumeNoteData?.title ?? null,
+        draftId: draftRecoveryIdSnapshot,
+      });
+      saveInflightScribeRecovery({
+        id: draftRecoveryIdSnapshot,
+        transcript,
+        patientName: patientNameSnapshot,
+        contextText: contextTextSnapshot,
+        savedAt: new Date().toISOString(),
+        reason: "soap-generation-failed",
+        noteId: currentResumeNoteData?.id ?? null,
+        noteTitle: currentResumeNoteData?.title ?? null,
+      });
       toast({
-        title: "Auto-save failed",
-        description: "Please try saving manually.",
+        title: fallbackDraftId !== null ? "SOAP generation failed" : "Auto-save failed",
+        description:
+          (() => {
+            const creditError = getNoteCreditError(error);
+            if (creditError) {
+              return `${creditError.message}${fallbackDraftId !== null ? " Your transcript was still saved as a draft in Scribe." : ""}`;
+            }
+            const debugFailure = canViewSoapDebug ? readSoapDebugFailureFromError(error) : null;
+            if (debugFailure) {
+              return `${debugFailure.reason}${debugFailure.trace ? ` Trace: ${debugFailure.trace}` : ""}`;
+            }
+            return fallbackDraftId !== null
+              ? "Your transcript was saved as a draft note in Scribe. Open it later to regenerate SOAP."
+              : "Your transcript draft was preserved for recovery.";
+          })(),
         variant: "destructive",
       });
       if (!background) {
@@ -2048,6 +2806,109 @@ export default function Session() {
       }
     }
   };
+
+  const mergeResumeTranscript = useCallback((existingTranscript?: string | null, nextTranscript?: string | null) => {
+    const previous = typeof existingTranscript === "string" ? existingTranscript.trim() : "";
+    const incoming = typeof nextTranscript === "string" ? nextTranscript.trim() : "";
+
+    if (!previous) return incoming;
+    if (!incoming) return previous;
+    return `${previous}\n\n${incoming}`;
+  }, []);
+
+  const queueBackgroundShortRecordingFinalization = useCallback(
+    (params: {
+      audioBlob: Blob;
+      patientName: string;
+      contextText: string;
+      selectedTemplateId: string;
+      resumeMode: boolean;
+      resumeNoteData: ResumeNoteData | null;
+      sessionDurationSeconds: number;
+      draftRecoveryId: string;
+      speakerSegments?: StructuredSegment[];
+    }) => {
+      const generationId = startScribeGeneration(
+        user?.id,
+        getFallbackTitle(params.patientName),
+        params.resumeNoteData?.id,
+      );
+
+      toast({
+        title: "Processing in background",
+        description: params.resumeMode
+          ? "You can start the next patient now. The resumed note will finish updating in the background."
+          : "You can start the next patient now. This note will finish saving in the background.",
+      });
+
+      resetSessionForNextRecording();
+
+      void (async () => {
+        try {
+          const data = await transcribeShortRecordingOnly(params.audioBlob);
+          const transcriptText = (data.text || data.transcript || "").trim();
+          const combinedTranscript =
+            params.resumeMode && params.resumeNoteData
+              ? mergeResumeTranscript(params.resumeNoteData.transcript, transcriptText)
+              : transcriptText;
+
+          if (!combinedTranscript) {
+            toast({
+              title: "No speech detected",
+              description: "The recording didn't capture any speech. Please try again.",
+              variant: "destructive",
+            });
+            return;
+          }
+
+          saveInflightScribeRecovery({
+            id: params.draftRecoveryId,
+            transcript: combinedTranscript,
+            patientName: params.patientName,
+            contextText: params.contextText,
+            savedAt: new Date().toISOString(),
+            reason: params.resumeMode ? "background-resume-finalization" : "background-finalization",
+            noteId: params.resumeNoteData?.id ?? null,
+            noteTitle: params.resumeNoteData?.title ?? null,
+          });
+
+          await autoGenerateAndSave(combinedTranscript, {
+            background: true,
+            forceSoapGeneration: true,
+            patientName: params.patientName,
+            contextText: params.contextText,
+            selectedTemplateId: params.selectedTemplateId,
+            transcriptionLanguage,
+            speakerSegments: params.speakerSegments,
+            resumeMode: params.resumeMode,
+            resumeNoteData: params.resumeNoteData,
+            sessionDurationSeconds: params.sessionDurationSeconds,
+            draftRecoveryId: params.draftRecoveryId,
+          });
+        } catch (error) {
+          console.error("Short recording finalization failed:", error);
+          toast({
+            title: "Processing failed",
+            description: error instanceof Error ? error.message : "There was an issue finishing the recording.",
+            variant: "destructive",
+          });
+        } finally {
+          finishScribeGeneration(user?.id, generationId);
+        }
+      })();
+    },
+    [
+      autoGenerateAndSave,
+      getFallbackTitle,
+      resetSessionForNextRecording,
+      saveInflightScribeRecovery,
+      toast,
+      transcribeShortRecordingOnly,
+      transcriptionLanguage,
+      user?.id,
+      mergeResumeTranscript,
+    ],
+  );
 
   const transcribeMutation = useMutation({
     mutationFn: async (audioBlob: Blob) => {
@@ -2082,22 +2943,36 @@ export default function Session() {
         const selectedTemplateIdSnapshot = selectedTemplateId;
         const resumeModeSnapshot = isResumeModeRef.current;
         const resumeNoteDataSnapshot = resumeNoteDataRef.current;
+        const draftRecoveryIdSnapshot = activeDraftIdRef.current;
         const speakerSegmentsSnapshot =
           structuredSegmentsRef.current.length > 0 ? [...structuredSegmentsRef.current] : undefined;
         const sessionDurationSecondsSnapshot = duration;
         
-        // Auto-generate SOAP and save in background for faster turnaround.
-        addTranscriptEntry("Generating SOAP note in background...");
-        const generationId = startScribeGeneration(user?.id, getChiefComplaintPreview(transcriptSnapshot));
+        // New notes and resumed notes both finish in the background so the user can
+        // move to the next patient immediately.
+        addTranscriptEntry(
+          resumeModeSnapshot
+            ? "Updating resumed note in background..."
+            : "Generating SOAP note in background...",
+        );
+        const generationId = startScribeGeneration(
+          user?.id,
+          getChiefComplaintPreview(transcriptSnapshot),
+          resumeNoteDataSnapshot?.id,
+        );
         saveInflightScribeRecovery({
+          id: draftRecoveryIdSnapshot,
           transcript: transcriptSnapshot,
           patientName: patientNameSnapshot,
           contextText: contextTextSnapshot,
           savedAt: new Date().toISOString(),
           reason: "background-auto-save",
+          noteId: resumeNoteDataSnapshot?.id ?? null,
+          noteTitle: resumeNoteDataSnapshot?.title ?? null,
         });
         void autoGenerateAndSave(transcriptSnapshot, {
           background: true,
+          forceSoapGeneration: resumeModeSnapshot,
           patientName: patientNameSnapshot,
           contextText: contextTextSnapshot,
           selectedTemplateId: selectedTemplateIdSnapshot,
@@ -2106,12 +2981,15 @@ export default function Session() {
           resumeMode: resumeModeSnapshot,
           resumeNoteData: resumeNoteDataSnapshot,
           sessionDurationSeconds: sessionDurationSecondsSnapshot,
+          draftRecoveryId: draftRecoveryIdSnapshot,
         }).finally(() => {
           finishScribeGeneration(user?.id, generationId);
         });
         toast({
           title: "Processing in background",
-          description: "You can start a new session now. This note will save when processing finishes.",
+          description: resumeModeSnapshot
+            ? "You can start a new session now. The resumed note will finish updating in the background."
+            : "You can start a new session now. This note will save when processing finishes.",
         });
         resetSessionForNextRecording();
       } else {
@@ -2142,40 +3020,63 @@ export default function Session() {
 
       console.log("[Regenerate] Sending request with templateId:", selectedTemplateId);
       const segments = structuredSegmentsRef.current.length > 0 ? structuredSegmentsRef.current : undefined;
+      const usableSpeakerSegments = getUsableSpeakerSegments(transcript, segments);
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript,
         patientName,
         specialty: "general",
-        templateId: selectedTemplateId !== "default" ? parseInt(selectedTemplateId) : undefined,
+        templateId: resolveRequestedTemplateId(selectedTemplateId),
         outputLanguage: transcriptionLanguage,
         context: contextText || undefined,
-        speakerSegments: segments,
+        speakerSegments: usableSpeakerSegments,
+        noteId: resumeNoteDataRef.current?.id,
+        enforceNoteCredit: true,
       });
+      const debugInfo = canViewSoapDebug ? readSoapDebugInfoFromResponse(response) : null;
       const data = await response.json();
       console.log("[Regenerate] Received response:", data);
       console.log("[Regenerate] Response keys:", Object.keys(data));
       
-      return data;
+      return { data, debugInfo };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ data, debugInfo }) => {
       console.log("[Regenerate] Setting soapNote state:", data);
       setSoapNote({
         ...data,
-        icdCodes: buildIcdCodesWithVisitTime(data.icdCodes || null, duration) || undefined,
+        icdCodes: undefined,
       });
+      setSoapDebugInfo(debugInfo);
+      setIsSoapDeferred(false);
+      isSoapDeferredRef.current = false;
       setActiveTab("soap");
       setTranscriptPanelOpen(false); // Collapse transcript panel when SOAP is generated
-      if (data.icdCodes) {
-        toast({
-          title: "SOAP regenerated",
-          description: `Generated ${data.icdCodes.codes?.length || 0} ICD codes`,
+      toast({
+        title: "SOAP regenerated",
+        description: "Billing codes are no longer generated automatically. Use the note page if you want code suggestions.",
+      });
+    },
+    onError: (error) => {
+      const debugFailure = canViewSoapDebug ? readSoapDebugFailureFromError(error) : null;
+      const transcript = transcriptEntries
+        .filter((entry) => entry.type === "content")
+        .map((entry) => entry.text)
+        .join("\n")
+        .trim();
+      if (transcript) {
+        saveBackup(transcript, patientName, "general", {
+          contextText,
+          source: "soap_error",
+          noteId: resumeNoteDataRef.current?.id ?? null,
+          noteTitle: resumeNoteDataRef.current?.title ?? null,
         });
       }
-    },
-    onError: () => {
       toast({
         title: "SOAP generation failed",
-        description: "Please try again",
+        description:
+          getNoteCreditError(error)?.message ||
+          (debugFailure
+            ? `${debugFailure.reason}${debugFailure.trace ? ` Trace: ${debugFailure.trace}` : ""}`
+            : "The transcript draft was preserved for recovery."),
         variant: "destructive",
       });
     },
@@ -2191,21 +3092,17 @@ export default function Session() {
       // Prefer chief-complaint titles for consistency with background flow.
       const title = await resolveChiefComplaintTitle(transcript, patientName || undefined);
 
-      // Map HPI format to SOAP fields for storage (HPI combines S+O+A)
-      const noteData = soapNote?.hpi ? {
-        subjective: soapNote.hpi,
-        objective: "",
-        assessment: "",
-        plan: soapNote?.plan || "",
-      } : {
-        subjective: soapNote?.subjective || "",
-        objective: soapNote?.objective || "",
-        assessment: soapNote?.assessment || "",
-        plan: soapNote?.plan || "",
-      };
-      const icdCodesPayload = buildIcdCodesWithVisitTime(soapNote?.icdCodes || null, duration);
-      
-      const response = await apiRequest("POST", "/api/notes", {
+      const noteData = buildNoteSectionsFromSoap(soapNote || {});
+      const icdCodesPayload = buildIcdCodesWithVisitTime(soapNote?.icdCodes || null, duration) || null;
+
+      const requestMethod =
+        isResumeModeRef.current && resumeNoteDataRef.current ? "PATCH" : "POST";
+      const requestPath =
+        isResumeModeRef.current && resumeNoteDataRef.current
+          ? `/api/notes/${resumeNoteDataRef.current.id}`
+          : "/api/notes";
+
+      const response = await apiRequest(requestMethod, requestPath, {
         title,
         patientName,
         specialty: "general",
@@ -2213,23 +3110,36 @@ export default function Session() {
         transcript,
         patientContext: contextText || null,
         icdCodes: icdCodesPayload ? JSON.stringify(icdCodesPayload) : null,
+        consumeNoteCredit: true,
       });
       return response.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-      clearInflightScribeRecovery();
-      clearBackup();
+      queryClient.invalidateQueries({ queryKey: ["/api/notes", data.id.toString()] });
+      queryClient.invalidateQueries({ queryKey: ["/api/subscription"] });
+      clearDraftRecoveryAfterSuccessfulSave({
+        draftId: activeDraftIdRef.current,
+        noteId: typeof data.id === "number" ? data.id : null,
+        transcript:
+          typeof data?.transcript === "string"
+            ? data.transcript
+            : transcriptEntries
+                .filter((entry) => entry.type === "content")
+                .map((entry) => entry.text)
+                .join("\n"),
+      });
       toast({
         title: "Session saved",
         description: "Your session has been saved successfully",
       });
       navigate(`/notes/${data.id}`);
     },
-    onError: () => {
+    onError: (error) => {
+      const creditError = getNoteCreditError(error);
       toast({
         title: "Failed to save",
-        description: "Please try again",
+        description: creditError?.message || "Please try again",
         variant: "destructive",
       });
     },
@@ -2286,13 +3196,95 @@ export default function Session() {
     const hasTranscript = committedTextRef.current.trim().length > 0;
     
     if (!hasAnyChunks && !hasTranscript && audioBlob.size > 0) {
-      // Very short recording that didn't trigger any chunk - transcribe the full blob
-      setRecordingState("processing");
-      addTranscriptEntry("Processing short recording...");
-      transcribeMutation.mutate(audioBlob);
+      queueBackgroundShortRecordingFinalization({
+        audioBlob,
+        patientName,
+        contextText,
+        selectedTemplateId,
+        resumeMode: isResumeModeRef.current,
+        resumeNoteData: resumeNoteDataRef.current,
+        sessionDurationSeconds: duration,
+        draftRecoveryId: activeDraftIdRef.current,
+        speakerSegments:
+          structuredSegmentsRef.current.length > 0 ? [...structuredSegmentsRef.current] : undefined,
+      });
     } else {
       // Process any remaining chunks
       await finalizeRecording();
+    }
+  };
+
+  const handleFinishLater = async () => {
+    const activeSessionId = recordingSessionIdRef.current;
+    const audioBlob = await stopRecording();
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    setRecordingState("processing");
+    addTranscriptEntry("Finishing transcript without generating SOAP...");
+
+    try {
+      const hasAnyChunks = pendingChunksRef.current.length > 0;
+      const hasTranscript = committedTextRef.current.trim().length > 0;
+
+      if (!hasAnyChunks && !hasTranscript && audioBlob.size > 0) {
+        const data = await transcribeShortRecordingOnly(audioBlob);
+        const transcriptText = (data.text || data.transcript || "").trim();
+
+        if (!transcriptText) {
+          toast({
+            title: "No speech detected",
+            description: "The recording didn't capture any speech. Please try again.",
+            variant: "destructive",
+          });
+          setRecordingState("idle");
+          return;
+        }
+
+        addTranscriptEntry(transcriptText, "content");
+        committedTextRef.current = committedTextRef.current
+          ? `${committedTextRef.current} ${transcriptText}`.trim()
+          : transcriptText;
+      } else {
+        await waitForPendingChunksToFinish(activeSessionId);
+      }
+
+      const transcriptSnapshot = committedTextRef.current.trim();
+      if (!transcriptSnapshot) {
+        toast({
+          title: "No speech detected",
+          description: "The recording didn't capture any speech. Please try again.",
+          variant: "destructive",
+        });
+        setRecordingState("idle");
+        return;
+      }
+
+      setSoapNote(null);
+      setIsSoapDeferred(true);
+      isSoapDeferredRef.current = true;
+      setActiveTab("transcript");
+      saveBackup(transcriptSnapshot, patientName, "general", {
+        contextText,
+        source: "manual_defer",
+        noteId: resumeNoteDataRef.current?.id ?? null,
+        noteTitle: resumeNoteDataRef.current?.title ?? null,
+      });
+      addTranscriptEntry("SOAP generation deferred. Resume recording after testing or generate when the visit is complete.");
+      setRecordingState("idle");
+
+      toast({
+        title: "Transcript ready",
+        description: "SOAP generation was deferred so you can resume after testing without paying for an extra note run.",
+      });
+    } catch (error) {
+      console.error("Finish later failed:", error);
+      toast({
+        title: "Could not finish transcript",
+        description: "There was an issue finalizing the transcript without SOAP generation.",
+        variant: "destructive",
+      });
+      setRecordingState("idle");
     }
   };
 
@@ -2357,6 +3349,7 @@ ${noteContentSection}
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      suppressRecoveryPersistenceRef.current = false;
       setRecordingState("processing");
       addTranscriptEntry("Processing uploaded audio...");
       transcribeMutation.mutate(file);
@@ -2365,6 +3358,8 @@ ${noteContentSection}
 
   useEffect(() => {
     const persistDraftForRecovery = () => {
+      if (suppressRecoveryPersistenceRef.current) return;
+
       const transcriptFromEntries = transcriptEntries
         .filter((entry) => entry.type === "content")
         .map((entry) => entry.text)
@@ -2410,38 +3405,97 @@ ${noteContentSection}
   const handleRecoverBackup = () => {
     const backup = loadBackup();
     if (backup && backup.transcript) {
-      setPatientName(backup.patientName || "");
-      // Add transcript content to entries
-      addTranscriptEntry(backup.transcript, "content");
-      committedTextRef.current = backup.transcript;
-      clearBackup();
-      toast({
-        title: "Transcript recovered",
-        description: "Your previous session has been restored",
-      });
+      restoreRecoverableDraft({
+        id: typeof backup.id === "string" ? backup.id : activeDraftIdRef.current,
+        transcript: backup.transcript,
+        patientName: typeof backup.patientName === "string" ? backup.patientName : "",
+        specialty: typeof backup.specialty === "string" ? backup.specialty : "general",
+        contextText: typeof backup.contextText === "string" ? backup.contextText : "",
+        savedAt: typeof backup.savedAt === "string" ? backup.savedAt : new Date().toISOString(),
+        source: backup.source === "inflight" || backup.source === "manual_defer" || backup.source === "soap_error" ? backup.source : "backup",
+        noteId: typeof backup.noteId === "number" ? backup.noteId : null,
+        noteTitle: typeof backup.noteTitle === "string" ? backup.noteTitle : null,
+      }, "Transcript recovered", "Your previous session has been restored.");
     }
+  };
+
+  const restoreRecoverableDraft = (
+    draft: RecoverableDraft,
+    title = "Draft recovered",
+    description = "Your transcript draft has been restored.",
+  ) => {
+    suppressRecoveryPersistenceRef.current = false;
+    activeDraftIdRef.current = draft.id;
+    setRecordingState("idle");
+    setDuration(0);
+    setTranscriptEntries([]);
+    setSoapNote(null);
+    setActiveTab("transcript");
+    setTranscriptPanelOpen(true);
+    setPatientName(draft.patientName || "");
+    setContextText(draft.contextText || "");
+    setIsSoapDeferred(true);
+    isSoapDeferredRef.current = true;
+
+    if (draft.noteId) {
+      const recoveredResumeNote: ResumeNoteData = {
+        id: draft.noteId,
+        title: draft.noteTitle || `Recovered note ${draft.noteId}`,
+        transcript: draft.transcript,
+        patientName: draft.patientName || null,
+        patientContext: draft.contextText || null,
+      };
+      setIsResumeMode(true);
+      isResumeModeRef.current = true;
+      setResumeNoteData(recoveredResumeNote);
+      resumeNoteDataRef.current = recoveredResumeNote;
+    } else {
+      setIsResumeMode(false);
+      isResumeModeRef.current = false;
+      setResumeNoteData(null);
+      resumeNoteDataRef.current = null;
+    }
+
+    committedTextRef.current = draft.transcript;
+    partialTextRef.current = "";
+    recentLinesRef.current = [];
+    lastCumulativeTranscriptRef.current = "";
+    structuredSegmentsRef.current = [];
+
+    addTranscriptEntry("--- Recovered transcript draft ---", "system");
+    addTranscriptEntry(draft.transcript, "content");
+    saveBackup(draft.transcript, draft.patientName || "", draft.specialty || "general", {
+      contextText: draft.contextText || "",
+      source: draft.source,
+      noteId: draft.noteId ?? null,
+      noteTitle: draft.noteTitle ?? null,
+      draftId: draft.id,
+    });
+
+    toast({
+      title,
+      description,
+    });
   };
 
   const handleRecoverInterruptedScribe = () => {
     if (!interruptedScribeRecovery?.transcript) return;
-
-    if (interruptedScribeRecovery.patientName) {
-      setPatientName(interruptedScribeRecovery.patientName);
-    }
-    if (interruptedScribeRecovery.contextText) {
-      setContextText(interruptedScribeRecovery.contextText);
-    }
-
-    addTranscriptEntry("--- Recovered interrupted background scribe ---", "system");
-    addTranscriptEntry(interruptedScribeRecovery.transcript, "content");
-    committedTextRef.current = interruptedScribeRecovery.transcript;
-    saveBackup(interruptedScribeRecovery.transcript, interruptedScribeRecovery.patientName, "general");
+    restoreRecoverableDraft(
+      {
+        id: interruptedScribeRecovery.id || activeDraftIdRef.current,
+        transcript: interruptedScribeRecovery.transcript,
+        patientName: interruptedScribeRecovery.patientName,
+        specialty: "general",
+        contextText: interruptedScribeRecovery.contextText,
+        savedAt: interruptedScribeRecovery.savedAt,
+        source: "inflight",
+        noteId: interruptedScribeRecovery.noteId ?? null,
+        noteTitle: interruptedScribeRecovery.noteTitle ?? null,
+      },
+      "Interrupted scribe recovered",
+      "Your transcript draft is restored. Generate SOAP to continue.",
+    );
     clearInflightScribeRecovery();
-
-    toast({
-      title: "Interrupted scribe recovered",
-      description: "Your transcript draft is restored. Generate SOAP to continue.",
-    });
   };
 
   const handleManualTranscriptImport = () => {
@@ -2451,6 +3505,20 @@ ${noteContentSection}
     if (!imported) return;
     setManualTranscriptInput("");
     setIsManualImportDialogOpen(false);
+  };
+
+  const handleDiscardRecoverableDraft = (draftId: string) => {
+    removeRecoverableDraft(draftId);
+    const backup = loadBackup();
+    if (backup?.id === draftId) {
+      clearBackup();
+    }
+    if (interruptedScribeRecovery?.id === draftId) {
+      clearInflightScribeRecovery();
+    }
+    if (activeDraftIdRef.current === draftId && !hasTranscript) {
+      activeDraftIdRef.current = crypto.randomUUID();
+    }
   };
 
   return (
@@ -2493,6 +3561,74 @@ ${noteContentSection}
         </DialogContent>
       </Dialog>
 
+      <Dialog open={isRecoverDraftsDialogOpen} onOpenChange={setIsRecoverDraftsDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Recover transcript drafts</DialogTitle>
+            <DialogDescription>
+              Restore a recent unsaved transcript if SOAP generation failed, the page refreshed, or you deferred finishing the visit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+            {recoverableDrafts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No recoverable drafts are available.</p>
+            ) : recoverableDrafts.map((draft) => (
+              <div
+                key={draft.id}
+                className="rounded-md border p-3 space-y-2"
+                data-testid={`recoverable-draft-${draft.id}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">
+                      {draft.patientName || draft.noteTitle || "Untitled session"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(draft.savedAt).toLocaleString()} · {draft.source === "manual_defer" ? "Finish later" : draft.source === "soap_error" ? "SOAP failure" : draft.source === "inflight" ? "Interrupted background scribe" : "Draft backup"}
+                    </p>
+                    {draft.noteTitle && draft.noteId ? (
+                      <p className="text-xs text-muted-foreground">Source note: {draft.noteTitle}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDiscardRecoverableDraft(draft.id)}
+                      data-testid={`button-discard-draft-${draft.id}`}
+                    >
+                      Discard
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        restoreRecoverableDraft(draft);
+                        setIsRecoverDraftsDialogOpen(false);
+                      }}
+                      data-testid={`button-recover-draft-${draft.id}`}
+                    >
+                      Recover
+                    </Button>
+                  </div>
+                </div>
+                <p className="line-clamp-4 text-xs text-muted-foreground whitespace-pre-wrap">
+                  {draft.transcript}
+                </p>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsRecoverDraftsDialogOpen(false)}
+              data-testid="button-close-recover-drafts"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {interruptedScribeRecovery && recordingState === "idle" && !hasTranscript && (
         <div className="bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2 text-red-800 dark:text-red-200 text-sm">
@@ -2517,7 +3653,34 @@ ${noteContentSection}
             >
               Recover
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsRecoverDraftsDialogOpen(true)}
+              className="h-7 text-xs"
+              data-testid="button-browse-drafts-interrupted"
+            >
+              Browse drafts
+            </Button>
           </div>
+        </div>
+      )}
+
+      {recoverableDrafts.length > 0 && recordingState === "idle" && !hasTranscript && (
+        <div className="bg-sky-50 dark:bg-sky-900/20 border-b border-sky-200 dark:border-sky-800 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sky-800 dark:text-sky-200 text-sm">
+            <AlertCircle className="h-4 w-4" />
+            <span>{recoverableDrafts.length} recoverable transcript draft{recoverableDrafts.length === 1 ? "" : "s"} available</span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setIsRecoverDraftsDialogOpen(true)}
+            className="h-7 text-xs"
+            data-testid="button-browse-recoverable-drafts"
+          >
+            Browse drafts
+          </Button>
         </div>
       )}
 
@@ -2545,6 +3708,15 @@ ${noteContentSection}
               data-testid="button-recover-backup"
             >
               Recover
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsRecoverDraftsDialogOpen(true)}
+              className="h-7 text-xs"
+              data-testid="button-browse-drafts-backup"
+            >
+              Browse drafts
             </Button>
           </div>
         </div>
@@ -2638,12 +3810,22 @@ ${noteContentSection}
                 </Button>
                 <Button
                   size="sm"
+                  variant="outline"
+                  onClick={handleFinishLater}
+                  className="h-8 justify-center gap-1.5"
+                  data-testid="button-finish-later-header"
+                >
+                  Finish Later
+                </Button>
+                <Button
+                  size="sm"
                   variant="destructive"
                   onClick={handleStopAndTranscribe}
-                  className="h-8 w-8 p-0"
+                  className="h-8 w-24 justify-center gap-1.5"
                   data-testid="button-stop-header"
                 >
                   <Square className="h-4 w-4" />
+                  Stop
                 </Button>
               </div>
             )}
@@ -2934,6 +4116,18 @@ ${noteContentSection}
                     <DrugInteractionAlert 
                       text={`${soapNote.subjective || ''} ${soapNote.objective || ''} ${soapNote.assessment || ''} ${soapNote.plan || ''} ${soapNote.hpi || ''}`} 
                     />
+                    {canViewSoapDebug && soapDebugInfo ? (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground" data-testid="text-soap-debug-model">
+                          {formatSoapDebugLabel(soapDebugInfo)}
+                        </p>
+                        {formatSoapDebugSecondary(soapDebugInfo) ? (
+                          <p className="text-xs text-muted-foreground/80" data-testid="text-soap-debug-detail">
+                            {formatSoapDebugSecondary(soapDebugInfo)}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     
                     {/* Dynamically show sections based on what the AI returned */}
                     {(soapNote.hpi ? [
@@ -3233,6 +4427,16 @@ ${noteContentSection}
                 )}
                 {soapNote ? "Regenerate SOAP" : "Generate SOAP"}
               </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => void queueSessionDraftForLater()}
+                className="gap-2"
+                data-testid="button-next-patient"
+              >
+                <Plus className="h-4 w-4" />
+                Next Patient
+              </Button>
               
               {soapNote && (
                 <Button
@@ -3252,6 +4456,11 @@ ${noteContentSection}
             </>
           )}
         </div>
+        {isSoapDeferred && hasTranscript && recordingState === "idle" && (
+          <p className="mb-3 text-center text-xs text-muted-foreground" data-testid="text-soap-deferred-hint">
+            SOAP generation is deferred. Resume recording after testing, or generate the note when the visit is complete.
+          </p>
+        )}
         
         {/* Ask AI to do anything - persistent input bar */}
         <div className="flex items-center gap-2 max-w-2xl mx-auto">

@@ -22,6 +22,9 @@ export const notes = pgTable("notes", {
   patientInstructions: text("patient_instructions"), // Patient-facing after-visit instructions
   templateId: integer("template_id"), // Template used for SOAP generation
   icdCodes: text("icd_codes"), // JSON string of ICD-10 and CPT codes
+  soapSourceHash: text("soap_source_hash"), // Transcript hash used for the current SOAP content
+  soapStale: boolean("soap_stale").default(false).notNull(), // Transcript changed since the last SOAP generation
+  creditConsumedAt: timestamp("credit_consumed_at"), // First time this note consumed a billable/trackable note credit
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -31,6 +34,7 @@ export const subscriptions = pgTable("subscriptions", {
   userId: varchar("user_id").notNull().unique(),
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
+  planCode: text("plan_code"),
   status: text("status").default("inactive"),
   currentPeriodEnd: timestamp("current_period_end"),
   hasEmrAccess: boolean("has_emr_access").default(false), // EMR feature access (granted via special invite)
@@ -38,8 +42,18 @@ export const subscriptions = pgTable("subscriptions", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export const noteCreditEvents = pgTable("note_credit_events", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  noteId: integer("note_id").notNull().unique(),
+  eventType: text("event_type").notNull().default("finalized_soap"),
+  billingPeriodStart: timestamp("billing_period_start").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const insertNoteSchema = createInsertSchema(notes).omit({
   id: true,
+  creditConsumedAt: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -48,6 +62,11 @@ export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+});
+
+export const insertNoteCreditEventSchema = createInsertSchema(noteCreditEvents).omit({
+  id: true,
+  createdAt: true,
 });
 
 export const templates = pgTable("templates", {
@@ -138,6 +157,8 @@ export type Note = typeof notes.$inferSelect;
 export type InsertNote = z.infer<typeof insertNoteSchema>;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type NoteCreditEvent = typeof noteCreditEvents.$inferSelect;
+export type InsertNoteCreditEvent = z.infer<typeof insertNoteCreditEventSchema>;
 export type Template = typeof templates.$inferSelect;
 export type InsertTemplate = z.infer<typeof insertTemplateSchema>;
 export type Invite = typeof invites.$inferSelect;
