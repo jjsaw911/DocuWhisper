@@ -2617,14 +2617,24 @@ export default function Session() {
           transcript,
         });
 
+        // Reflect the regenerated note in the active session view so the user
+        // doesn't have to hit "Regenerate" manually. Guard against the user
+        // having moved to a different note since the regeneration started.
+        if (resumeNoteDataRef.current?.id === currentResumeNoteData.id) {
+          setSoapNote(updatedNote as any);
+          setSoapDebugInfo(generatedSoapDebugInfo);
+          setIsSoapDeferred(false);
+          isSoapDeferredRef.current = false;
+        }
+
         if (generatedSoapDebugInfo) {
           saveSoapDebugInfo(currentResumeNoteData.id, generatedSoapDebugInfo);
         }
 
         if (background) {
           toast({
-            title: "Background processing complete",
-            description: "Your resumed note was recreated from the updated transcript.",
+            title: "Resumed note updated",
+            description: "The SOAP note now reflects the full transcript from both visits.",
           });
         } else {
           toast({
