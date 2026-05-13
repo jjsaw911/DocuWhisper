@@ -2586,66 +2586,12 @@ export default function Session() {
         currentIsResumeMode ? priorVisitMinutes : undefined,
       );
 
-      if (shouldRegenerateResumeNote && currentResumeNoteData) {
-        const regenerateResponse = await apiRequest(
-          "POST",
-          `/api/notes/${currentResumeNoteData.id}/regenerate-from-transcript`,
-          {
-            transcript,
-            patientName: patientNameSnapshot || null,
-            specialty: "general",
-            templateId: resolveRequestedTemplateId(selectedTemplateIdSnapshot),
-            outputLanguage: transcriptionLanguageSnapshot,
-            context: contextTextSnapshot || null,
-            speakerSegments: usableSpeakerSegments,
-            icdCodes: visitTimePayload ? JSON.stringify(visitTimePayload) : null,
-            consumeNoteCredit: true,
-          },
-        );
-        const generatedSoapDebugInfo = canViewSoapDebug
-          ? readSoapDebugInfoFromResponse(regenerateResponse)
-          : null;
-        const updatedNote = (await regenerateResponse.json()) as SessionSavedNote;
-
-        upsertSavedNoteInCache(updatedNote);
-        queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/notes", currentResumeNoteData.id.toString()] });
-        queryClient.invalidateQueries({ queryKey: ["/api/subscription"] });
-        clearDraftRecoveryAfterSuccessfulSave({
-          draftId: draftRecoveryIdSnapshot,
-          noteId: currentResumeNoteData.id,
-          transcript,
-        });
-
-        // Reflect the regenerated note in the active session view so the user
-        // doesn't have to hit "Regenerate" manually. Guard against the user
-        // having moved to a different note since the regeneration started.
-        if (resumeNoteDataRef.current?.id === currentResumeNoteData.id) {
-          setSoapNote(updatedNote as any);
-          setSoapDebugInfo(generatedSoapDebugInfo);
-          setIsSoapDeferred(false);
-          isSoapDeferredRef.current = false;
-        }
-
-        if (generatedSoapDebugInfo) {
-          saveSoapDebugInfo(currentResumeNoteData.id, generatedSoapDebugInfo);
-        }
-
-        if (background) {
-          toast({
-            title: "Resumed note updated",
-            description: "The SOAP note now reflects the full transcript from both visits.",
-          });
-        } else {
-          toast({
-            title: "Session updated",
-            description: "The note was recreated from the updated transcript.",
-          });
-          navigate(`/notes/${currentResumeNoteData.id}`);
-        }
-
-        return;
-      }
+      // Resume completion now uses the SAME path as the manual Regenerate ("Redo")
+      // button: POST /api/generate-soap, then PATCH /api/notes/:id to save the
+      // result. The previous /api/notes/:id/regenerate-from-transcript shortcut
+      // ran the same AI pipeline but the user lost confidence in it after a
+      // resumed visit appeared not to incorporate new content. Going through
+      // the same endpoint as Redo guarantees identical behavior.
 
       // Step 1: Generate SOAP note
       const soapResponse = await apiRequest("POST", "/api/generate-soap", {
@@ -2684,7 +2630,7 @@ export default function Session() {
         // Update existing note (resume mode)
         const noteData = buildNoteSectionsFromSoap(soapData);
         console.log("[Save] HPI format detected:", !!soapData.hpi, "Saving noteData:", noteData);
-        
+
         const updateResponse = await apiRequest("PATCH", `/api/notes/${currentResumeNoteData.id}`, {
           patientName: patientNameSnapshot || null,
           ...noteData,
@@ -2699,11 +2645,28 @@ export default function Session() {
         if (generatedSoapDebugInfo) {
           saveSoapDebugInfo(savedNoteId, generatedSoapDebugInfo);
         }
-        
+
+        // Refresh local SOAP state even in background mode so the user sees
+        // the regenerated note immediately if they're still on this page.
+        // Guard against the user having moved to a different note since the
+        // resume started.
+        if (background && resumeNoteDataRef.current?.id === currentResumeNoteData.id) {
+          setSoapNote({
+            ...soapData,
+            icdCodes: undefined,
+          });
+          setSoapDebugInfo(generatedSoapDebugInfo);
+        }
+
         if (!background) {
           toast({
             title: "Session updated",
             description: "Your additional recording has been added. Generate billing codes later from the note page if needed.",
+          });
+        } else {
+          toast({
+            title: "Resumed note updated",
+            description: "The SOAP note now reflects the full transcript from both visits.",
           });
         }
       } else {
