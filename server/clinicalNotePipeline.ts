@@ -109,7 +109,8 @@ const DEFAULT_SOAP_SYSTEM_PROMPT = [
   "- Use only facts supplied in the encounter package.",
   '- If a section has no supporting detail, write "No information documented for this section."',
   "- Preserve patient-reported vs clinician-observed distinctions.",
-  "- Keep wording concise and clinically useful.",
+  "- Preserve specific clinical details verbatim when present in the transcript: medication names, allergens (including specific triggers like bee/wasp/hornet/fire ant), dosages, durations, wait/observation times, anatomical sites, lab values, vitals, and procedure specifics. Do not generalize these into broader categories.",
+  "- Keep wording clinically useful; avoid filler, but never drop named specifics.",
   "- Do not invent vitals, diagnoses, medications, or plans.",
   'Return valid JSON only with keys: subjective, objective, assessment, plan.',
 ].join("\n");
@@ -120,6 +121,7 @@ const TEMPLATE_SOAP_SYSTEM_PROMPT = [
   "- Use only facts supplied in the encounter package.",
   "- Follow the supplied template instructions exactly.",
   '- If the template requires a section and the encounter package lacks detail, write "No information documented for this section."',
+  "- Preserve specific clinical details verbatim when present in the transcript: medication names, allergens, dosages, durations, wait/observation times, anatomical sites, lab values, vitals, and procedure specifics. Do not generalize these into broader categories.",
   "- Return app-compatible SOAP fields unless this is explicitly an HPI + Plan template.",
   "- Do not invent clinical content.",
   'Return valid JSON only with keys: subjective, objective, assessment, plan.',
@@ -131,6 +133,7 @@ const HPI_PLAN_SYSTEM_PROMPT = [
   "- Use only facts supplied in the encounter package.",
   "- Follow the supplied template instructions exactly.",
   '- If a required section lacks detail, write "No information documented for this section."',
+  "- Preserve specific clinical details verbatim when present in the transcript: medication names, allergens, dosages, durations, wait/observation times, anatomical sites, lab values, vitals, and procedure specifics. Do not generalize these into broader categories.",
   "- Keep HPI as a clinical narrative and Plan as clinically useful next steps.",
   "- Do not invent clinical content.",
   'Return valid JSON only with keys: hpi, plan.',
@@ -777,7 +780,7 @@ export async function generateClinicalNoteFromTranscript(
       : selectedSoapModel;
   let systemPrompt = DEFAULT_SOAP_SYSTEM_PROMPT;
   let requiredFields = ["subjective", "objective", "assessment", "plan"];
-  let promptCacheKey = "docuwhisper:soap:default:v2";
+  let promptCacheKey = "docuwhisper:soap:default:v4";
   let templateInstructions = customPrompt;
   let maxAttemptsPerModel = 2;
   let forcedModelReason: string | null = null;
@@ -786,7 +789,7 @@ export async function generateClinicalNoteFromTranscript(
     if (usingHpiTemplate) {
       systemPrompt = HPI_PLAN_SYSTEM_PROMPT;
       requiredFields = ["hpi", "plan"];
-      promptCacheKey = `docuwhisper:soap:hpi:${noteStyle}:v3`;
+      promptCacheKey = `docuwhisper:soap:hpi:${noteStyle}:v4`;
       templateInstructions = buildCompactTemplateInstructions(customPrompt, noteStyle);
       if (selectedSoapModel === "gpt-5-mini") {
         forcedModelReason =
@@ -795,10 +798,10 @@ export async function generateClinicalNoteFromTranscript(
     } else {
       systemPrompt = TEMPLATE_SOAP_SYSTEM_PROMPT;
       requiredFields = ["subjective", "objective", "assessment", "plan"];
-      promptCacheKey = `docuwhisper:soap:template:${noteStyle}:v3`;
+      promptCacheKey = `docuwhisper:soap:template:${noteStyle}:v4`;
     }
   } else {
-    promptCacheKey = `docuwhisper:soap:default:${noteStyle}:v3`;
+    promptCacheKey = `docuwhisper:soap:default:${noteStyle}:v4`;
   }
 
   const noteStyleInstructions = buildNoteStyleInstructions(noteStyle, usingHpiTemplate);
