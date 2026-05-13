@@ -53,7 +53,7 @@ export default function Landing() {
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6">
                 Focus on patients,{" "}
-                <span className="text-primary">not paperwork</span>
+                <span className="bg-gradient-to-r from-primary via-primary to-emerald-500 bg-clip-text text-transparent">not paperwork</span>
               </h1>
               <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
                 DocuWhisper transforms your patient consultations into structured SOAP notes in seconds. 
@@ -80,6 +80,60 @@ export default function Landing() {
                   <span>No credit card required</span>
                 </div>
               </div>
+
+              {/* Example SOAP note — visual proof of product output */}
+              <div className="mt-16 mx-auto max-w-2xl relative">
+                <div className="absolute -inset-6 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent rounded-3xl blur-2xl -z-10" aria-hidden="true" />
+                <div className="rounded-2xl bg-card border border-border/60 shadow-2xl overflow-hidden text-left">
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 bg-muted/30">
+                    <div className="flex gap-1.5">
+                      <div className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-amber-400/70" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+                    </div>
+                    <div className="flex items-center gap-2 ml-3 text-xs text-muted-foreground">
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Follow-up · Sarah J. · today</span>
+                    </div>
+                  </div>
+                  <div className="px-6 py-5 space-y-4">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-primary mb-1.5">Subjective</div>
+                      <p className="text-sm text-foreground/85 leading-relaxed">
+                        Patient reports persistent lower back pain for 2 weeks, worse with prolonged sitting. Denies trauma, fevers, or radiation to legs.
+                      </p>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-primary mb-1.5">Objective</div>
+                      <p className="text-sm text-foreground/85 leading-relaxed">
+                        Lumbar tenderness on palpation. ROM mildly limited in flexion. Negative SLR bilaterally. No focal neuro deficits.
+                      </p>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-primary mb-1.5">Assessment</div>
+                      <p className="text-sm text-foreground/85 leading-relaxed">
+                        Mechanical low back pain · <span className="font-mono text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">M54.5</span>
+                      </p>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-primary mb-1.5">Plan</div>
+                      <p className="text-sm text-foreground/85 leading-relaxed">
+                        NSAIDs prn, stretching exercises handout, return if symptoms progress or persist past 4 weeks.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-6 py-3 border-t border-border/40 bg-muted/20 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-primary" />
+                      <span>Generated in 8 seconds from a 6-minute consultation</span>
+                    </div>
+                    <div className="hidden sm:flex items-center gap-1.5">
+                      <Check className="w-3 h-3 text-primary" />
+                      <span>ICD-10 ready</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -87,6 +141,7 @@ export default function Landing() {
         <section id="features" className="py-20 md:py-28 bg-muted/30">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-16">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary mb-3">Features</p>
               <h2 className="text-3xl sm:text-4xl font-bold mb-4">Everything you need for clinical documentation</h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                 Our AI-powered platform streamlines your workflow so you can deliver better patient care.
@@ -172,6 +227,7 @@ export default function Landing() {
         <section className="py-20 md:py-28">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-16">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary mb-3">Compare</p>
               <h2 className="text-3xl sm:text-4xl font-bold mb-4">Why Healthcare Providers Choose DocuWhisper</h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                 See how we compare to other medical scribing solutions
@@ -329,6 +385,7 @@ export default function Landing() {
         <section id="pricing" className="py-20 md:py-28 bg-muted/30">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-16">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary mb-3">Pricing</p>
               <h2 className="text-3xl sm:text-4xl font-bold mb-4">Simple, transparent pricing</h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                 One plan, everything included. No hidden fees, no surprises.
@@ -382,6 +439,7 @@ export default function Landing() {
                 <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
                   <Shield className="h-8 w-8 text-primary" />
                 </div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary mb-3">Security</p>
                 <h2 className="text-3xl sm:text-4xl font-bold mb-4">Security & Privacy</h2>
                 <p className="text-lg text-muted-foreground">
                   We take the security of your data seriously
