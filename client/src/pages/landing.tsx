@@ -80,29 +80,6 @@ export default function Landing() {
                   <span>No credit card required</span>
                 </div>
               </div>
-              <div className="mt-8 mx-auto max-w-2xl rounded-2xl border border-border/60 bg-card/70 p-5 text-left shadow-sm">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-2">
-                    <div className="inline-flex items-center gap-2 text-sm font-medium text-primary">
-                      <Smartphone className="h-4 w-4" />
-                      <span>DocuWhisper Mobile</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Take DocuWhisper with you on iPhone and iPad. Capture visits, review notes, and resume charts from the companion app.
-                    </p>
-                  </div>
-                  <Button variant="outline" asChild data-testid="button-app-store">
-                    <a
-                      href="https://apps.apple.com/us/app/docuwhispermobile/id6759997507"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <AppleMark className="mr-2 h-4 w-4" />
-                      Download on the App Store
-                    </a>
-                  </Button>
-                </div>
-              </div>
             </div>
           </div>
         </section>
@@ -116,9 +93,9 @@ export default function Landing() {
               </p>
             </div>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <Card className="border-0 shadow-md hover-elevate" data-testid="card-feature-voice">
+              <Card className="group border border-border/40 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 transition-all duration-300" data-testid="card-feature-voice">
                 <CardContent className="pt-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/10 to-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                     <Mic className="h-6 w-6 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">Voice Recording</h3>
@@ -128,9 +105,9 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-md hover-elevate" data-testid="card-feature-soap">
+              <Card className="group border border-border/40 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 transition-all duration-300" data-testid="card-feature-soap">
                 <CardContent className="pt-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/10 to-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                     <FileText className="h-6 w-6 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">SOAP Note Generation</h3>
@@ -140,9 +117,9 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-md hover-elevate" data-testid="card-feature-time">
+              <Card className="group border border-border/40 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 transition-all duration-300" data-testid="card-feature-time">
                 <CardContent className="pt-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/10 to-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                     <Clock className="h-6 w-6 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">Save 2+ Hours Daily</h3>
@@ -152,9 +129,9 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-md hover-elevate" data-testid="card-feature-security">
+              <Card className="group border border-border/40 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 transition-all duration-300" data-testid="card-feature-security">
                 <CardContent className="pt-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/10 to-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                     <Shield className="h-6 w-6 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">HIPAA Compliant</h3>
@@ -164,9 +141,9 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-md hover-elevate" data-testid="card-feature-specialty">
+              <Card className="group border border-border/40 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 transition-all duration-300" data-testid="card-feature-specialty">
                 <CardContent className="pt-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/10 to-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                     <Stethoscope className="h-6 w-6 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">Any Specialty</h3>
@@ -176,9 +153,9 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-0 shadow-md hover-elevate" data-testid="card-feature-ai">
+              <Card className="group border border-border/40 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 transition-all duration-300" data-testid="card-feature-ai">
                 <CardContent className="pt-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/10 to-primary/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                     <Sparkles className="h-6 w-6 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">AI That Learns</h3>
@@ -203,12 +180,15 @@ export default function Landing() {
 
             {/* Comparison Table */}
             <div className="max-w-4xl mx-auto mb-16 overflow-x-auto">
-              <div className="min-w-[600px]">
-                <div className="grid grid-cols-4 gap-4 mb-4">
+              <div className="min-w-[600px] rounded-2xl border border-border/40 bg-card p-4 sm:p-6 shadow-sm">
+                <div className="grid grid-cols-4 gap-4 mb-2">
                   <div className="font-semibold text-lg">Feature</div>
-                  <div className="text-center font-semibold text-lg text-primary">DocuWhisper</div>
-                  <div className="text-center font-semibold text-muted-foreground">Heidi Health</div>
-                  <div className="text-center font-semibold text-muted-foreground">Nuance DAX</div>
+                  <div className="text-center font-bold text-lg text-primary bg-primary/[0.08] py-2 rounded-md flex items-center justify-center gap-1.5">
+                    <Sparkles className="h-4 w-4" />
+                    DocuWhisper
+                  </div>
+                  <div className="text-center font-semibold text-muted-foreground py-2">Heidi Health</div>
+                  <div className="text-center font-semibold text-muted-foreground py-2">Nuance DAX</div>
                 </div>
                 
                 {[
@@ -223,13 +203,13 @@ export default function Landing() {
                   { feature: "Analytics Dashboard", us: true, heidi: false, nuance: true },
                   { feature: "Starting Price", us: "$59/mo or $590/yr", heidi: "$99/mo", nuance: "Enterprise" },
                 ].map((row, i) => (
-                  <div key={i} className={`grid grid-cols-4 gap-4 py-3 ${i % 2 === 0 ? 'bg-muted/30' : ''} rounded-lg px-2`}>
+                  <div key={i} className="grid grid-cols-4 gap-4 py-3 border-t border-border/40 items-center">
                     <div className="font-medium">{row.feature}</div>
-                    <div className="text-center">
+                    <div className="text-center bg-primary/[0.06] -my-3 py-3 rounded-md">
                       {typeof row.us === 'boolean' ? (
-                        row.us ? <Check className="h-5 w-5 text-primary mx-auto" /> : <X className="h-5 w-5 text-muted-foreground mx-auto" />
+                        row.us ? <Check className="h-6 w-6 text-primary mx-auto" strokeWidth={3} /> : <X className="h-5 w-5 text-muted-foreground mx-auto" />
                       ) : (
-                        <span className="font-semibold text-primary">{row.us}</span>
+                        <span className="font-bold text-primary">{row.us}</span>
                       )}
                     </div>
                     <div className="text-center">
@@ -253,7 +233,7 @@ export default function Landing() {
 
             {/* Key Differentiators */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-safety">
+              <Card className="border-2 border-primary/20 shadow-lg hover:shadow-xl hover:border-primary/40 hover:-translate-y-1 transition-all duration-300" data-testid="card-advantage-safety">
                 <CardContent className="pt-6">
                   <div className="w-12 h-12 rounded-lg bg-red-100 dark:bg-red-950 flex items-center justify-center mb-4">
                     <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
@@ -268,7 +248,7 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-autocomplete">
+              <Card className="border-2 border-primary/20 shadow-lg hover:shadow-xl hover:border-primary/40 hover:-translate-y-1 transition-all duration-300" data-testid="card-advantage-autocomplete">
                 <CardContent className="pt-6">
                   <div className="w-12 h-12 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center mb-4">
                     <Brain className="h-6 w-6 text-blue-600 dark:text-blue-400" />
@@ -283,7 +263,7 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-collab">
+              <Card className="border-2 border-primary/20 shadow-lg hover:shadow-xl hover:border-primary/40 hover:-translate-y-1 transition-all duration-300" data-testid="card-advantage-collab">
                 <CardContent className="pt-6">
                   <div className="w-12 h-12 rounded-lg bg-green-100 dark:bg-green-950 flex items-center justify-center mb-4">
                     <Users className="h-6 w-6 text-green-600 dark:text-green-400" />
@@ -298,7 +278,7 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-price">
+              <Card className="border-2 border-primary/20 shadow-lg hover:shadow-xl hover:border-primary/40 hover:-translate-y-1 transition-all duration-300" data-testid="card-advantage-price">
                 <CardContent className="pt-6">
                   <div className="w-12 h-12 rounded-lg bg-amber-100 dark:bg-amber-950 flex items-center justify-center mb-4">
                     <Zap className="h-6 w-6 text-amber-600 dark:text-amber-400" />
@@ -313,7 +293,7 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-languages">
+              <Card className="border-2 border-primary/20 shadow-lg hover:shadow-xl hover:border-primary/40 hover:-translate-y-1 transition-all duration-300" data-testid="card-advantage-languages">
                 <CardContent className="pt-6">
                   <div className="w-12 h-12 rounded-lg bg-purple-100 dark:bg-purple-950 flex items-center justify-center mb-4">
                     <Globe className="h-6 w-6 text-purple-600 dark:text-purple-400" />
@@ -328,7 +308,7 @@ export default function Landing() {
                 </CardContent>
               </Card>
 
-              <Card className="border-2 border-primary/20 shadow-lg" data-testid="card-advantage-complete">
+              <Card className="border-2 border-primary/20 shadow-lg hover:shadow-xl hover:border-primary/40 hover:-translate-y-1 transition-all duration-300" data-testid="card-advantage-complete">
                 <CardContent className="pt-6">
                   <div className="w-12 h-12 rounded-lg bg-teal-100 dark:bg-teal-950 flex items-center justify-center mb-4">
                     <Sparkles className="h-6 w-6 text-teal-600 dark:text-teal-400" />
@@ -357,11 +337,11 @@ export default function Landing() {
             <div className="max-w-md mx-auto">
               <Card className="border-2 border-primary shadow-xl relative overflow-hidden" data-testid="card-pricing">
                 <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-xs font-semibold px-3 py-1 rounded-bl-lg">
-                  MOST POPULAR
+                  14-DAY FREE TRIAL
                 </div>
                 <CardContent className="pt-8 pb-6">
                   <div className="text-center mb-6">
-                    <h3 className="text-2xl font-bold mb-2">Solo</h3>
+                    <h3 className="text-2xl font-bold mb-2">Everything Included</h3>
                     <div className="flex items-baseline justify-center gap-1">
                       <span className="text-5xl font-bold">$59</span>
                       <span className="text-muted-foreground">/month</span>
@@ -469,6 +449,34 @@ export default function Landing() {
                   </p>
                 </CardContent>
               </Card>
+            </div>
+          </div>
+        </section>
+
+        <section className="py-12 md:py-16">
+          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="max-w-4xl mx-auto rounded-2xl border border-border/60 bg-card p-6 sm:p-8 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-primary">
+                    <Smartphone className="h-4 w-4" />
+                    <span>Also on iPhone &amp; iPad</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground sm:max-w-md">
+                    Capture visits, review notes, and resume charts from the DocuWhisper companion app on iOS.
+                  </p>
+                </div>
+                <Button variant="outline" size="lg" asChild data-testid="button-app-store">
+                  <a
+                    href="https://apps.apple.com/us/app/docuwhispermobile/id6759997507"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <AppleMark className="mr-2 h-4 w-4" />
+                    Download on the App Store
+                  </a>
+                </Button>
+              </div>
             </div>
           </div>
         </section>
