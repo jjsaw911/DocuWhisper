@@ -458,15 +458,14 @@ export default function Landing() {
                 </Card>
               </div>
               
-              <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
+              <Card className="border-border bg-muted/30">
                 <CardContent className="pt-6">
-                  <h3 className="font-semibold mb-2 text-amber-800 dark:text-amber-200">Important Disclaimer</h3>
-                  <p className="text-sm text-amber-700 dark:text-amber-300 leading-relaxed">
-                    DocuWhisper is a documentation assistance tool designed to help healthcare providers streamline their clinical note-taking process. 
-                    While we implement industry-standard security practices, DocuWhisper is <strong>not a certified Electronic Health Record (EHR) system</strong> and 
-                    should not be used as a primary medical records system. Healthcare organizations with specific HIPAA compliance requirements should 
-                    evaluate whether Business Associate Agreements (BAAs) with underlying service providers meet their regulatory needs. 
-                    Users are responsible for ensuring their use of this tool complies with applicable healthcare regulations in their jurisdiction.
+                  <h3 className="font-semibold mb-2">A documentation assistant, not your EHR</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    DocuWhisper turns your patient consultations into structured SOAP notes. Your patient records still live in your existing EHR or chart system.
+                    We implement industry-standard security: TLS in transit, AES-256 at rest, audio processed in memory only (no permanent audio storage), per-user data isolation,
+                    comprehensive audit logging, and SOC 2 Type 2 infrastructure. As with any clinical tool, evaluate fit for your specific compliance requirements
+                    before adopting it in your practice.
                   </p>
                 </CardContent>
               </Card>
