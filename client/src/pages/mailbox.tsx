@@ -212,12 +212,6 @@ export default function Mailbox() {
   };
 
   useEffect(() => {
-    if (!user) return;
-    searchRecipientsMutation.mutate("");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
-  useEffect(() => {
     setSelectedInboxIds((current) => current.filter((id) => inboxMessages.some((mail) => mail.id === id)));
   }, [inboxMessages]);
 
@@ -243,7 +237,7 @@ export default function Mailbox() {
                 <CardTitle>Compose Message</CardTitle>
               </div>
               <CardDescription>
-                Lookup shows the full user directory alphabetically. Users who opt out are hidden.
+                Search for a recipient by name, email, or User ID. Only users who haven&apos;t opted out of discovery appear in results.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -260,14 +254,14 @@ export default function Mailbox() {
                       setRecipientUserId("");
                       setRecipientConfirmed(false);
                     }}
-                    placeholder="Optional: filter by name, email, or User ID"
+                    placeholder="Name, email, or User ID (min. 2 characters)"
                     data-testid="input-mailbox-recipient-user-id"
                   />
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => searchRecipientsMutation.mutate(recipientSearch.trim())}
-                    disabled={searchRecipientsMutation.isPending}
+                    disabled={searchRecipientsMutation.isPending || recipientSearch.trim().length < 2}
                     data-testid="button-mailbox-lookup-user"
                   >
                     {searchRecipientsMutation.isPending ? (

@@ -807,32 +807,36 @@ export default function Settings() {
                 <Avatar className="h-16 w-16">
                   <AvatarImage src={user?.profileImageUrl || undefined} alt={user?.email || "User"} />
                   <AvatarFallback className="bg-primary/10 text-primary text-xl">
-                    {firstName?.[0] || user?.email?.[0]?.toUpperCase() || "U"}
+                    {(preferredName?.[0] || firstName?.[0] || user?.email?.[0])?.toUpperCase() || "U"}
                   </AvatarFallback>
                 </Avatar>
                 <div className="space-y-1">
                   <p className="font-medium">{user?.email}</p>
                   <p className="text-sm text-muted-foreground">Account email</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <code className="bg-muted px-2 py-1 rounded text-xs font-mono" data-testid="text-user-id">
-                      {user?.id}
-                    </code>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2"
-                      onClick={() => {
-                        if (user?.id) {
-                          navigator.clipboard.writeText(user.id);
-                          toast({ title: "User ID copied" });
-                        }
-                      }}
-                      data-testid="button-copy-user-id"
-                    >
-                      <Copy className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Your User ID</p>
+                  <details className="mt-2 group">
+                    <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                      Show user ID (for support)
+                    </summary>
+                    <div className="flex items-center gap-2 mt-2">
+                      <code className="bg-muted px-2 py-1 rounded text-xs font-mono" data-testid="text-user-id">
+                        {user?.id}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2"
+                        onClick={() => {
+                          if (user?.id) {
+                            navigator.clipboard.writeText(user.id);
+                            toast({ title: "User ID copied" });
+                          }
+                        }}
+                        data-testid="button-copy-user-id"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </details>
                   <div className="flex flex-wrap gap-2 pt-1">
                     <input
                       ref={profileImageInputRef}

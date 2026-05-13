@@ -3745,14 +3745,14 @@ ${noteContentSection}
               <span>English</span>
             </div>
 
-            {transcriptionProvider && (
+            {transcriptionProvider && transcriptionProvider.provider === "local" && (
               <Badge
-                variant={transcriptionProvider.provider === "local" ? "default" : "secondary"}
+                variant="default"
                 className="h-6 text-[11px] uppercase tracking-wide"
                 title={transcriptionProvider.reason || `Configured provider: ${transcriptionProvider.configuredProvider}`}
                 data-testid="badge-transcription-provider"
               >
-                STT: {transcriptionProvider.provider === "local" ? "Local" : "OpenAI"}
+                Local STT
               </Badge>
             )}
           </div>

@@ -152,7 +152,7 @@ export default function Notes() {
         ) : filteredNotes && filteredNotes.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filteredNotes.map((note) => (
-              <Card key={note.id} className="group hover-elevate" data-testid={`card-note-${note.id}`}>
+              <Card key={note.id} className="group border border-border/40 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/30 transition-all duration-200 cursor-pointer" data-testid={`card-note-${note.id}`}>
                 <Link href={`/notes/${note.id}`} className="block">
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between gap-2">

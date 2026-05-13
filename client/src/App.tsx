@@ -94,6 +94,7 @@ function AuthenticatedLayout() {
               <Route path="/analytics" component={Analytics} />
               <Route path="/guide" component={Guide} />
               <Route path="/whats-new" component={WhatsNew} />
+              <Route path="/emr" component={EMRPatients} />
               <Route path="/emr/patients" component={EMRPatients} />
               <Route path="/emr/patients/:id" component={EMRPatientDetail} />
               <Route path="/emr/schedule" component={EMRSchedule} />

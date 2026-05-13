@@ -40,7 +40,7 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS: Record<
   },
   unlimited: {
     code: "unlimited",
-    name: "Solo",
+    name: "DocuWhisper",
     monthlyPriceCents: 5900,
     annualPriceCents: 59000,
     monthlyNoteAllowance: null,

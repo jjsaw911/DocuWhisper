@@ -741,10 +741,10 @@ export function AppSidebar() {
         <div className="px-2 pb-1">
           <Link
             href="/whats-new"
-            className="text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
             data-testid="nav-whats-new"
           >
-            What's New
+            What&apos;s New
           </Link>
         </div>
         <div className="px-2 pb-1 text-[10px] text-muted-foreground" data-testid="text-app-version">
