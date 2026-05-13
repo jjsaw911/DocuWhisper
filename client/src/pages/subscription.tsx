@@ -6,10 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import {
+  SUBSCRIPTION_PLANS,
+  type BillingInterval,
+  type SubscriptionPlanCode,
+} from "@shared/subscriptionPlans";
 import { Link } from "wouter";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { capture } from "@/lib/analytics";
 import { 
   ArrowLeft, 
   Stethoscope, 
@@ -23,35 +28,68 @@ import {
   Shield
 } from "lucide-react";
 
+const PUBLIC_CHECKOUT_PLAN_CODES: SubscriptionPlanCode[] = ["unlimited"];
+
 interface SubscriptionData {
   status: string;
+  accessState?: "inactive" | "trial" | "active" | "lifetime";
+  hasAccess?: boolean;
   currentPeriodEnd?: string;
   stripeSubscriptionId?: string;
+  canManageBilling?: boolean;
+  plan?: {
+    code: string | null;
+    name: string;
+    monthlyPriceCents: number | null;
+    annualPriceCents: number | null;
+    monthlyNoteAllowance: number | null;
+    billingInterval?: BillingInterval | null;
+    unlimited: boolean;
+    source: string;
+  };
+  usage?: {
+    currentPeriodCount: number;
+    totalCount: number;
+    currentPeriodStart: string;
+    nextResetAt: string;
+    includedCredits: number | null;
+    remainingCredits: number | null;
+    exhausted: boolean;
+  };
 }
 
 interface PriceData {
   id: string;
-  unit_amount: number;
+  unit_amount: number | null;
   currency: string;
-  recurring?: { interval: string };
+  recurring?: { interval: BillingInterval };
+  productName?: string | null;
 }
 
 interface AdminCheckData {
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 export default function Subscription() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [inviteCode, setInviteCode] = useState("");
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>("month");
+
+  useEffect(() => {
+    capture("subscription_view");
+  }, []);
 
   const { data: subscription, isLoading: subLoading, refetch: refetchSub } = useQuery<SubscriptionData>({
     queryKey: ["/api/subscription"],
     enabled: !!user,
   });
 
-  const { data: priceData, isLoading: priceLoading } = useQuery<{ price?: PriceData }>({
-    queryKey: ["/api/stripe/price"],
+  const { data: pricesData } = useQuery<{
+    prices?: Partial<Record<SubscriptionPlanCode, Partial<Record<BillingInterval, PriceData>>>>;
+  }>({
+    queryKey: ["/api/stripe/prices"],
     enabled: !!user,
   });
 
@@ -61,8 +99,17 @@ export default function Subscription() {
   });
 
   const checkoutMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/stripe/checkout");
+    mutationFn: async ({
+      planCode,
+      billingInterval,
+    }: {
+      planCode: SubscriptionPlanCode;
+      billingInterval: BillingInterval;
+    }) => {
+      const response = await apiRequest("POST", "/api/stripe/checkout", {
+        planCode,
+        billingInterval,
+      });
       return response.json();
     },
     onSuccess: (data) => {
@@ -120,16 +167,59 @@ export default function Subscription() {
     },
   });
 
-  const isActive = subscription?.status === "active";
-  const isOwner = adminCheck?.isAdmin === true;
-  const isLifetime = subscription?.currentPeriodEnd && 
-    new Date(subscription.currentPeriodEnd).getFullYear() > new Date().getFullYear() + 50;
-  const formattedMonthlyPrice = priceData?.price?.unit_amount != null
-    ? new Intl.NumberFormat("en-US", {
+  const accessState = subscription?.accessState || (subscription?.status === "active" ? "active" : "inactive");
+  const isTrial = accessState === "trial";
+  const isActive = accessState === "active";
+  const hasAdminAccess = adminCheck?.isAdmin === true;
+  const isSuperAdmin = adminCheck?.isSuperAdmin === true;
+  const isLifetime = accessState === "lifetime";
+  const canManageBilling = subscription?.canManageBilling === true;
+  const currentPlan = subscription?.plan;
+  const usage = subscription?.usage;
+  const pricesByPlan = pricesData?.prices ?? {};
+  const formattedCurrency = (amountCents: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(amountCents / 100);
+  const formatPriceForPlan = (
+    planCode: SubscriptionPlanCode,
+    interval: BillingInterval,
+    fallbackCents: number,
+  ) => {
+    const price = pricesByPlan[planCode]?.[interval];
+    if (price?.unit_amount != null) {
+      return new Intl.NumberFormat("en-US", {
         style: "currency",
-        currency: (priceData.price.currency || "usd").toUpperCase(),
-      }).format(priceData.price.unit_amount / 100)
-    : "$25";
+        currency: (price.currency || "usd").toUpperCase(),
+      }).format(price.unit_amount / 100);
+    }
+    return formattedCurrency(fallbackCents);
+  };
+  const hasAnnualOption = PUBLIC_CHECKOUT_PLAN_CODES.some((planCode) => Boolean(pricesByPlan[planCode]?.year));
+  const formattedMonthlyPrice = formatPriceForPlan("unlimited", "month", 5900);
+  const formattedAnnualPrice = formatPriceForPlan("unlimited", "year", 59000);
+  const currentPlanBillingInterval = currentPlan?.billingInterval ?? "month";
+  const currentPlanPriceCents =
+    currentPlanBillingInterval === "year"
+      ? currentPlan?.annualPriceCents ?? null
+      : currentPlan?.monthlyPriceCents ?? null;
+  const formattedPlanPrice =
+    currentPlanPriceCents != null
+      ? formattedCurrency(currentPlanPriceCents)
+      : currentPlanBillingInterval === "year"
+        ? formattedAnnualPrice
+        : formattedMonthlyPrice;
+  const shouldShowPlanPrice =
+    !hasAdminAccess &&
+    !isTrial &&
+    !isLifetime &&
+    (currentPlanPriceCents != null || accessState === "inactive");
+  const checkoutPlans = SUBSCRIPTION_PLANS.filter(
+    (plan) =>
+      PUBLIC_CHECKOUT_PLAN_CODES.includes(plan.code) &&
+      Boolean(pricesByPlan[plan.code]?.[billingInterval]),
+  );
 
   return (
     <div className="h-full overflow-auto bg-background">
@@ -141,15 +231,21 @@ export default function Subscription() {
           </div>
         ) : (
           <div className="space-y-6">
-            {isOwner && (
+            {hasAdminAccess && (
               <Card className="border-2 border-primary bg-primary/5" data-testid="card-owner">
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <Crown className="h-5 w-5 text-primary" />
-                    <CardTitle>Owner Account</CardTitle>
+                    {isSuperAdmin ? (
+                      <Crown className="h-5 w-5 text-primary" />
+                    ) : (
+                      <Shield className="h-5 w-5 text-primary" />
+                    )}
+                    <CardTitle>{isSuperAdmin ? "Super Admin Account" : "Admin Account"}</CardTitle>
                   </div>
                   <CardDescription>
-                    You are the owner of DocuWhisper. You have full access to all features and the admin dashboard.
+                    {isSuperAdmin
+                      ? "You are the DocuWhisper super admin. You have full access to all features and can manage admin roles."
+                      : "You have DocuWhisper admin access, including the admin dashboard and protected admin tools."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -163,34 +259,66 @@ export default function Subscription() {
               </Card>
             )}
 
-            <Card data-testid="card-current-plan">
+              <Card data-testid="card-current-plan">
               <CardHeader>
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle>Current Plan</CardTitle>
-                  <Badge variant={isActive ? "default" : "secondary"}>
-                    {isLifetime ? "Lifetime" : isActive ? "Active" : "Trial"}
+                  <Badge variant={hasAdminAccess || isActive ? "default" : "secondary"}>
+                    {hasAdminAccess
+                      ? isSuperAdmin
+                        ? "Super Admin"
+                        : "Admin"
+                      : isLifetime
+                        ? "Lifetime"
+                        : isTrial
+                          ? "Trial"
+                          : isActive
+                            ? "Active"
+                            : "Inactive"}
                   </Badge>
                 </div>
                 <CardDescription>
-                  {isOwner
-                    ? "As the owner, you have permanent full access to DocuWhisper"
+                  {hasAdminAccess
+                    ? isSuperAdmin
+                      ? "As the super admin, you have permanent full access to DocuWhisper"
+                      : "As an admin, you have full access to DocuWhisper and the admin dashboard"
+                    : isTrial
+                    ? "You're on your 14-day free trial. Subscribe before it ends to keep access."
                     : isActive
                     ? "You have full access to all DocuWhisper features"
-                    : "You're on the free trial. Subscribe to unlock all features"}
+                    : "Your trial has ended. Subscribe to continue using DocuWhisper."}
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {!isOwner && (
+                <div className="mb-3">
+                  <div className="text-lg font-semibold">{currentPlan?.name || "No Active Plan"}</div>
+                  {currentPlan?.monthlyNoteAllowance != null ? (
+                    <p className="text-sm text-muted-foreground">
+                      Includes {currentPlan.monthlyNoteAllowance} AI note credits each billing cycle.
+                    </p>
+                  ) : currentPlan?.unlimited ? (
+                    <p className="text-sm text-muted-foreground">Unlimited AI note credits.</p>
+                  ) : null}
+                </div>
+                {shouldShowPlanPrice && (
                   <div className="flex items-baseline gap-1 mb-4">
-                    <span className="text-4xl font-bold">{formattedMonthlyPrice}</span>
-                    <span className="text-muted-foreground">/month</span>
+                    <span className="text-4xl font-bold">
+                      {formattedPlanPrice}
+                    </span>
+                    <span className="text-muted-foreground">
+                      /{currentPlanBillingInterval === "year" ? "year" : "month"}
+                    </span>
                   </div>
                 )}
-                {isActive && subscription?.currentPeriodEnd && !isLifetime && (
+                {currentPlanBillingInterval === "year" && isActive && (
+                  <p className="mb-4 text-sm text-muted-foreground">Billed annually.</p>
+                )}
+                {(isActive || isTrial) && subscription?.currentPeriodEnd && !isLifetime && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Calendar className="h-4 w-4" />
                     <span>
-                      Renews on {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                      {isTrial ? "Trial ends on" : "Renews on"}{" "}
+                      {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
                     </span>
                   </div>
                 )}
@@ -203,7 +331,47 @@ export default function Subscription() {
               </CardContent>
             </Card>
 
-            {isActive && !isOwner ? (
+            {usage && (subscription?.hasAccess || hasAdminAccess) && (
+              <Card data-testid="card-usage">
+                <CardHeader>
+                  <CardTitle>Usage This Cycle</CardTitle>
+                  <CardDescription>
+                    {usage.nextResetAt
+                      ? `Usage resets on ${new Date(usage.nextResetAt).toLocaleDateString()}`
+                      : "Track how many billable AI notes you have left this cycle."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="rounded-lg border p-4">
+                      <div className="text-sm text-muted-foreground">Notes used</div>
+                      <div className="text-3xl font-semibold">{usage.currentPeriodCount}</div>
+                    </div>
+                    <div className="rounded-lg border p-4">
+                      <div className="text-sm text-muted-foreground">
+                        {usage.remainingCredits == null ? "Credits remaining" : "Notes remaining"}
+                      </div>
+                      <div className="text-3xl font-semibold">
+                        {usage.remainingCredits == null ? "Unlimited" : usage.remainingCredits}
+                      </div>
+                    </div>
+                  </div>
+                  {usage.includedCredits != null && (
+                    <p className="text-sm text-muted-foreground">
+                      Included this cycle: {usage.includedCredits} note credits.
+                    </p>
+                  )}
+                  {usage.exhausted && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                      You have used all included note credits for this billing cycle. Upgrade, add credits, or wait
+                      until the cycle resets to save more AI-generated notes.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {isActive && !hasAdminAccess && canManageBilling ? (
               <Card data-testid="card-manage">
                 <CardHeader>
                   <CardTitle>Manage Subscription</CardTitle>
@@ -232,57 +400,148 @@ export default function Subscription() {
                   </Button>
                 </CardContent>
               </Card>
-            ) : !isOwner && (
+            ) : isActive && !hasAdminAccess ? (
+              <Card data-testid="card-access-granted">
+                <CardHeader>
+                  <CardTitle>Access Enabled</CardTitle>
+                  <CardDescription>
+                    Your access was granted manually. Billing is not managed through Stripe for this account.
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            ) : !hasAdminAccess && (
               <>
                 <Card className="border-2 border-primary" data-testid="card-subscribe">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <CreditCard className="h-5 w-5 text-primary" />
-                      Subscribe to Professional
+                      Subscribe
                     </CardTitle>
                     <CardDescription>
-                      Unlock unlimited access to all features
+                      {isTrial
+                        ? "Keep your access active after the free trial ends"
+                        : "Choose monthly or annual billing for full DocuWhisper access"}
                     </CardDescription>
                   </CardHeader>
-                  <CardContent>
-                    <ul className="space-y-3 mb-6">
-                      {[
-                        "Unlimited voice recordings",
-                        "Unlimited SOAP notes",
-                        "All specialty templates",
-                        "Priority AI processing",
-                        "Export to PDF/Word",
-                        "Secure cloud storage",
-                        "Email support"
-                      ].map((feature, i) => (
-                        <li key={i} className="flex items-center gap-3">
-                          <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                            <Check className="h-3 w-3 text-primary" />
-                          </div>
-                          <span className="text-sm">{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <Button
-                      onClick={() => checkoutMutation.mutate()}
-                      disabled={checkoutMutation.isPending}
-                      className="w-full"
-                      size="lg"
-                      data-testid="button-subscribe"
-                    >
-                      {checkoutMutation.isPending ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          Subscribe for {formattedMonthlyPrice}/month
-                        </>
-                      )}
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center mt-4">
-                      Cancel anytime. No hidden fees.
+                  <CardContent className="space-y-4">
+                    {hasAnnualOption && (
+                      <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
+                        <Button
+                          type="button"
+                          variant={billingInterval === "month" ? "default" : "ghost"}
+                          onClick={() => setBillingInterval("month")}
+                          className="w-full"
+                          data-testid="button-billing-monthly"
+                        >
+                          Monthly
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={billingInterval === "year" ? "default" : "ghost"}
+                          onClick={() => setBillingInterval("year")}
+                          className="w-full"
+                          data-testid="button-billing-annual"
+                        >
+                          Annual
+                        </Button>
+                      </div>
+                    )}
+                    {hasAnnualOption && billingInterval === "year" && (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
+                        Annual billing saves $118 compared with paying monthly for 12 months.
+                      </div>
+                    )}
+                    {checkoutPlans.length > 0 ? (
+                      <div className="grid gap-4">
+                        {checkoutPlans.map((plan) => {
+                          const isCurrentPlan = currentPlan?.code === plan.code && isActive;
+                          const fallbackPriceCents =
+                            billingInterval === "year"
+                              ? plan.annualPriceCents ?? plan.monthlyPriceCents * 10
+                              : plan.monthlyPriceCents;
+                          return (
+                            <div
+                              key={plan.code}
+                              className={`rounded-lg border p-4 ${
+                                plan.code === "unlimited" ? "border-primary bg-primary/5" : ""
+                              }`}
+                            >
+                              <div className="mb-3 flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-lg font-semibold">{plan.name}</div>
+                                  <div className="text-sm text-muted-foreground">{plan.description}</div>
+                                </div>
+                                {isCurrentPlan && <Badge>Current</Badge>}
+                              </div>
+                              <div className="mb-3 flex items-baseline gap-1">
+                                <span className="text-3xl font-bold">
+                                  {formatPriceForPlan(plan.code, billingInterval, fallbackPriceCents)}
+                                </span>
+                                <span className="text-muted-foreground">
+                                  /{billingInterval === "year" ? "year" : "month"}
+                                </span>
+                              </div>
+                              {billingInterval === "year" && (
+                                <p className="mb-3 text-sm text-muted-foreground">
+                                  Pay once for the year and keep full access active.
+                                </p>
+                              )}
+                              <ul className="mb-4 space-y-2 text-sm">
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-primary" />
+                                  {plan.monthlyNoteAllowance == null
+                                    ? "Unlimited AI note credits"
+                                    : `${plan.monthlyNoteAllowance} AI note credits / month`}
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-primary" />
+                                  Unlimited recordings and transcripts
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-primary" />
+                                  Specialty templates, exports, and secure storage
+                                </li>
+                              </ul>
+                              <Button
+                                onClick={() => {
+                                  capture("subscribe_click", { plan_code: plan.code, billing_interval: billingInterval });
+                                  checkoutMutation.mutate({
+                                    planCode: plan.code,
+                                    billingInterval,
+                                  });
+                                }}
+                                disabled={checkoutMutation.isPending || isCurrentPlan}
+                                className="w-full"
+                                data-testid={`button-subscribe-${plan.code}`}
+                              >
+                                {checkoutMutation.isPending ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Processing...
+                                  </>
+                                ) : isCurrentPlan ? (
+                                  "Current Plan"
+                                ) : isTrial ? (
+                                  billingInterval === "year"
+                                    ? "Continue with Annual Access"
+                                    : "Continue with Monthly Access"
+                                ) : (
+                                  billingInterval === "year"
+                                    ? "Subscribe for $590/year"
+                                    : "Subscribe for $59/month"
+                                )}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-dashed px-4 py-5 text-sm text-muted-foreground">
+                        Stripe pricing is not configured yet. Add the live {billingInterval === "year" ? "annual" : "monthly"} Stripe price ID to enable checkout.
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground text-center">
+                      Cancel anytime. Invite codes and manually granted memberships still work for free access.
                     </p>
                   </CardContent>
                 </Card>

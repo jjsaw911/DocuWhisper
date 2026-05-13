@@ -13,22 +13,32 @@ export default function PrivacyPolicyPage() {
         </div>
 
         <p className="mb-6 text-sm text-muted-foreground">
-          Effective date: March 3, 2026
+          Effective date: March 21, 2026
         </p>
 
         <div className="space-y-6 text-sm leading-7 text-foreground">
           <section>
             <h2 className="mb-2 text-lg font-semibold">What We Process</h2>
             <p>
-              DocuWhisper processes account details, note content, template data, and audio you submit for transcription to provide clinical documentation features.
+              DocuWhisper processes account details, note content, template data, and audio you intentionally submit for transcription to provide clinical documentation features. When you use AI features, DocuWhisper sends limited data to OpenAI, our third-party AI service provider, to perform speech-to-text transcription and clinical note generation.
             </p>
+          </section>
+
+          <section>
+            <h2 className="mb-2 text-lg font-semibold">How We Collect Data</h2>
+            <ul className="list-disc space-y-2 pl-6">
+              <li>Audio is collected only when you choose to record in the app or web experience.</li>
+              <li>Account data is collected when you sign in and use DocuWhisper.</li>
+              <li>Patient name, patient context, note content, and template instructions are collected only when you enter or edit them.</li>
+            </ul>
           </section>
 
           <section>
             <h2 className="mb-2 text-lg font-semibold">How We Use Data</h2>
             <ul className="list-disc space-y-2 pl-6">
               <li>Authenticate your account and secure access.</li>
-              <li>Generate transcripts, SOAP notes, and related documentation output.</li>
+              <li>Send audio to OpenAI for speech-to-text transcription when you use AI features.</li>
+              <li>Send transcript text and the note context you provide to OpenAI for SOAP notes and related documentation output.</li>
               <li>Store and sync notes, templates, and app settings.</li>
               <li>Monitor reliability, abuse prevention, and security operations.</li>
             </ul>
@@ -37,7 +47,7 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="mb-2 text-lg font-semibold">Data Handling</h2>
             <p>
-              We apply encryption in transit and standard access controls. Your mobile app credentials are stored in iOS Keychain. Audio and text are processed to provide requested features and associated service operations.
+              We apply encryption in transit and standard access controls. Your mobile app credentials are stored in iOS Keychain. Audio and text are processed only to provide the features you request and associated service operations. We require our third-party service providers, including OpenAI for AI processing, to protect personal data using safeguards at least equivalent to the protections described in this policy.
             </p>
           </section>
 

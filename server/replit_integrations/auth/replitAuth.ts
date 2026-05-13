@@ -10,6 +10,13 @@ import connectPg from "connect-pg-simple";
 import { createVerify, timingSafeEqual } from "crypto";
 import { authStorage } from "./storage";
 import { storage } from "../../storage";
+import { resolveAdminAccess } from "../../adminAccess";
+import { captureSignupCompleted } from "../../posthogClient";
+import {
+  getTrialPeriodEnd,
+  hasSubscriptionAccess,
+  normalizeExpiredSubscriptionStatus,
+} from "../../subscriptionAccess";
 
 // Security event logging helper
 const logSecurityEvent = async (
@@ -47,6 +54,36 @@ function readEnv(...keys: string[]): string {
   return "";
 }
 
+const DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST = [
+  "docuwhisper://auth/callback",
+  "docuwhisper://auth/logout",
+];
+
+function getAllowedMobileRedirectUris(): string[] {
+  const raw = readEnv("MOBILE_AUTH_REDIRECT_ALLOWLIST");
+  const configured = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([...configured, ...DEFAULT_MOBILE_AUTH_REDIRECT_ALLOWLIST]));
+}
+
+function getSafeLogoutRedirectUri(req: Request): string {
+  const redirectUri =
+    typeof req.query.redirect_uri === "string" ? req.query.redirect_uri.trim() : "";
+
+  if (!redirectUri) {
+    return "/";
+  }
+
+  if (getAllowedMobileRedirectUris().some((allowed) => redirectUri.startsWith(allowed))) {
+    return redirectUri;
+  }
+
+  return "/";
+}
+
 type IdentityPlatformConfig = {
   enabled: boolean;
   hasAnyConfig: boolean;
@@ -82,7 +119,22 @@ type FirebaseCertCache = {
 const FIREBASE_CERTS_URL =
   "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SUBSCRIPTION_BYPASS_PATHS = new Set([
+  "/api/auth/user",
+  "/api/auth/profile-image",
+  "/api/subscription",
+  "/api/stripe/checkout",
+  "/api/stripe/portal",
+  "/api/stripe/price",
+  "/api/stripe/prices",
+  "/api/invites/redeem",
+  "/api/admin/check",
+]);
 let firebaseCertCache: FirebaseCertCache | null = null;
+
+function shouldBypassSubscriptionGate(pathname: string): boolean {
+  return SUBSCRIPTION_BYPASS_PATHS.has(pathname);
+}
 
 function getIdentityPlatformConfig(): IdentityPlatformConfig {
   const apiKey = readEnv("IDENTITY_API_KEY");
@@ -1310,13 +1362,24 @@ function registerSimpleLogoutRoute(app: Express) {
     const user = req.user as any;
     const userId = user?.claims?.sub;
     const userEmail = user?.claims?.email;
+    const redirectTo = getSafeLogoutRedirectUri(req);
 
     if (userId) {
       void logSecurityEvent(req, "logout", userId, userEmail);
     }
 
     req.logout(() => {
-      res.redirect("/");
+      const finalizeRedirect = () => {
+        res.clearCookie("connect.sid", { path: "/" });
+        res.redirect(redirectTo);
+      };
+
+      if (req.session) {
+        req.session.destroy(() => finalizeRedirect());
+        return;
+      }
+
+      finalizeRedirect();
     });
   });
 }
@@ -1411,6 +1474,22 @@ export async function setupAuth(app: Express) {
             lastName: normalizedClaims.last_name || null,
             practiceName: practice.name,
           });
+
+          const existingSubscription = await storage.getSubscription(claims.sub);
+          if (!existingSubscription) {
+            const trialPeriodEnd = getTrialPeriodEnd();
+            if (trialPeriodEnd) {
+              await storage.upsertSubscription({
+                userId: claims.sub,
+                status: "active",
+                currentPeriodEnd: trialPeriodEnd,
+              });
+            }
+          }
+
+          captureSignupCompleted(claims.sub, {
+            signup_method: "identity_platform",
+          });
         }
 
         const expiresAt = Math.floor((Date.now() + SESSION_TTL_MS) / 1000);
@@ -1467,7 +1546,11 @@ export async function setupAuth(app: Express) {
   ) => {
     const user = {};
     updateUserSession(user, tokens);
-    await upsertUser(tokens.claims());
+    const claims = tokens.claims();
+    if (!claims) {
+      return verified(new Error("Missing ID token claims"));
+    }
+    await upsertUser(claims);
     verified(null, user);
   };
 
@@ -1522,6 +1605,7 @@ export async function setupAuth(app: Express) {
     const user = req.user as any;
     const userId = user?.claims?.sub;
     const userEmail = user?.claims?.email;
+    const redirectTo = getSafeLogoutRedirectUri(req);
     
     // Log logout event before session destruction
     if (userId) {
@@ -1529,12 +1613,27 @@ export async function setupAuth(app: Express) {
     }
     
     req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: getReplitClientId(),
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+      const finalizeRedirect = () => {
+        res.clearCookie("connect.sid", { path: "/" });
+        if (redirectTo !== "/") {
+          res.redirect(redirectTo);
+          return;
+        }
+
+        res.redirect(
+          client.buildEndSessionUrl(config, {
+            client_id: getReplitClientId(),
+            post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
+          }).href
+        );
+      };
+
+      if (req.session) {
+        req.session.destroy(() => finalizeRedirect());
+        return;
+      }
+
+      finalizeRedirect();
     });
   });
 }
@@ -1547,23 +1646,52 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
   }
 
   const now = Math.floor(Date.now() / 1000);
-  if (now <= user.expires_at) {
+  if (now > user.expires_at) {
+    const refreshToken = user.refresh_token;
+    if (!refreshToken) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const config = await getOidcConfig();
+      const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
+      updateUserSession(user, tokenResponse);
+    } catch (error) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+  }
+
+  const userId = typeof user?.claims?.sub === "string" ? user.claims.sub : "";
+  const userEmail =
+    typeof user?.claims?.email === "string" ? user.claims.email.trim().toLowerCase() : "";
+  const adminAccess = await resolveAdminAccess({
+    userId,
+    userEmail,
+  });
+
+  if (adminAccess.isAdmin) {
     return next();
   }
 
-  const refreshToken = user.refresh_token;
-  if (!refreshToken) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
+  if (shouldBypassSubscriptionGate(req.path)) {
+    return next();
   }
 
-  try {
-    const config = await getOidcConfig();
-    const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
-    updateUserSession(user, tokenResponse);
-    return next();
-  } catch (error) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
+  if (userId) {
+    const subscription = await normalizeExpiredSubscriptionStatus(
+      userId,
+      await storage.getSubscription(userId),
+    );
+
+    if (hasSubscriptionAccess(subscription)) {
+      return next();
+    }
   }
+
+  return res.status(402).json({
+    code: "subscription_required",
+    message: "Your trial has ended. Subscribe to continue using DocuWhisper.",
+  });
 };

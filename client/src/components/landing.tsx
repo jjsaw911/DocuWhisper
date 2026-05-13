@@ -1,17 +1,11 @@
-import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppleMark } from "@/components/apple-mark";
 import { Mic, FileText, Clock, Shield, Sparkles, Check, ArrowRight, Stethoscope, X, Zap, Users, Globe, AlertTriangle, Brain, Smartphone } from "lucide-react";
 import logoImage from "@/assets/logo.png";
-import { capture } from "@/lib/analytics";
 
 export default function Landing() {
-  useEffect(() => {
-    capture("landing_view");
-  }, []);
-
   return (
     <div className="min-h-screen bg-background">
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-lg">
@@ -29,10 +23,10 @@ export default function Landing() {
             <div className="flex items-center gap-2">
               <ThemeToggle />
               <Button variant="ghost" asChild data-testid="button-login">
-                <a href="/api/login" onClick={() => capture("landing_login_click", { location: "nav" })}>Log In</a>
+                <a href="/api/login">Log In</a>
               </Button>
               <Button asChild data-testid="button-get-started">
-                <a href="/api/login?mode=signup" onClick={() => capture("landing_cta_click", { location: "nav" })}>Get Started</a>
+                <a href="/api/login?mode=signup">Get Started</a>
               </Button>
             </div>
           </div>
@@ -61,13 +55,13 @@ export default function Landing() {
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <Button size="lg" className="text-base px-8" asChild data-testid="button-hero-get-started">
-                  <a href="/api/login?mode=signup" onClick={() => capture("landing_cta_click", { location: "hero" })}>
+                  <a href="/api/login?mode=signup">
                     Start Free Trial
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </a>
                 </Button>
                 <Button size="lg" variant="outline" className="text-base px-8" asChild data-testid="button-hero-demo">
-                  <a href="#features" onClick={() => capture("landing_demo_click")}>See How It Works</a>
+                  <a href="#features">See How It Works</a>
                 </Button>
               </div>
               <div className="flex items-center justify-center gap-6 mt-8 text-sm text-muted-foreground">
@@ -221,7 +215,7 @@ export default function Landing() {
                   { feature: "Practice/Team Management", us: true, heidi: false, nuance: true },
                   { feature: "Task Management", us: true, heidi: false, nuance: false },
                   { feature: "Analytics Dashboard", us: true, heidi: false, nuance: true },
-                  { feature: "Starting Price", us: "$59/mo or $590/yr", heidi: "$99/mo", nuance: "Enterprise" },
+                  { feature: "Starting Price", us: "$79/mo", heidi: "$99/mo", nuance: "Enterprise" },
                 ].map((row, i) => (
                   <div key={i} className={`grid grid-cols-4 gap-4 py-3 ${i % 2 === 0 ? 'bg-muted/30' : ''} rounded-lg px-2`}>
                     <div className="font-medium">{row.feature}</div>
@@ -305,7 +299,7 @@ export default function Landing() {
                   </div>
                   <h3 className="text-xl font-semibold mb-2">Competitive Solo Pricing</h3>
                   <p className="text-muted-foreground mb-3">
-                    At <span className="font-semibold text-primary">$59/month</span> or <span className="font-semibold text-primary">$590/year</span>, DocuWhisper stays affordable for solo clinicians while still including the full documentation workflow.
+                    At <span className="font-semibold text-primary">$79/month</span>, DocuWhisper stays affordable for solo clinicians while still including the full documentation workflow.
                   </p>
                   <p className="text-sm text-muted-foreground">
                     Priced to stay sustainable without stripping out the features independent practices actually use.
@@ -363,10 +357,10 @@ export default function Landing() {
                   <div className="text-center mb-6">
                     <h3 className="text-2xl font-bold mb-2">Solo</h3>
                     <div className="flex items-baseline justify-center gap-1">
-                      <span className="text-5xl font-bold">$59</span>
+                      <span className="text-5xl font-bold">$79</span>
                       <span className="text-muted-foreground">/month</span>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-2">$590/year if you prefer annual billing. Cancel anytime.</p>
+                    <p className="text-sm text-muted-foreground mt-2">Billed monthly. Cancel anytime. Annual discounts available separately.</p>
                   </div>
                   <ul className="space-y-3 mb-8">
                     {[
@@ -387,7 +381,7 @@ export default function Landing() {
                     ))}
                   </ul>
                   <Button className="w-full" size="lg" asChild data-testid="button-pricing-subscribe">
-                    <a href="/api/login?mode=signup" onClick={() => capture("landing_cta_click", { location: "pricing" })}>Start 14-Day Free Trial</a>
+                    <a href="/api/login?mode=signup">Start 14-Day Free Trial</a>
                   </Button>
                 </CardContent>
               </Card>
@@ -482,7 +476,7 @@ export default function Landing() {
                 Join thousands of healthcare providers who have reclaimed their time with DocuWhisper.
               </p>
               <Button size="lg" className="text-base px-8 bg-primary text-primary-foreground hover:bg-primary/90" asChild data-testid="button-cta-get-started">
-                <a href="/api/login?mode=signup" onClick={() => capture("landing_cta_click", { location: "footer_cta" })}>
+                <a href="/api/login?mode=signup">
                   Get Started for Free
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </a>

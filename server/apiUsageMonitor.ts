@@ -39,6 +39,7 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
 const routeBuckets = new Map<string, RouteStats>();
 let lastCleanupAt = 0;
+const collectionStartedAt = Date.now();
 
 const isUuidLike = (value: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -222,6 +223,7 @@ export const getApiUsageSummary = (params: { windowHours?: number; limit?: numbe
 
   return {
     generatedAt: new Date(now).toISOString(),
+    dataAvailableSince: new Date(collectionStartedAt).toISOString(),
     windowHours,
     totals: {
       requests: totalRequests,

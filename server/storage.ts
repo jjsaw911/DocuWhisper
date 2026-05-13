@@ -1,9 +1,179 @@
-import { notes, subscriptions, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, transcriptionMetrics, apiKeys, personalApiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type TranscriptionMetric, type InsertTranscriptionMetric, type ApiKey, type InsertApiKey, type PersonalApiKey, type InsertPersonalApiKey } from "@shared/schema";
+import { notes, subscriptions, noteCreditEvents, templates, invites, userSettings, tasks, practices, practiceMembers, sharedNotes, patients, appointments, patientDocuments, patientVitals, patientEncounters, auditLogs, transcriptionMetrics, apiKeys, personalApiKeys, users, type Note, type InsertNote, type Subscription, type InsertSubscription, type Template, type InsertTemplate, type Invite, type InsertInvite, type UserSettings, type InsertUserSettings, type Task, type InsertTask, type Practice, type InsertPractice, type PracticeMember, type InsertPracticeMember, type SharedNote, type InsertSharedNote, type Patient, type InsertPatient, type Appointment, type InsertAppointment, type PatientDocument, type InsertPatientDocument, type PatientVitals, type InsertPatientVitals, type PatientEncounter, type InsertPatientEncounter, type AuditLog, type InsertAuditLog, type TranscriptionMetric, type InsertTranscriptionMetric, type ApiKey, type InsertApiKey, type PersonalApiKey, type InsertPersonalApiKey } from "@shared/schema";
 import crypto from "crypto";
 import { db } from "./db";
-import { eq, desc, and, asc, sql, isNull, or, gte, lte, arrayContains, count, inArray } from "drizzle-orm";
+import { eq, desc, and, asc, sql, isNull, or, gte, lte, lt, arrayContains, count, inArray } from "drizzle-orm";
+import { getNoteCreditPeriodWindow, type NoteCreditUsageSummary } from "./noteCreditUsage";
 
 type UpdateNoteInput = Partial<InsertNote> & { createdAt?: Date };
+type UserDirectoryEntry = {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  isAdmin: boolean;
+  createdAt: Date | null;
+};
+
+const computeTranscriptHash = (transcript?: string | null): string | null => {
+  const normalized = typeof transcript === "string" ? transcript.trim() : "";
+  if (!normalized) return null;
+  return crypto.createHash("sha256").update(normalized).digest("hex");
+};
+
+const hasSoapFieldInPayload = (data: Partial<InsertNote>) =>
+  ["subjective", "objective", "assessment", "plan"].some((field) =>
+    Object.prototype.hasOwnProperty.call(data, field),
+  );
+
+const hasAnySoapContent = (source: {
+  subjective?: string | null;
+  objective?: string | null;
+  assessment?: string | null;
+  plan?: string | null;
+} | null | undefined) =>
+  Boolean(
+    source &&
+      [source.subjective, source.objective, source.assessment, source.plan].some(
+        (value) => typeof value === "string" && value.trim().length > 0,
+      ),
+  );
+
+const applyNoteGenerationState = (
+  existing: Note | undefined,
+  data: Partial<InsertNote>,
+): Partial<InsertNote> => {
+  const nextTranscript =
+    Object.prototype.hasOwnProperty.call(data, "transcript")
+      ? data.transcript ?? null
+      : existing?.transcript ?? null;
+  const nextTranscriptHash = computeTranscriptHash(nextTranscript);
+  const isSoapUpdate = hasSoapFieldInPayload(data);
+
+  if (isSoapUpdate) {
+    return {
+      ...data,
+      soapSourceHash: nextTranscriptHash,
+      soapStale: false,
+    };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, "transcript")) {
+    const existingSoapHash = existing?.soapSourceHash ?? null;
+    const shouldMarkStale =
+      Boolean(existingSoapHash && nextTranscriptHash && existingSoapHash !== nextTranscriptHash) ||
+      Boolean(!existingSoapHash && hasAnySoapContent(existing));
+
+    return {
+      ...data,
+      soapStale: shouldMarkStale,
+      soapSourceHash: existingSoapHash,
+    };
+  }
+
+  return data;
+};
+
+const normalizeDiagnosisKey = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const GENERIC_DIAGNOSIS_KEYS = new Set([
+  "assessment",
+  "plan",
+  "diagnosis",
+  "diagnoses",
+  "impression",
+  "problem list",
+  "problem",
+  "chief complaint",
+  "follow up",
+  "follow-up",
+  "new patient visit",
+  "patient visit",
+  "general consultation",
+  "general consult",
+  "encounter note",
+  "soap note",
+]);
+
+const cleanDiagnosisLabel = (value?: string | null): string | null => {
+  if (!value) return null;
+
+  let cleaned = value
+    .replace(/^[\s\-*•\d.)]+/, "")
+    .replace(/^(assessment|diagnosis(?:es)?|impression|problem(?: list)?|a\/p|dx)\s*[:\-]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[,:;.\-]+$/, "")
+    .trim();
+
+  if (cleaned.includes(":")) {
+    const beforeColon = cleaned.split(":")[0]?.trim();
+    if (beforeColon && beforeColon.length >= 3 && beforeColon.length <= 90) {
+      cleaned = beforeColon;
+    }
+  }
+
+  if (!cleaned || cleaned.length < 3 || cleaned.length > 120) {
+    return null;
+  }
+
+  const normalized = normalizeDiagnosisKey(cleaned);
+  if (GENERIC_DIAGNOSIS_KEYS.has(normalized)) {
+    return null;
+  }
+
+  return cleaned;
+};
+
+const addDiagnosisCandidate = (
+  target: Map<string, string>,
+  label?: string | null,
+  displayLabel?: string | null,
+) => {
+  const cleanedLabel = cleanDiagnosisLabel(label);
+  if (!cleanedLabel) return;
+  const normalized = normalizeDiagnosisKey(cleanedLabel);
+  if (!target.has(normalized)) {
+    target.set(normalized, displayLabel?.trim() || cleanedLabel);
+  }
+};
+
+const splitDiagnosisText = (value?: string | null): string[] => {
+  if (!value) return [];
+  return value
+    .split(/\n|•|;|(?<=[.])\s+(?=[A-Z])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+};
+
+const extractAssessmentDiagnoses = (assessment?: string | null): string[] =>
+  splitDiagnosisText(assessment)
+    .map((segment) => cleanDiagnosisLabel(segment))
+    .filter((segment): segment is string => Boolean(segment));
+
+const extractPlanDiagnoses = (plan?: string | null): string[] => {
+  const diagnoses = new Set<string>();
+
+  for (const line of splitDiagnosisText(plan)) {
+    const colonMatch = line.match(/^(?:[-*•]|\d+[\).:-])?\s*([^:]{3,90}):\s+/);
+    if (!colonMatch) continue;
+    const cleaned = cleanDiagnosisLabel(colonMatch[1]);
+    if (cleaned) {
+      diagnoses.add(cleaned);
+    }
+  }
+
+  return Array.from(diagnoses);
+};
+
+const extractTitleDiagnosis = (title?: string | null): string[] => {
+  const cleaned = cleanDiagnosisLabel(title);
+  if (!cleaned) return [];
+  return [cleaned];
+};
 
 export interface IStorage {
   getNotesByUser(userId: string): Promise<Note[]>;
@@ -16,6 +186,8 @@ export interface IStorage {
   getSubscriptionByStripeSubscriptionId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
   upsertSubscription(subscription: InsertSubscription): Promise<Subscription>;
   updateSubscription(userId: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined>;
+  recordNoteCreditIfNeeded(userId: string, noteId: number): Promise<{ recorded: boolean; consumedAt: Date | null }>;
+  getNoteCreditUsageSummary(userId: string, referenceDate?: Date): Promise<NoteCreditUsageSummary>;
   getTemplatesByUser(userId: string): Promise<Template[]>;
   getTemplate(id: number): Promise<Template | undefined>;
   createTemplate(template: InsertTemplate): Promise<Template>;
@@ -61,9 +233,10 @@ export interface IStorage {
   getUsersWithEmailNotifications(): Promise<UserSettings[]>;
   // Admin - get all users
   getAllUserSettings(): Promise<UserSettings[]>;
-  getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
-  getUserById(userId: string): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null } | undefined>;
-  searchUsers(query: string, excludeUserId?: string, limit?: number): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]>;
+  getAllUsers(): Promise<UserDirectoryEntry[]>;
+  getUserById(userId: string): Promise<UserDirectoryEntry | undefined>;
+  searchUsers(query: string, excludeUserId?: string, limit?: number): Promise<UserDirectoryEntry[]>;
+  setUserAdminStatus(userId: string, isAdmin: boolean): Promise<UserDirectoryEntry | undefined>;
   deleteUserAndData(userId: string): Promise<void>;
   // Practice/Team functions
   createPractice(practice: InsertPractice): Promise<Practice>;
@@ -149,6 +322,9 @@ export interface IStorage {
   getEncountersPendingCosign(physicianId: string): Promise<PatientEncounter[]>;
   // Audit logging - HIPAA compliance
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
+  getAuditLog(id: number): Promise<AuditLog | undefined>;
+  getAuditLogsByIds(ids: number[]): Promise<AuditLog[]>;
+  updateAuditLog(id: number, data: Partial<InsertAuditLog>): Promise<AuditLog | undefined>;
   getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]>;
   // Transcription telemetry
   createTranscriptionMetric(metric: InsertTranscriptionMetric): Promise<TranscriptionMetric>;
@@ -180,14 +356,19 @@ class DatabaseStorage implements IStorage {
   }
 
   async createNote(note: InsertNote): Promise<Note> {
-    const [created] = await db.insert(notes).values(note).returning();
+    const [created] = await db
+      .insert(notes)
+      .values(applyNoteGenerationState(undefined, note) as InsertNote)
+      .returning();
     return created;
   }
 
   async updateNote(id: number, data: UpdateNoteInput): Promise<Note | undefined> {
+    const existing = await this.getNote(id);
+    const normalizedData = applyNoteGenerationState(existing, data);
     const [updated] = await db
       .update(notes)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...normalizedData, updatedAt: new Date() })
       .where(eq(notes.id, id))
       .returning();
     return updated;
@@ -239,6 +420,87 @@ class DatabaseStorage implements IStorage {
       })
       .returning();
     return result;
+  }
+
+  async recordNoteCreditIfNeeded(
+    userId: string,
+    noteId: number,
+  ): Promise<{ recorded: boolean; consumedAt: Date | null }> {
+    const consumedAt = new Date();
+
+    return db.transaction(async (tx) => {
+      const [note] = await tx
+        .select()
+        .from(notes)
+        .where(and(eq(notes.id, noteId), eq(notes.userId, userId)));
+
+      if (!note || note.creditConsumedAt || !hasAnySoapContent(note)) {
+        return {
+          recorded: false,
+          consumedAt: note?.creditConsumedAt ?? null,
+        };
+      }
+
+      const [updatedNote] = await tx
+        .update(notes)
+        .set({ creditConsumedAt: consumedAt, updatedAt: new Date() })
+        .where(and(eq(notes.id, noteId), eq(notes.userId, userId), isNull(notes.creditConsumedAt)))
+        .returning();
+
+      if (!updatedNote) {
+        return {
+          recorded: false,
+          consumedAt: note.creditConsumedAt ?? null,
+        };
+      }
+
+      const { start } = getNoteCreditPeriodWindow(consumedAt);
+      const [event] = await tx
+        .insert(noteCreditEvents)
+        .values({
+          userId,
+          noteId,
+          eventType: "finalized_soap",
+          billingPeriodStart: start,
+        })
+        .onConflictDoNothing({ target: noteCreditEvents.noteId })
+        .returning();
+
+      return {
+        recorded: Boolean(event),
+        consumedAt,
+      };
+    });
+  }
+
+  async getNoteCreditUsageSummary(
+    userId: string,
+    referenceDate = new Date(),
+  ): Promise<NoteCreditUsageSummary> {
+    const { start, end } = getNoteCreditPeriodWindow(referenceDate);
+
+    const [currentPeriodRow] = await db
+      .select({ count: count() })
+      .from(noteCreditEvents)
+      .where(
+        and(
+          eq(noteCreditEvents.userId, userId),
+          gte(noteCreditEvents.createdAt, start),
+          lt(noteCreditEvents.createdAt, end),
+        ),
+      );
+
+    const [totalRow] = await db
+      .select({ count: count() })
+      .from(noteCreditEvents)
+      .where(eq(noteCreditEvents.userId, userId));
+
+    return {
+      currentPeriodCount: Number(currentPeriodRow?.count ?? 0),
+      totalCount: Number(totalRow?.count ?? 0),
+      currentPeriodStart: start,
+      nextResetAt: end,
+    };
   }
 
   async getTemplatesByUser(userId: string): Promise<Template[]> {
@@ -526,23 +788,25 @@ class DatabaseStorage implements IStorage {
     return db.select().from(userSettings).orderBy(desc(userSettings.createdAt));
   }
 
-  async getAllUsers(): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]> {
+  async getAllUsers(): Promise<UserDirectoryEntry[]> {
     return db.select({
       id: users.id,
       email: users.email,
       firstName: users.firstName,
       lastName: users.lastName,
+      isAdmin: users.isAdmin,
       createdAt: users.createdAt,
     }).from(users).orderBy(desc(users.createdAt));
   }
 
-  async getUserById(userId: string): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null } | undefined> {
+  async getUserById(userId: string): Promise<UserDirectoryEntry | undefined> {
     const [user] = await db
       .select({
         id: users.id,
         email: users.email,
         firstName: users.firstName,
         lastName: users.lastName,
+        isAdmin: users.isAdmin,
         createdAt: users.createdAt,
       })
       .from(users)
@@ -551,7 +815,7 @@ class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<{ id: string; email: string | null; firstName: string | null; lastName: string | null; createdAt: Date | null }[]> {
+  async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<UserDirectoryEntry[]> {
     const normalized = query.trim().toLowerCase();
     const safeLimit = Math.min(Math.max(limit, 1), 500);
     const whereConditions = [];
@@ -581,6 +845,7 @@ class DatabaseStorage implements IStorage {
         email: users.email,
         firstName: users.firstName,
         lastName: users.lastName,
+        isAdmin: users.isAdmin,
         createdAt: users.createdAt,
       })
       .from(users);
@@ -597,6 +862,25 @@ class DatabaseStorage implements IStorage {
         asc(sql`lower(${users.id})`)
       )
       .limit(safeLimit);
+  }
+
+  async setUserAdminStatus(userId: string, isAdmin: boolean): Promise<UserDirectoryEntry | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({
+        isAdmin,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        isAdmin: users.isAdmin,
+        createdAt: users.createdAt,
+      });
+    return user;
   }
 
   async deleteUserAndData(userId: string): Promise<void> {
@@ -790,53 +1074,74 @@ class DatabaseStorage implements IStorage {
     const startDate = fromDate || new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000);
     const endDate = toDate || new Date();
     
-    // Get notes with ICD codes within the date range
-    const userNotes = await db.select({ icdCodes: notes.icdCodes }).from(notes).where(
-      and(
-        eq(notes.userId, userId), 
-        sql`${notes.icdCodes} IS NOT NULL AND ${notes.icdCodes} != ''`,
-        gte(notes.createdAt, startDate),
-        sql`${notes.createdAt} <= ${endDate}`
-      )
-    );
+    const userNotes = await db
+      .select({
+        icdCodes: notes.icdCodes,
+        assessment: notes.assessment,
+        plan: notes.plan,
+        title: notes.title,
+      })
+      .from(notes)
+      .where(
+        and(
+          eq(notes.userId, userId),
+          gte(notes.updatedAt, startDate),
+          sql`${notes.updatedAt} <= ${endDate}`
+        )
+      );
     
-    // Count diagnoses from ICD codes
-    const diagnosisCounts: Record<string, number> = {};
+    const diagnosisCounts = new Map<string, { diagnosis: string; count: number }>();
     
     for (const note of userNotes) {
-      if (!note.icdCodes) continue;
-      
-      try {
-        const parsed = typeof note.icdCodes === 'string' ? JSON.parse(note.icdCodes) : note.icdCodes;
-        const codes = parsed?.codes || [];
-        
-        for (const code of codes) {
-          if (code.description) {
-            // Use the ICD code description as the diagnosis
-            // Format: "CODE - Description" for display
-            const diagnosisKey = code.description.toLowerCase().trim();
-            const displayName = `${code.code} - ${code.description}`;
-            
-            if (diagnosisCounts[diagnosisKey]) {
-              diagnosisCounts[diagnosisKey]++;
-            } else {
-              diagnosisCounts[diagnosisKey] = 1;
+      const noteDiagnoses = new Map<string, string>();
+
+      if (note.icdCodes) {
+        try {
+          const parsed = typeof note.icdCodes === "string" ? JSON.parse(note.icdCodes) : note.icdCodes;
+          const allCodeGroups = [parsed?.codes, parsed?.priorAuthDxCodes];
+
+          for (const group of allCodeGroups) {
+            const codes = Array.isArray(group) ? group : [];
+            for (const code of codes) {
+              if (code?.description) {
+                const displayName = code.code ? `${code.code} - ${code.description}` : code.description;
+                addDiagnosisCandidate(noteDiagnoses, code.description, displayName);
+              }
             }
           }
+        } catch (e) {
+          console.error("Failed to parse ICD codes for trending diagnoses:", e);
         }
-      } catch (e) {
-        console.error("Failed to parse ICD codes for trending diagnoses:", e);
+      }
+
+      for (const diagnosis of extractAssessmentDiagnoses(note.assessment)) {
+        addDiagnosisCandidate(noteDiagnoses, diagnosis);
+      }
+
+      for (const diagnosis of extractPlanDiagnoses(note.plan)) {
+        addDiagnosisCandidate(noteDiagnoses, diagnosis);
+      }
+
+      if (noteDiagnoses.size === 0) {
+        for (const diagnosis of extractTitleDiagnosis(note.title)) {
+          addDiagnosisCandidate(noteDiagnoses, diagnosis);
+        }
+      }
+
+      for (const [key, diagnosis] of noteDiagnoses.entries()) {
+        const existing = diagnosisCounts.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          diagnosisCounts.set(key, { diagnosis, count: 1 });
+        }
       }
     }
     
-    // Sort by count and return top 10
-    return Object.entries(diagnosisCounts)
-      .sort((a, b) => b[1] - a[1])
+    return Array.from(diagnosisCounts.values())
+      .sort((a, b) => b.count - a.count || a.diagnosis.localeCompare(b.diagnosis))
       .slice(0, 10)
-      .map(([diagnosis, count]) => ({
-        diagnosis: diagnosis.charAt(0).toUpperCase() + diagnosis.slice(1),
-        count,
-      }));
+      .map(({ diagnosis, count }) => ({ diagnosis, count }));
   }
 
   // ============ EMR METHODS ============
@@ -1190,9 +1495,33 @@ class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date }): Promise<AuditLog[]> {
+  async getAuditLog(id: number): Promise<AuditLog | undefined> {
+    const [log] = await db.select().from(auditLogs).where(eq(auditLogs.id, id));
+    return log;
+  }
+
+  async getAuditLogsByIds(ids: number[]): Promise<AuditLog[]> {
+    if (ids.length === 0) return [];
+    return db
+      .select()
+      .from(auditLogs)
+      .where(inArray(auditLogs.id, ids))
+      .orderBy(desc(auditLogs.timestamp));
+  }
+
+  async updateAuditLog(id: number, data: Partial<InsertAuditLog>): Promise<AuditLog | undefined> {
+    const [updated] = await db
+      .update(auditLogs)
+      .set(data)
+      .where(eq(auditLogs.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getAuditLogs(filters?: { userId?: string; patientId?: number; resourceType?: string; startDate?: Date; endDate?: Date; limit?: number }): Promise<AuditLog[]> {
     const conditions = [];
-    
+    const limit = typeof filters?.limit === "number" && filters.limit > 0 ? filters.limit : 1000;
+
     if (filters?.userId) {
       conditions.push(eq(auditLogs.userId, filters.userId));
     }
@@ -1205,12 +1534,12 @@ class DatabaseStorage implements IStorage {
     if (filters?.startDate) {
       conditions.push(gte(auditLogs.timestamp, filters.startDate));
     }
-    
+
     if (conditions.length === 0) {
-      return db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp)).limit(1000);
+      return db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp)).limit(limit);
     }
-    
-    return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.timestamp)).limit(1000);
+
+    return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.timestamp)).limit(limit);
   }
 
   async createTranscriptionMetric(metric: InsertTranscriptionMetric): Promise<TranscriptionMetric> {

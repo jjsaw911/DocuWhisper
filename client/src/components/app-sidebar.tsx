@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useRecording } from "@/contexts/recording-context";
 import { useCopiedToEmr } from "@/hooks/use-copied-to-emr";
 import { useScribeGenerationStatus } from "@/hooks/use-scribe-generation-status";
+import { APP_VERSION_LABEL } from "@/lib/app-version";
 import {
   Sidebar,
   SidebarContent,
@@ -52,6 +53,7 @@ import {
   Crown,
   ListTodo,
   Share2,
+  Mail,
   MessageSquare,
   TrendingUp,
   ChevronRight,
@@ -77,20 +79,97 @@ import logoImage from "@/assets/logo.png";
 
 interface AdminCheckData {
   isAdmin: boolean;
+  isSuperAdmin: boolean;
+}
+
+interface MailboxUnreadCount {
+  unreadCount: number;
+}
+
+interface InternalInboxUnreadCount {
+  unreadCount: number;
+}
+
+interface SupportEmailUnreadCount {
+  unreadCount: number;
+}
+
+function playNotificationChime() {
+  if (typeof window === "undefined") return;
+
+  const AudioContextCtor =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+  if (!AudioContextCtor) return;
+
+  try {
+    const context = new AudioContextCtor();
+    const oscillator = context.createOscillator();
+    const gainNode = context.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(1320, context.currentTime + 0.12);
+
+    gainNode.gain.setValueAtTime(0.0001, context.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.05, context.currentTime + 0.02);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(context.destination);
+
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.2);
+    oscillator.onended = () => {
+      void context.close();
+    };
+  } catch {
+    // Best effort only.
+  }
 }
 
 export function AppSidebar() {
   const { user } = useAuth();
   const [location, navigate] = useLocation();
   const [scribeMenuOpen, setScribeMenuOpen] = useState(false);
+  const [emrMenuOpen, setEmrMenuOpen] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return window.localStorage.getItem("docuwhisper:sidebar:emr-open") === "true";
+  });
   const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { isRecording, audioLevel } = useRecording();
   const { pendingCount, currentLabel, isGenerating } = useScribeGenerationStatus(user?.id);
+  const previousMailboxUnreadRef = useRef<number | null>(null);
+  const previousInternalInboxUnreadRef = useRef<number | null>(null);
+  const previousSupportEmailUnreadRef = useRef<number | null>(null);
 
   const { data: notes = [] } = useQuery<Note[]>({
     queryKey: ["/api/notes"],
+  });
+  const { data: mailboxUnread } = useQuery<MailboxUnreadCount>({
+    queryKey: ["/api/mailbox/unread-count"],
+    enabled: !!user,
+    refetchInterval: 30000,
+  });
+  const { data: adminCheck } = useQuery<AdminCheckData>({
+    queryKey: ["/api/admin/check"],
+    enabled: !!user,
+  });
+  const { data: internalInboxUnread } = useQuery<InternalInboxUnreadCount>({
+    queryKey: ["/api/admin/internal-messages/unread-count"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    refetchInterval: 30000,
+  });
+  const { data: supportEmailUnread } = useQuery<SupportEmailUnreadCount>({
+    queryKey: ["/api/admin/support-email/unread-count"],
+    enabled: !!user && adminCheck?.isAdmin === true,
+    refetchInterval: 30000,
   });
   const { isNoteCopiedToEmr, setNoteCopiedToEmr, pruneCopiedToEmrForNotes } = useCopiedToEmr(user?.id);
 
@@ -98,6 +177,71 @@ export function AppSidebar() {
     if (notes.length === 0) return;
     pruneCopiedToEmrForNotes(notes.map((note) => note.id));
   }, [notes, pruneCopiedToEmrForNotes]);
+
+  useEffect(() => {
+    const unreadCount = mailboxUnread?.unreadCount;
+    if (typeof unreadCount !== "number") return;
+
+    if (previousMailboxUnreadRef.current !== null && unreadCount > previousMailboxUnreadRef.current) {
+      playNotificationChime();
+      toast({
+        title: unreadCount === 1 ? "New mailbox message" : "New mailbox messages",
+        description:
+          unreadCount === 1
+            ? "You have 1 unread message in your mailbox."
+            : `You have ${unreadCount} unread messages in your mailbox.`,
+      });
+    }
+
+    previousMailboxUnreadRef.current = unreadCount;
+  }, [mailboxUnread?.unreadCount, toast]);
+
+  useEffect(() => {
+    const unreadCount = internalInboxUnread?.unreadCount;
+    if (typeof unreadCount !== "number") return;
+
+    if (
+      previousInternalInboxUnreadRef.current !== null &&
+      unreadCount > previousInternalInboxUnreadRef.current
+    ) {
+      playNotificationChime();
+      toast({
+        title: unreadCount === 1 ? "New internal inbox message" : "New internal inbox messages",
+        description:
+          unreadCount === 1
+            ? "There is 1 unread message in the admin inbox."
+            : `There are ${unreadCount} unread messages in the admin inbox.`,
+      });
+    }
+
+    previousInternalInboxUnreadRef.current = unreadCount;
+  }, [internalInboxUnread?.unreadCount, toast]);
+
+  useEffect(() => {
+    const unreadCount = supportEmailUnread?.unreadCount;
+    if (typeof unreadCount !== "number") return;
+
+    if (
+      previousSupportEmailUnreadRef.current !== null &&
+      unreadCount > previousSupportEmailUnreadRef.current
+    ) {
+      playNotificationChime();
+      toast({
+        title: unreadCount === 1 ? "New support email" : "New support emails",
+        description:
+          unreadCount === 1
+            ? "There is 1 unread message in Support Email."
+            : `There are ${unreadCount} unread messages in Support Email.`,
+      });
+    }
+
+    previousSupportEmailUnreadRef.current = unreadCount;
+  }, [supportEmailUnread?.unreadCount, toast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("docuwhisper:sidebar:emr-open", emrMenuOpen ? "true" : "false");
+  }, [emrMenuOpen]);
 
   const deleteNoteMutation = useMutation({
     mutationFn: async (noteId: number) => {
@@ -149,11 +293,6 @@ export function AppSidebar() {
     }
   };
 
-  const { data: adminCheck } = useQuery<AdminCheckData>({
-    queryKey: ["/api/admin/check"],
-    enabled: !!user,
-  });
-
   const { data: settings } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
     enabled: !!user,
@@ -164,7 +303,7 @@ export function AppSidebar() {
     enabled: !!user,
   });
 
-  const isOwner = adminCheck?.isAdmin === true;
+  const hasAdminAccess = adminCheck?.isAdmin === true;
   const hasEmrAccess = emrAccess?.hasAccess === true;
   
   const displayName = settings?.preferredName || settings?.firstName || user?.firstName || user?.email?.split("@")[0] || "User";
@@ -437,6 +576,14 @@ export function AppSidebar() {
                   <Link href="/mailbox" data-testid="nav-mailbox">
                     <MessageSquare className="h-4 w-4" />
                     <span>Mailbox</span>
+                    {(mailboxUnread?.unreadCount || 0) > 0 && (
+                      <span
+                        className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+                        data-testid="badge-sidebar-mailbox-unread"
+                      >
+                        {mailboxUnread?.unreadCount}
+                      </span>
+                    )}
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -457,7 +604,11 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               {hasEmrAccess && (
-                <Collapsible defaultOpen className="group/emr">
+                <Collapsible
+                  open={emrMenuOpen}
+                  onOpenChange={setEmrMenuOpen}
+                  className="group/emr"
+                >
                   <SidebarMenuItem>
                     <CollapsibleTrigger asChild>
                       <SidebarMenuButton
@@ -525,12 +676,38 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              {isOwner && (
+              {hasAdminAccess && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/support-email"}>
+                    <Link href="/support-email" data-testid="nav-support-email">
+                      <Mail className="h-4 w-4" />
+                      <span>Support Email</span>
+                      {(supportEmailUnread?.unreadCount || 0) > 0 && (
+                        <span
+                          className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+                          data-testid="badge-sidebar-support-email-unread"
+                        >
+                          {supportEmailUnread?.unreadCount}
+                        </span>
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasAdminAccess && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location === "/admin"}>
                     <Link href="/admin" data-testid="nav-admin">
                       <Crown className="h-4 w-4" />
                       <span>Admin</span>
+                      {((internalInboxUnread?.unreadCount || 0) + (supportEmailUnread?.unreadCount || 0)) > 0 && (
+                        <span
+                          className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+                          data-testid="badge-sidebar-admin-unread"
+                        >
+                          {(internalInboxUnread?.unreadCount || 0) + (supportEmailUnread?.unreadCount || 0)}
+                        </span>
+                      )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -545,10 +722,10 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <a href="mailto:support@docuwhisper.com" data-testid="nav-help">
+              <Link href="/support" data-testid="nav-help">
                 <HelpCircle className="h-4 w-4" />
                 <span>Help</span>
-              </a>
+              </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -569,6 +746,9 @@ export function AppSidebar() {
           >
             What's New
           </Link>
+        </div>
+        <div className="px-2 pb-1 text-[10px] text-muted-foreground" data-testid="text-app-version">
+          {APP_VERSION_LABEL}
         </div>
         <div className="flex items-center gap-2 px-2 py-1">
           <Avatar className="h-8 w-8">

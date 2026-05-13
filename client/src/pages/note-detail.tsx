@@ -13,8 +13,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams, useLocation } from "wouter";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  canViewBetaSoapDebug,
+  formatSoapDebugLabel,
+  formatSoapDebugSecondary,
+  loadSoapDebugInfo,
+  readSoapDebugFailureFromError,
+  readSoapDebugInfoFromResponse,
+  saveSoapDebugInfo,
+  type SoapDebugInfo,
+} from "@/lib/soap-debug";
+import { getNoteCreditError } from "@/lib/subscription-errors";
 import { 
   ArrowLeft, 
+  AlertCircle,
   Save,
   Loader2,
   Calendar,
@@ -55,6 +67,7 @@ import {
 import { DrugInteractionAlert, DrugInteractionDialog } from "@/components/drug-interaction-alert";
 import { useCollaboration } from "@/hooks/use-collaboration";
 import { useCopiedToEmr } from "@/hooks/use-copied-to-emr";
+import { useScribeGenerationStatus } from "@/hooks/use-scribe-generation-status";
 import { CollaboratorAvatars } from "@/components/collaborator-avatars";
 import { MedicalAutocomplete } from "@/components/medical-autocomplete";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -121,6 +134,13 @@ type SuggestedCodesPayload = {
   priorAuthDxCodes?: PriorAuthDiagnosisSuggestion[];
   visitTimeMinutes?: number;
 };
+
+type NoteStyleValue = "detailed" | "concise" | "bullet_points";
+const NOTE_STYLE_OPTIONS: Array<{ value: NoteStyleValue; label: string }> = [
+  { value: "detailed", label: "Detailed" },
+  { value: "concise", label: "Concise" },
+  { value: "bullet_points", label: "Bullet Points" },
+];
 
 const CPT_TIME_MIDPOINT_MINUTES: Record<string, number> = {
   "99211": 5,
@@ -263,10 +283,18 @@ export default function NoteDetail() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+  const noteId = id ? parseInt(id, 10) : 0;
+  const { pendingNoteIds } = useScribeGenerationStatus(user?.id);
+  const isBackgroundUpdateInProgress = noteId > 0 && pendingNoteIds.includes(noteId);
 
-  const { data: note, isLoading } = useQuery<Note>({
+  const { data: note, isLoading, refetch } = useQuery<Note>({
     queryKey: ["/api/notes", id],
     enabled: !!user && !!id,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: isBackgroundUpdateInProgress ? 2000 : false,
+    refetchIntervalInBackground: isBackgroundUpdateInProgress,
   });
 
   // Handle remote updates from collaborators
@@ -297,9 +325,9 @@ export default function NoteDetail() {
   }, [note]);
 
   // Real-time collaboration hook
-  const noteId = id ? parseInt(id) : 0;
   const { isNoteCopiedToEmr, setNoteCopiedToEmr } = useCopiedToEmr(user?.id);
   const isCopiedToEmr = noteId > 0 ? isNoteCopiedToEmr(noteId) : false;
+  const canViewSoapDebug = useMemo(() => canViewBetaSoapDebug(user), [user]);
   const { isConnected, collaborators, sendUpdate } = useCollaboration({
     noteId,
     userId: user?.id || "",
@@ -321,12 +349,21 @@ export default function NoteDetail() {
     soapNote: "",
     noteDateTime: "",
   });
+  const lastPersistedFormRef = useRef({
+    title: "",
+    patientName: "",
+    soapNote: "",
+    noteDateTime: "",
+  });
   const [aiInstructions, setAiInstructions] = useState("");
   const [showAiInstructions, setShowAiInstructions] = useState(false);
+  const [isAiInstructionRecording, setIsAiInstructionRecording] = useState(false);
+  const [isAiInstructionTranscribing, setIsAiInstructionTranscribing] = useState(false);
   const [activeMainTab, setActiveMainTab] = useState("soap");
   const [isEditingNoteDateTime, setIsEditingNoteDateTime] = useState(false);
   const [copied, setCopied] = useState(false);
   const [translateLanguage, setTranslateLanguage] = useState("es");
+  const [soapDebugInfo, setSoapDebugInfo] = useState<SoapDebugInfo | null>(null);
   const [transcriptSelection, setTranscriptSelection] = useState<{ start: number; end: number; text: string }>({
     start: 0,
     end: 0,
@@ -335,6 +372,9 @@ export default function NoteDetail() {
   const [showSplitTranscriptDialog, setShowSplitTranscriptDialog] = useState(false);
   const [splitNoteTitle, setSplitNoteTitle] = useState("");
   const [splitPatientName, setSplitPatientName] = useState("");
+  const aiInstructionMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const aiInstructionStreamRef = useRef<MediaStream | null>(null);
+  const aiInstructionChunksRef = useRef<Blob[]>([]);
   
   // Undo/redo history for SOAP note
   const [soapHistory, setSoapHistory] = useState<string[]>([]);
@@ -384,6 +424,7 @@ export default function NoteDetail() {
   // Ref to hold latest suggestedCodes for mutation closure
   const suggestedCodesRef = useRef(suggestedCodes);
   suggestedCodesRef.current = suggestedCodes;
+  const lastAutoRegenerateKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const minutes = parsePositiveMinutes(suggestedCodes?.visitTimeMinutes);
@@ -527,6 +568,14 @@ export default function NoteDetail() {
   }, [note]);
 
   useEffect(() => {
+    if (!canViewSoapDebug || !note?.id) {
+      setSoapDebugInfo(null);
+      return;
+    }
+    setSoapDebugInfo(loadSoapDebugInfo(note.id));
+  }, [canViewSoapDebug, note?.id]);
+
+  useEffect(() => {
     const cached = summaryCache[summaryType];
     if (cached) {
       setGeneratedSummary(cached);
@@ -577,6 +626,13 @@ export default function NoteDetail() {
     queryKey: ["/api/settings"],
     enabled: !!user,
   });
+  const [noteStyleOverride, setNoteStyleOverride] = useState<NoteStyleValue>(() =>
+    (userSettings?.noteStyle as NoteStyleValue) ?? "detailed",
+  );
+
+  useEffect(() => {
+    setNoteStyleOverride((userSettings?.noteStyle as NoteStyleValue) ?? "detailed");
+  }, [userSettings?.noteStyle, note?.id]);
 
   const { data: noteTasks } = useQuery<Task[]>({
     queryKey: ["/api/notes", id, "tasks"],
@@ -868,6 +924,7 @@ export default function NoteDetail() {
 
     setFormData(incomingForm);
     lastHydratedFormRef.current = incomingForm;
+    lastPersistedFormRef.current = incomingForm;
 
     // Reset history when server content updates and local form isn't dirty.
     setSoapHistory([incomingSoap]);
@@ -876,21 +933,24 @@ export default function NoteDetail() {
     // Load the saved template selection
     setSelectedTemplateId(note.templateId ? note.templateId.toString() : "");
 
-    // Load saved ICD codes if available
-    if (note.icdCodes) {
-      try {
-        const parsedCodes = typeof note.icdCodes === "string" ? JSON.parse(note.icdCodes) : note.icdCodes;
-        setSuggestedCodes(normalizeSuggestedCodes(parsedCodes));
-      } catch (e) {
-        console.error("Failed to parse saved ICD codes:", e);
-        setSuggestedCodes(null);
-      }
-    } else {
-      setSuggestedCodes(null);
-    }
-
     setInitialLoadDone(true);
   }, [note, id, initialLoadDone, formData.title, formData.patientName, formData.soapNote, formData.noteDateTime]);
+
+  useEffect(() => {
+    if (!note?.icdCodes) {
+      setSuggestedCodes(null);
+      return;
+    }
+
+    try {
+      const parsedCodes =
+        typeof note.icdCodes === "string" ? JSON.parse(note.icdCodes) : note.icdCodes;
+      setSuggestedCodes(normalizeSuggestedCodes(parsedCodes));
+    } catch (e) {
+      console.error("Failed to parse saved ICD codes:", e);
+      setSuggestedCodes(null);
+    }
+  }, [note?.id, note?.icdCodes]);
 
   const getCreatedAtIsoFromForm = () => {
     if (!formData.noteDateTime) return undefined;
@@ -899,36 +959,228 @@ export default function NoteDetail() {
     return parsed.toISOString();
   };
 
+  const buildUpdateSnapshot = useCallback(
+    (
+      overrides?: Partial<{
+        title: string;
+        patientName: string;
+        soapNote: string;
+        noteDateTime: string;
+      }>,
+    ) => ({
+      title: overrides?.title ?? formData.title,
+      patientName: overrides?.patientName ?? formData.patientName,
+      soapNote: overrides?.soapNote ?? formData.soapNote,
+      noteDateTime: overrides?.noteDateTime ?? formData.noteDateTime,
+    }),
+    [formData.noteDateTime, formData.patientName, formData.soapNote, formData.title],
+  );
+
   const updateMutation = useMutation({
-    mutationFn: async () => {
-      const parsedSoap = parseSoapNote(formData.soapNote);
+    mutationFn: async (variables?: {
+      silent?: boolean;
+      snapshot?: {
+        title: string;
+        patientName: string;
+        soapNote: string;
+        noteDateTime: string;
+      };
+    }) => {
+      const snapshot = variables?.snapshot ?? buildUpdateSnapshot();
+      const parsedSoap = parseSoapNote(snapshot.soapNote);
       // Use ref to get latest suggestedCodes value (avoid stale closure)
       const currentCodes = suggestedCodesRef.current;
       const response = await apiRequest("PATCH", `/api/notes/${id}`, {
-        title: formData.title,
-        patientName: formData.patientName,
-        createdAt: getCreatedAtIsoFromForm(),
+        title: snapshot.title,
+        patientName: snapshot.patientName,
+        createdAt: snapshot.noteDateTime ? new Date(snapshot.noteDateTime).toISOString() : undefined,
         ...parsedSoap,
         icdCodes: currentCodes ? JSON.stringify(currentCodes) : null,
       });
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      const snapshot = variables?.snapshot ?? buildUpdateSnapshot();
+      lastHydratedFormRef.current = snapshot;
+      lastPersistedFormRef.current = snapshot;
       queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-      toast({
-        title: "Note updated",
-        description: "Your changes have been saved",
-      });
+      if (!variables?.silent) {
+        toast({
+          title: "Note updated",
+          description: "Your changes have been saved",
+        });
+      }
     },
-    onError: () => {
-      toast({
-        title: "Failed to update note",
-        description: "Please try again",
-        variant: "destructive",
-      });
+    onError: (_error, variables) => {
+      if (!variables?.silent) {
+        toast({
+          title: "Failed to update note",
+          description: "Please try again",
+          variant: "destructive",
+        });
+      }
     },
   });
+
+  useEffect(() => {
+    if (!note || !initialLoadDone || updateMutation.isPending || isEditingNoteDateTime) return;
+
+    const lastPersisted = lastPersistedFormRef.current;
+    const hasUnsavedChanges =
+      formData.title !== lastPersisted.title ||
+      formData.patientName !== lastPersisted.patientName ||
+      formData.soapNote !== lastPersisted.soapNote;
+
+    if (!hasUnsavedChanges) return;
+
+    const timeoutId = setTimeout(() => {
+      updateMutation.mutate({
+        silent: true,
+        snapshot: buildUpdateSnapshot(),
+      });
+    }, 900);
+
+    return () => clearTimeout(timeoutId);
+  }, [
+    note,
+    initialLoadDone,
+    formData.title,
+    formData.patientName,
+    formData.soapNote,
+    isEditingNoteDateTime,
+    updateMutation,
+    updateMutation.isPending,
+    buildUpdateSnapshot,
+  ]);
+
+  const stopAiInstructionRecording = useCallback(() => {
+    const recorder = aiInstructionMediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      return;
+    }
+
+    recorder.stop();
+    setIsAiInstructionRecording(false);
+  }, []);
+
+  const startAiInstructionRecording = useCallback(async () => {
+    if (isAiInstructionRecording || isAiInstructionTranscribing) {
+      return;
+    }
+
+    if (
+      typeof window === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      toast({
+        title: "Voice input unavailable",
+        description: "This browser does not support microphone transcription here.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      aiInstructionStreamRef.current = stream;
+      aiInstructionMediaRecorderRef.current = recorder;
+      aiInstructionChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          aiInstructionChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const chunks = aiInstructionChunksRef.current;
+        aiInstructionChunksRef.current = [];
+
+        if (aiInstructionStreamRef.current) {
+          aiInstructionStreamRef.current.getTracks().forEach((track) => track.stop());
+          aiInstructionStreamRef.current = null;
+        }
+        aiInstructionMediaRecorderRef.current = null;
+
+        if (chunks.length === 0) {
+          return;
+        }
+
+        setIsAiInstructionTranscribing(true);
+        try {
+          const audioBlob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          const payload = new FormData();
+          payload.append("audio", audioBlob, "ai-instructions.webm");
+
+          const response = await fetch("/api/transcribe", {
+            method: "POST",
+            body: payload,
+            credentials: "include",
+          });
+
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.error || "Failed to transcribe voice input");
+          }
+
+          const transcript =
+            typeof data.transcript === "string"
+              ? data.transcript.trim()
+              : typeof data.text === "string"
+                ? data.text.trim()
+                : "";
+
+          if (!transcript) {
+            toast({
+              title: "No speech detected",
+              description: "Try again and speak a little closer to the microphone.",
+              variant: "destructive",
+            });
+            return;
+          }
+
+          setAiInstructions((current) => (current.trim() ? `${current.trim()}\n${transcript}` : transcript));
+          toast({
+            title: "Voice note added",
+            description: "Your spoken instructions were added to the AI Instructions box.",
+          });
+        } catch (error) {
+          toast({
+            title: "Voice input failed",
+            description: error instanceof Error ? error.message : "Unable to transcribe the recording.",
+            variant: "destructive",
+          });
+        } finally {
+          setIsAiInstructionTranscribing(false);
+        }
+      };
+
+      recorder.start();
+      setIsAiInstructionRecording(true);
+    } catch (error) {
+      toast({
+        title: "Microphone unavailable",
+        description:
+          error instanceof Error ? error.message : "Please allow microphone access to use voice input.",
+        variant: "destructive",
+      });
+    }
+  }, [isAiInstructionRecording, isAiInstructionTranscribing, toast]);
+
+  useEffect(() => {
+    return () => {
+      if (aiInstructionMediaRecorderRef.current?.state !== "inactive") {
+        aiInstructionMediaRecorderRef.current?.stop();
+      }
+      if (aiInstructionStreamRef.current) {
+        aiInstructionStreamRef.current.getTracks().forEach((track) => track.stop());
+        aiInstructionStreamRef.current = null;
+      }
+    };
+  }, []);
 
   const saveBillableTimeMutation = useMutation({
     mutationFn: async (nextCodes: SuggestedCodesPayload) => {
@@ -1103,36 +1355,51 @@ export default function NoteDetail() {
   });
 
   const regenerateMutation = useMutation({
-    mutationFn: async () => {
-      // Save current state to history before regenerating
-      pushToHistory(formData.soapNote);
+    mutationFn: async (options?: { trigger?: "manual" | "auto" }) => {
+      const trigger = options?.trigger ?? "manual";
+      const resolvedTemplateSelection =
+        selectedTemplateId || (trigger === "auto" && note?.templateId ? note.templateId.toString() : "");
+
+      if (trigger === "manual") {
+        // Save current state to history before regenerating from an explicit user action
+        pushToHistory(formData.soapNote);
+      }
       
       // Handle template selection:
       // - "none" = explicitly no template (standard SOAP)
       // - "" (empty/default) = let backend use user's default template
       // - numeric string = use that specific template
       let effectiveTemplateId: number | undefined = undefined;
-      if (selectedTemplateId === "none") {
+      if (resolvedTemplateSelection === "none") {
         // User explicitly chose no template - pass special marker to backend
         effectiveTemplateId = undefined;
-      } else if (selectedTemplateId && selectedTemplateId !== "") {
-        effectiveTemplateId = parseInt(selectedTemplateId);
+      } else if (resolvedTemplateSelection && resolvedTemplateSelection !== "") {
+        effectiveTemplateId = parseInt(resolvedTemplateSelection);
       }
-      // When selectedTemplateId is "" (default), we pass undefined and let backend determine default
+      // When the selection is "" (default), we pass undefined and let backend determine default
       
       const response = await apiRequest("POST", "/api/generate-soap", {
         transcript: note?.transcript || "",
-        patientName: formData.patientName,
+        patientName: formData.patientName || note?.patientName || "",
         specialty: note?.specialty || "general",
         aiInstructions: aiInstructions,
         templateId: effectiveTemplateId,
-        noDefaultTemplate: selectedTemplateId === "none", // Signal to skip default template lookup
+        noDefaultTemplate: resolvedTemplateSelection === "none", // Signal to skip default template lookup
+        noteId: note?.id,
+        enforceNoteCredit: true,
+        noteStyle: noteStyleOverride,
       });
-      return response.json();
+      const debugInfo = canViewSoapDebug ? readSoapDebugInfoFromResponse(response) : null;
+      const data = await response.json();
+      return { data, debugInfo, trigger, resolvedTemplateSelection };
     },
-    onSuccess: async (data) => {
+    onSuccess: async ({ data, debugInfo, trigger, resolvedTemplateSelection }) => {
       console.log("[Regenerate] AI response keys:", Object.keys(data));
       console.log("[Regenerate] Has HPI:", !!data.hpi, "Has Plan:", !!data.plan);
+      if (debugInfo && note?.id) {
+        saveSoapDebugInfo(note.id, debugInfo);
+        setSoapDebugInfo(debugInfo);
+      }
       
       const newSoapNote: string[] = [];
       
@@ -1161,7 +1428,7 @@ export default function NoteDetail() {
       
       setShowAiInstructions(false);
       
-      // Auto-save the regenerated note and generate ICD codes
+      // Auto-save the regenerated note. Billing codes are now generated only on demand.
       try {
         // Parse the new SOAP text to save to database
         const noteData = data.hpi ? {
@@ -1175,64 +1442,112 @@ export default function NoteDetail() {
           assessment: data.assessment || "",
           plan: data.plan || "",
         };
-        
-        // Generate ICD codes for the new SOAP note
-        let icdCodesData = null;
-        try {
-          const codesResponse = await apiRequest("POST", "/api/suggest-codes", noteData);
-          const rawCodesData = await codesResponse.json();
-          icdCodesData = normalizeSuggestedCodes(rawCodesData);
-          setSuggestedCodes(icdCodesData);
-          setActiveMainTab("soap");
-        } catch (e) {
-          console.error("Failed to generate ICD codes:", e);
-        }
+        setSuggestedCodes(null);
+        setActiveMainTab("soap");
         
         // Determine template ID for saving:
         // - "none" = explicitly null (no template used)
         // - numeric string = use that template
         // - "" = no specific selection (can be null)
         let effectiveTemplateId: number | null = null;
-        if (selectedTemplateId === "none") {
+        if (resolvedTemplateSelection === "none") {
           effectiveTemplateId = null;
-        } else if (selectedTemplateId && selectedTemplateId !== "") {
-          effectiveTemplateId = parseInt(selectedTemplateId);
+        } else if (resolvedTemplateSelection && resolvedTemplateSelection !== "") {
+          effectiveTemplateId = parseInt(resolvedTemplateSelection);
         }
         
         await apiRequest("PATCH", `/api/notes/${id}`, {
-          title: formData.title,
-          patientName: formData.patientName,
-          createdAt: getCreatedAtIsoFromForm(),
+          title: formData.title || note?.title || "",
+          patientName: formData.patientName || note?.patientName || "",
+          createdAt:
+            getCreatedAtIsoFromForm() ||
+            (note?.createdAt ? new Date(note.createdAt).toISOString() : undefined),
           templateId: effectiveTemplateId,
           ...noteData,
-          icdCodes: icdCodesData ? JSON.stringify(icdCodesData) : null,
+          icdCodes: null,
+          consumeNoteCredit: true,
         });
         
         queryClient.invalidateQueries({ queryKey: ["/api/notes", id] });
         queryClient.invalidateQueries({ queryKey: ["/api/notes"] });
-        
-        const codesMsg = icdCodesData ? ` with ${icdCodesData.codes?.length || 0} ICD codes` : "";
+        queryClient.invalidateQueries({ queryKey: ["/api/subscription"] });
         toast({
-          title: "Note regenerated & saved",
-          description: `Your changes have been saved automatically${codesMsg}`,
+          title: trigger === "auto" ? "SOAP refreshed" : "Note regenerated & saved",
+          description:
+            trigger === "auto"
+              ? "This note was updated from the latest resumed transcript."
+              : "Your changes have been saved. Generate billing codes manually if you still need them.",
         });
       } catch (error) {
         console.error("Auto-save failed:", error);
+        const creditError = getNoteCreditError(error);
         toast({
-          title: "Note regenerated",
-          description: "Note was regenerated but auto-save failed. Please save manually.",
+          title: trigger === "auto" ? "SOAP refreshed, but save failed" : "Note regenerated",
+          description:
+            creditError?.message ||
+            (trigger === "auto"
+              ? "The note was regenerated from the latest transcript, but saving failed. Use Redo to retry."
+              : "Note was regenerated but auto-save failed. Please save manually."),
           variant: "destructive",
         });
       }
     },
-    onError: () => {
+    onError: (error, variables) => {
+      const trigger = variables?.trigger ?? "manual";
+      const debugFailure = canViewSoapDebug ? readSoapDebugFailureFromError(error) : null;
+      const creditError = getNoteCreditError(error);
       toast({
-        title: "Failed to regenerate",
-        description: "Please try again",
+        title: trigger === "auto" ? "Couldn't auto-refresh note" : "Failed to regenerate",
+        description:
+          creditError?.message ||
+          (debugFailure
+            ? `${debugFailure.reason}${debugFailure.trace ? ` Trace: ${debugFailure.trace}` : ""}`
+            : trigger === "auto"
+              ? "Use Redo to regenerate this note manually."
+              : "Please try again"),
         variant: "destructive",
       });
     },
   });
+
+  useEffect(() => {
+    if (!initialLoadDone || !note?.soapStale || !note.transcript || regenerateMutation.isPending) {
+      return;
+    }
+
+    const updatedAtValue =
+      note.updatedAt instanceof Date
+        ? note.updatedAt.toISOString()
+        : typeof note.updatedAt === "string"
+          ? note.updatedAt
+          : "";
+    const autoRegenerateKey = `${note.id}:${updatedAtValue}:${note.transcript.length}`;
+
+    if (lastAutoRegenerateKeyRef.current === autoRegenerateKey) {
+      return;
+    }
+
+    lastAutoRegenerateKeyRef.current = autoRegenerateKey;
+    regenerateMutation.mutate({ trigger: "auto" });
+  }, [
+    note?.id,
+    note?.soapStale,
+    note?.transcript,
+    note?.updatedAt,
+    initialLoadDone,
+    regenerateMutation,
+    regenerateMutation.isPending,
+  ]);
+
+  const backgroundUpdateWasInProgressRef = useRef(false);
+
+  useEffect(() => {
+    if (backgroundUpdateWasInProgressRef.current && !isBackgroundUpdateInProgress) {
+      void refetch();
+    }
+
+    backgroundUpdateWasInProgressRef.current = isBackgroundUpdateInProgress;
+  }, [isBackgroundUpdateInProgress, refetch]);
 
   // Parse SOAP note text back to individual sections
   const parseSoapFromText = (text: string) => {
@@ -1726,7 +2041,7 @@ export default function NoteDetail() {
             </div>
             
             <span className="text-lg font-semibold truncate max-w-[300px]">
-              {note.title}
+              {formData.title || note.title}
             </span>
             
             {/* Collaboration indicator */}
@@ -1988,12 +2303,48 @@ export default function NoteDetail() {
 
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-5xl mx-auto space-y-6">
+          {!note.soapStale && isBackgroundUpdateInProgress ? (
+            <div
+              className="flex items-start gap-3 rounded-lg border border-sky-300 bg-sky-50 px-4 py-3 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-100"
+              data-testid="banner-note-background-update"
+            >
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+              <div className="space-y-1 text-sm">
+                <p className="font-medium">Resumed note is still updating</p>
+                <p>
+                  DocuWhisper is finishing the background rewrite from your resumed visit. This
+                  page will refresh automatically when the new note is ready.
+                </p>
+              </div>
+            </div>
+          ) : null}
+          {note.soapStale ? (
+            <div
+              className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100"
+              data-testid="banner-soap-stale"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-1 text-sm">
+                <p className="font-medium">
+                  {regenerateMutation.isPending && regenerateMutation.variables?.trigger === "auto"
+                    ? "Updating SOAP note"
+                    : "SOAP note is out of date"}
+                </p>
+                <p>
+                  {regenerateMutation.isPending && regenerateMutation.variables?.trigger === "auto"
+                    ? "The transcript changed after the last SOAP generation. DocuWhisper is regenerating and saving the note now."
+                    : "The transcript changed after the last SOAP generation. Regenerate and save this note before finalizing it."}
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           {/* Metadata */}
           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-            {note.patientName && (
+            {(formData.patientName || note.patientName) && (
               <div className="flex items-center gap-1">
                 <User className="h-4 w-4" />
-                <span>{note.patientName}</span>
+                <span>{formData.patientName || note.patientName}</span>
               </div>
             )}
             {isEditingNoteDateTime ? (
@@ -2012,7 +2363,9 @@ export default function NoteDetail() {
                   size="sm"
                   onClick={() => {
                     setIsEditingNoteDateTime(false);
-                    updateMutation.mutate();
+                    updateMutation.mutate({
+                      snapshot: buildUpdateSnapshot(),
+                    });
                   }}
                   disabled={updateMutation.isPending}
                   data-testid="button-done-note-datetime"
@@ -2079,6 +2432,24 @@ export default function NoteDetail() {
                         SOAP Note
                       </CardTitle>
                       <div className="flex items-center gap-2">
+                        <Select
+                          value={noteStyleOverride}
+                          onValueChange={(val) => setNoteStyleOverride(val as NoteStyleValue)}
+                        >
+                          <SelectTrigger
+                            className="w-[140px] text-xs"
+                            data-testid="select-note-style-header"
+                          >
+                            <SelectValue placeholder="Style" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {NOTE_STYLE_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <Select value={selectedTemplateId || "default"} onValueChange={(val) => setSelectedTemplateId(val === "default" ? "" : val === "none" ? "none" : val)}>
                           <SelectTrigger className="w-[140px] text-xs" data-testid="select-template-header">
                             <SelectValue placeholder="Template" />
@@ -2096,7 +2467,7 @@ export default function NoteDetail() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => regenerateMutation.mutate()}
+                          onClick={() => regenerateMutation.mutate({ trigger: "manual" })}
                           disabled={regenerateMutation.isPending || !note.transcript}
                           data-testid="button-retranscribe"
                         >
@@ -2134,6 +2505,18 @@ export default function NoteDetail() {
                       Cumulative transcript time:{" "}
                       <span className="font-medium">{cumulativeVisitMinutes ? `${cumulativeVisitMinutes} minutes` : "Not available yet"}</span>
                     </p>
+                    {canViewSoapDebug && soapDebugInfo ? (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground" data-testid="text-note-soap-debug-model">
+                          {formatSoapDebugLabel(soapDebugInfo)}
+                        </p>
+                        {formatSoapDebugSecondary(soapDebugInfo) ? (
+                          <p className="text-xs text-muted-foreground/80" data-testid="text-note-soap-debug-detail">
+                            {formatSoapDebugSecondary(soapDebugInfo)}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -2207,9 +2590,33 @@ Treatment plan..."
                         className="min-h-[80px]"
                         data-testid="textarea-ai-instructions"
                       />
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">
+                          Dictate extra instructions with your microphone and they will be added here.
+                        </p>
+                        <Button
+                          type="button"
+                          variant={isAiInstructionRecording ? "destructive" : "outline"}
+                          size="sm"
+                          onClick={isAiInstructionRecording ? stopAiInstructionRecording : startAiInstructionRecording}
+                          disabled={isAiInstructionTranscribing}
+                          data-testid="button-ai-instructions-voice"
+                        >
+                          {isAiInstructionTranscribing ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Mic className="mr-2 h-4 w-4" />
+                          )}
+                          {isAiInstructionRecording
+                            ? "Stop Voice Input"
+                            : isAiInstructionTranscribing
+                              ? "Transcribing..."
+                              : "Voice Input"}
+                        </Button>
+                      </div>
                       <Button
                         variant="secondary"
-                        onClick={() => regenerateMutation.mutate()}
+                        onClick={() => regenerateMutation.mutate({ trigger: "manual" })}
                         disabled={regenerateMutation.isPending || !note.transcript}
                         className="w-full"
                         data-testid="button-regenerate"

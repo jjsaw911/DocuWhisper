@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import type { Patient, PatientEncounter, PatientVitals } from "@shared/schema";
 import { isAuthenticated } from "./replit_integrations/auth";
+import { getAdminAccessContext } from "./adminAccess";
 import { storage } from "./storage";
 
 type FhirAccessContext = {
@@ -417,9 +418,8 @@ router.use(async (req: FhirRequest, res: Response, next: NextFunction) => {
       return sendFhir(res, 401, operationOutcome(401, "login", "Unauthorized."));
     }
 
-    const ownerEmail = process.env.OWNER_EMAIL?.toLowerCase();
-    const normalizedUserEmail = typeof userEmail === "string" ? userEmail.toLowerCase() : null;
-    const isVendorOwner = Boolean(ownerEmail && normalizedUserEmail === ownerEmail);
+    const adminAccess = await getAdminAccessContext(req);
+    const isVendorOwner = adminAccess.isAdmin;
 
     const subscription = await storage.getSubscription(userId);
     const hasIndividualAccess = subscription?.status === "active" && subscription?.hasEmrAccess === true;

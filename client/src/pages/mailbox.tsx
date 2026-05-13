@@ -29,6 +29,8 @@ interface MailboxMessage {
   subject: string;
   message: string;
   createdAt: string;
+  isRead: boolean;
+  readAt?: string | null;
 }
 
 function formatDateTime(value: string): string {
@@ -51,6 +53,9 @@ export default function Mailbox() {
   const [recipientConfirmed, setRecipientConfirmed] = useState(false);
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
+  const [activeFolder, setActiveFolder] = useState<"inbox" | "sent">("inbox");
+  const [selectedInboxIds, setSelectedInboxIds] = useState<number[]>([]);
+  const [selectedSentIds, setSelectedSentIds] = useState<number[]>([]);
 
   const { data: inboxMessages = [], isLoading: inboxLoading } = useQuery<MailboxMessage[]>({
     queryKey: ["/api/mailbox/messages?folder=inbox"],
@@ -112,6 +117,7 @@ export default function Mailbox() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=inbox"] });
       queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=sent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/unread-count"] });
       setRecipientSearch("");
       setRecipientUserId("");
       setRecipient(null);
@@ -133,6 +139,43 @@ export default function Mailbox() {
     },
   });
 
+  const markMailboxMessagesReadMutation = useMutation({
+    mutationFn: async (messageIds: number[]) => {
+      const response = await apiRequest("PATCH", "/api/mailbox/messages/read", { messageIds });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=inbox"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=sent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/unread-count"] });
+    },
+  });
+
+  const deleteMailboxMessagesMutation = useMutation({
+    mutationFn: async (messageIds: number[]) => {
+      const response = await apiRequest("DELETE", "/api/mailbox/messages", { messageIds });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=inbox"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/messages?folder=sent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mailbox/unread-count"] });
+      setSelectedInboxIds([]);
+      setSelectedSentIds([]);
+      toast({
+        title: "Messages deleted",
+        description: "Selected messages were removed from this folder.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Delete failed",
+        description: error?.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const canSend =
     !!recipient &&
     recipient.userId === recipientUserId.trim() &&
@@ -141,11 +184,46 @@ export default function Mailbox() {
     message.trim().length > 0 &&
     !sendMailboxMessageMutation.isPending;
 
+  const unreadInboxCount = inboxMessages.filter((mail) => !mail.isRead).length;
+  const currentMessages = activeFolder === "inbox" ? inboxMessages : sentMessages;
+  const selectedMessageIds = activeFolder === "inbox" ? selectedInboxIds : selectedSentIds;
+  const allCurrentSelected = currentMessages.length > 0 && selectedMessageIds.length === currentMessages.length;
+
+  const toggleMessageSelection = (folder: "inbox" | "sent", messageId: number, checked: boolean) => {
+    const setter = folder === "inbox" ? setSelectedInboxIds : setSelectedSentIds;
+    setter((current) =>
+      checked ? Array.from(new Set([...current, messageId])) : current.filter((id) => id !== messageId),
+    );
+  };
+
+  const toggleSelectAll = (folder: "inbox" | "sent", checked: boolean) => {
+    if (folder === "inbox") {
+      setSelectedInboxIds(checked ? inboxMessages.map((mail) => mail.id) : []);
+      return;
+    }
+    setSelectedSentIds(checked ? sentMessages.map((mail) => mail.id) : []);
+  };
+
+  const markMessageRead = (mail: MailboxMessage) => {
+    if (activeFolder !== "inbox" || mail.isRead || markMailboxMessagesReadMutation.isPending) {
+      return;
+    }
+    markMailboxMessagesReadMutation.mutate([mail.id]);
+  };
+
   useEffect(() => {
     if (!user) return;
     searchRecipientsMutation.mutate("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  useEffect(() => {
+    setSelectedInboxIds((current) => current.filter((id) => inboxMessages.some((mail) => mail.id === id)));
+  }, [inboxMessages]);
+
+  useEffect(() => {
+    setSelectedSentIds((current) => current.filter((id) => sentMessages.some((mail) => mail.id === id)));
+  }, [sentMessages]);
 
   return (
     <div className="flex flex-col h-full">
@@ -304,15 +382,48 @@ export default function Mailbox() {
               <CardDescription>Review incoming and sent internal messages.</CardDescription>
             </CardHeader>
             <CardContent>
-              <Tabs defaultValue="inbox" className="space-y-4">
+              <Tabs value={activeFolder} onValueChange={(value) => setActiveFolder(value === "sent" ? "sent" : "inbox")} className="space-y-4">
                 <TabsList>
                   <TabsTrigger value="inbox" data-testid="tab-mailbox-inbox">
                     Inbox ({inboxMessages.length})
+                    {unreadInboxCount > 0 && (
+                      <Badge className="ml-2 h-5 min-w-5 px-1.5" data-testid="badge-mailbox-unread-tab">
+                        {unreadInboxCount}
+                      </Badge>
+                    )}
                   </TabsTrigger>
                   <TabsTrigger value="sent" data-testid="tab-mailbox-sent">
                     Sent ({sentMessages.length})
                   </TabsTrigger>
                 </TabsList>
+
+                <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={allCurrentSelected}
+                      onCheckedChange={(checked) => toggleSelectAll(activeFolder, checked === true)}
+                      disabled={currentMessages.length === 0}
+                      data-testid="checkbox-mailbox-select-all"
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {selectedMessageIds.length > 0
+                        ? `${selectedMessageIds.length} selected`
+                        : `Select messages in ${activeFolder}`}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => deleteMailboxMessagesMutation.mutate(selectedMessageIds)}
+                    disabled={selectedMessageIds.length === 0 || deleteMailboxMessagesMutation.isPending}
+                    data-testid="button-mailbox-delete-selected"
+                  >
+                    {deleteMailboxMessagesMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    Delete selected
+                  </Button>
+                </div>
 
                 <TabsContent value="inbox" className="space-y-3">
                   {inboxLoading ? (
@@ -323,13 +434,36 @@ export default function Mailbox() {
                     </div>
                   ) : (
                     inboxMessages.map((mail) => (
-                      <div key={mail.id} className="rounded-lg border p-4 space-y-2" data-testid={`mailbox-inbox-message-${mail.id}`}>
+                      <div
+                        key={mail.id}
+                        className={`rounded-lg border p-4 space-y-2 cursor-pointer ${mail.isRead ? "bg-background" : "border-primary/40 bg-primary/5"}`}
+                        data-testid={`mailbox-inbox-message-${mail.id}`}
+                        onClick={() => markMessageRead(mail)}
+                      >
                         <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="font-medium">{mail.subject}</p>
-                            <p className="text-xs text-muted-foreground">
-                              From: {mail.senderEmail || mail.senderUserId}
-                            </p>
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              checked={selectedInboxIds.includes(mail.id)}
+                              onCheckedChange={(checked) => toggleMessageSelection("inbox", mail.id, checked === true)}
+                              onClick={(event) => event.stopPropagation()}
+                              data-testid={`checkbox-mailbox-inbox-${mail.id}`}
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium">{mail.subject}</p>
+                                <Badge variant={mail.isRead ? "secondary" : "default"}>
+                                  {mail.isRead ? "Read" : "Unread"}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                From: {mail.senderEmail || mail.senderUserId}
+                              </p>
+                              {mail.readAt && (
+                                <p className="text-xs text-muted-foreground">
+                                  Read {formatDateTime(mail.readAt)}
+                                </p>
+                              )}
+                            </div>
                           </div>
                           <p className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(mail.createdAt)}</p>
                         </div>
@@ -350,11 +484,28 @@ export default function Mailbox() {
                     sentMessages.map((mail) => (
                       <div key={mail.id} className="rounded-lg border p-4 space-y-2" data-testid={`mailbox-sent-message-${mail.id}`}>
                         <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="font-medium">{mail.subject}</p>
-                            <p className="text-xs text-muted-foreground">
-                              To: {mail.recipientDisplayName || mail.recipientEmail || mail.recipientUserId}
-                            </p>
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              checked={selectedSentIds.includes(mail.id)}
+                              onCheckedChange={(checked) => toggleMessageSelection("sent", mail.id, checked === true)}
+                              data-testid={`checkbox-mailbox-sent-${mail.id}`}
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium">{mail.subject}</p>
+                                <Badge variant={mail.isRead ? "secondary" : "default"}>
+                                  {mail.isRead ? "Read" : "Unread"}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                To: {mail.recipientDisplayName || mail.recipientEmail || mail.recipientUserId}
+                              </p>
+                              {mail.readAt && (
+                                <p className="text-xs text-muted-foreground">
+                                  Read {formatDateTime(mail.readAt)}
+                                </p>
+                              )}
+                            </div>
                           </div>
                           <p className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(mail.createdAt)}</p>
                         </div>

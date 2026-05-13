@@ -11,9 +11,12 @@ import { setupWebSocket } from "./websocket";
 import { recordApiUsage } from "./apiUsageMonitor";
 import { runWithRequestContext } from "./requestContext";
 import { validateTranscriptionProviderConfig } from "./sttClient";
+import { ensureNoteCreditUsageSchema } from "./noteCreditUsage";
 
 const app = express();
 const httpServer = createServer(app);
+const shouldLogApiResponseBodies =
+  process.env.NODE_ENV !== "production" || process.env.VERBOSE_API_RESPONSE_LOGS === "true";
 
 // Setup WebSocket for real-time collaboration
 setupWebSocket(httpServer);
@@ -88,6 +91,7 @@ async function initStripe() {
 
 (async () => {
   validateTranscriptionProviderConfig();
+  await ensureNoteCreditUsageSchema();
   await initStripe();
 
   app.use(cookieParser());
@@ -164,17 +168,15 @@ async function initStripe() {
       }
 
       const userId = (req.user as any)?.claims?.sub;
-      if (userId) {
-        let foundKey: string | null = null;
-        let foundVal: { redirectUri: string; state?: string; createdAt: number } | null = null;
-        pendingMobileAuths.forEach((val, key) => {
-          if (!foundKey && Date.now() - val.createdAt < 60 * 1000) {
-            foundKey = key;
-            foundVal = val;
-          }
-        });
-        if (foundKey && foundVal) {
-          console.log("[mobile-auth] Recovered redirect from recent pending auth for user:", userId);
+      if (userId && mobileAuthState) {
+        const matchingPending = Array.from(pendingMobileAuths.entries()).find(
+          ([, pending]) =>
+            pending.state === mobileAuthState &&
+            Date.now() - pending.createdAt < 60 * 1000
+        );
+        if (matchingPending) {
+          const [foundKey, foundVal] = matchingPending;
+          console.log("[mobile-auth] Recovered redirect from matching pending auth state for user:", userId);
           if (foundVal.state && session) {
             session.mobileAuthState = foundVal.state;
           }
@@ -248,11 +250,13 @@ async function initStripe() {
     const path = req.path;
     let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
-    const originalResJson = res.json;
-    res.json = function (bodyJson, ...args) {
-      capturedJsonResponse = bodyJson;
-      return originalResJson.apply(res, [bodyJson, ...args]);
-    };
+    if (shouldLogApiResponseBodies) {
+      const originalResJson = res.json;
+      res.json = function (bodyJson, ...args) {
+        capturedJsonResponse = bodyJson;
+        return originalResJson.apply(res, [bodyJson, ...args]);
+      };
+    }
 
     res.on("finish", () => {
       const duration = Date.now() - start;

@@ -1,8 +1,16 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import type Stripe from "stripe";
 import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
+import {
+  getSubscriptionAccessState,
+  hasSubscriptionAccess,
+  normalizeExpiredSubscriptionStatus,
+} from "./subscriptionAccess";
+import { getAdminAccessContext, resolveAdminAccess } from "./adminAccess";
+import { getNoteCreditEntitlement, getEffectiveSubscriptionPlan, isOwnerEmail } from "./subscriptionPlans";
 import { transcribeLongAudio } from "./replit_integrations/audio/client";
 import { getTranscriptionProviderStatus, transcribeLocal } from "./sttClient";
 import {
@@ -16,18 +24,62 @@ import {
   updateAiProviderPreference,
 } from "./aiProviderPreference";
 import {
+  ADMIN_AI_TEXT_MODELS,
+  estimateModelCostUsd,
+  getAdminAiTextModel,
+  getAiGenerationSettings,
+  initializeAiGenerationSettings,
+  updateAiGenerationSettings,
+  type AdminAiTextModel,
+} from "./aiGenerationSettings";
+import {
   clearSavedPersonalAiKey,
   getSavedPersonalAiKeyStatus,
   initializeSavedPersonalAiKey,
   savePersonalAiKey,
 } from "./aiCredentialStore";
+import { getRoomInfo } from "./websocket";
+import {
+  generateClinicalNoteFromTranscript,
+  generateClinicalTitleFromTranscript,
+} from "./clinicalNotePipeline";
+import { fetchOpenAiCostSummary } from "./openaiCostMonitor";
+import {
+  downloadSupportMailboxAttachment,
+  getSupportMailboxConversation,
+  getSupportMailboxMessage,
+  getSupportMailboxStatus,
+  getSupportMailboxUnreadCount,
+  listSupportMailboxMessages,
+  moveSupportMailboxMessage,
+  sendSupportMailboxMessage,
+  type SupportMailboxFolder,
+} from "./supportMailbox";
 import {
   getMailboxDirectoryPreference,
   getMailboxDirectoryVisibilityMap,
   updateMailboxDirectoryPreference,
 } from "./mailboxDirectory";
 import { getApiUsageSummary } from "./apiUsageMonitor";
-import { insertNoteSchema, insertTemplateSchema, insertUserSettingsSchema, insertPatientSchema, insertAppointmentSchema, insertPatientDocumentSchema, API_KEY_SCOPES } from "@shared/schema";
+import {
+  insertNoteSchema,
+  insertTemplateSchema,
+  insertUserSettingsSchema,
+  insertPatientSchema,
+  insertAppointmentSchema,
+  insertPatientDocumentSchema,
+  API_KEY_SCOPES,
+  type AuditLog,
+  type Note as BillingNote,
+  type Subscription as BillingSubscription,
+} from "@shared/schema";
+import {
+  DEFAULT_SUBSCRIPTION_PLAN_CODE,
+  SUBSCRIPTION_PLANS,
+  getSubscriptionPlanDefinition,
+  type BillingInterval,
+  type SubscriptionPlanCode,
+} from "@shared/subscriptionPlans";
 import { z } from "zod";
 import { getPersonalKeySource, openai, type AiProviderSource } from "./openaiClient";
 import multer from "multer";
@@ -38,31 +90,211 @@ import fhirRoutes from "./fhirRoutes";
 import { PERSONAL_API_SCOPES } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit for long recordings
+const shouldLogVerboseAiDetails =
+  process.env.NODE_ENV !== "production" || process.env.VERBOSE_AI_LOGS === "true";
 
 function readEnv(name: string): string {
   const value = process.env[name];
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readAnyEnv(...names: string[]): string {
+  for (const name of names) {
+    const value = readEnv(name);
+    if (value) return value;
+  }
+  return "";
+}
+
+const DEFAULT_APPLE_TEAM_ID = "7D7S5WFB32";
+const DEFAULT_IOS_APP_BUNDLE_ID = "com.jjsaw911.docuwhispermobile";
+const DEFAULT_APPLE_ASSOCIATED_DOMAIN_PATHS = [
+  "/api/mobile/auth/*",
+  "/api/login",
+  "/api/login/*",
+];
+
+type AppleAppSiteAssociationPayload = {
+  applinks: {
+    apps: string[];
+    details: Array<{
+      appIDs: string[];
+      paths: string[];
+    }>;
+  };
+  webcredentials: {
+    apps: string[];
+  };
+};
+
+function parseCommaSeparatedEnv(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function getAppleAssociatedDomainAppIds(): string[] {
+  const explicitAppIds = parseCommaSeparatedEnv(readEnv("APPLE_ASSOCIATED_DOMAIN_APP_IDS"));
+  if (explicitAppIds.length > 0) {
+    return Array.from(new Set(explicitAppIds));
+  }
+
+  const teamId = readAnyEnv("APPLE_TEAM_ID") || DEFAULT_APPLE_TEAM_ID;
+  const bundleId =
+    readAnyEnv("IOS_APP_BUNDLE_ID", "APPLE_BUNDLE_ID") || DEFAULT_IOS_APP_BUNDLE_ID;
+
+  if (!teamId || !bundleId) {
+    return [];
+  }
+
+  return [`${teamId}.${bundleId}`];
+}
+
+function getAppleAssociatedDomainPaths(): string[] {
+  const explicitPaths = parseCommaSeparatedEnv(readEnv("APPLE_ASSOCIATED_DOMAIN_PATHS"));
+  if (explicitPaths.length > 0) {
+    return Array.from(new Set(explicitPaths));
+  }
+  return DEFAULT_APPLE_ASSOCIATED_DOMAIN_PATHS;
+}
+
+function buildAppleAppSiteAssociationPayload(): AppleAppSiteAssociationPayload | null {
+  const appIds = getAppleAssociatedDomainAppIds();
+  if (appIds.length === 0) {
+    return null;
+  }
+
+  return {
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appIDs: appIds,
+          paths: getAppleAssociatedDomainPaths(),
+        },
+      ],
+    },
+    webcredentials: {
+      apps: appIds,
+    },
+  };
+}
+
+function logVerboseAiDetails(...args: unknown[]) {
+  if (shouldLogVerboseAiDetails) {
+    console.log(...args);
+  }
+}
+
+function logVerboseAiErrorDetails(...args: unknown[]) {
+  if (shouldLogVerboseAiDetails) {
+    console.error(...args);
+  }
+}
+
+function canExposeSoapDebug(req: Request & { user?: { claims?: { email?: string } } }): boolean {
+  const email = req.user?.claims?.email?.trim().toLowerCase() || "";
+  const host = req.hostname?.trim().toLowerCase() || "";
+  return (
+    email === "joseph.sawyer@outlook.com" &&
+    (host === "beta.docuwhisper.com" || host === "localhost" || host === "127.0.0.1")
+  );
+}
+
 type StripeClient = Awaited<ReturnType<typeof getUncachableStripeClient>>;
 
-async function resolveSubscriptionPrice(stripe: StripeClient) {
-  const configuredPriceId = readEnv("STRIPE_PRICE_ID");
+type StripePriceSummary = {
+  id: string;
+  unit_amount: number | null;
+  currency: string;
+  recurring?: { interval: BillingInterval } | null;
+  productName: string | null;
+};
+
+const STRIPE_PRICE_ENV_BY_PLAN_AND_INTERVAL: Record<
+  SubscriptionPlanCode,
+  Record<BillingInterval, string>
+> = {
+  starter: {
+    month: "STRIPE_PRICE_ID_STARTER",
+    year: "STRIPE_PRICE_ID_STARTER_ANNUAL",
+  },
+  standard: {
+    month: "STRIPE_PRICE_ID_STANDARD",
+    year: "STRIPE_PRICE_ID_STANDARD_ANNUAL",
+  },
+  pro: {
+    month: "STRIPE_PRICE_ID_PRO",
+    year: "STRIPE_PRICE_ID_PRO_ANNUAL",
+  },
+  unlimited: {
+    month: "STRIPE_PRICE_ID_UNLIMITED",
+    year: "STRIPE_PRICE_ID_UNLIMITED_ANNUAL",
+  },
+};
+
+async function retrieveConfiguredSubscriptionPrice(
+  stripe: StripeClient,
+  configuredPriceId: string,
+  billingInterval: BillingInterval,
+) {
+  const price = await stripe.prices.retrieve(configuredPriceId, {
+    expand: ["product"],
+  });
+
+  if (!price.active) {
+    throw new Error(`Configured Stripe price ${configuredPriceId} is inactive.`);
+  }
+
+  if (price.type !== "recurring" || price.recurring?.interval !== billingInterval) {
+    throw new Error(
+      `Configured Stripe price ${configuredPriceId} must be an active ${billingInterval === "year" ? "yearly" : "monthly"} recurring price.`,
+    );
+  }
+
+  return price;
+}
+
+function isBillingInterval(value: string | null | undefined): value is BillingInterval {
+  return value === "month" || value === "year";
+}
+
+function toStripePriceSummary(price: Stripe.Price): StripePriceSummary {
+  const interval = isBillingInterval(price.recurring?.interval) ? price.recurring.interval : null;
+  return {
+    id: price.id,
+    unit_amount: price.unit_amount,
+    currency: price.currency,
+    recurring: interval ? { interval } : null,
+    productName:
+      price.product && typeof price.product !== "string" && "name" in price.product
+        ? typeof price.product.name === "string"
+          ? price.product.name
+          : null
+        : null,
+  };
+}
+
+async function resolveSubscriptionPriceForPlan(
+  stripe: StripeClient,
+  planCode: SubscriptionPlanCode,
+  billingInterval: BillingInterval = "month",
+) {
+  const configuredPriceId =
+    readEnv(STRIPE_PRICE_ENV_BY_PLAN_AND_INTERVAL[planCode][billingInterval]) ||
+    (planCode === DEFAULT_SUBSCRIPTION_PLAN_CODE
+      ? readAnyEnv(
+          billingInterval === "month" ? "STRIPE_PRICE_ID" : "STRIPE_PRICE_ID_ANNUAL",
+        )
+      : "");
 
   if (configuredPriceId) {
-    const price = await stripe.prices.retrieve(configuredPriceId, {
-      expand: ["product"],
-    });
+    return retrieveConfiguredSubscriptionPrice(stripe, configuredPriceId, billingInterval);
+  }
 
-    if (!price.active) {
-      throw new Error(`Configured Stripe price ${configuredPriceId} is inactive.`);
-    }
-
-    if (price.type !== "recurring" || price.recurring?.interval !== "month") {
-      throw new Error("Configured STRIPE_PRICE_ID must point to an active monthly recurring price.");
-    }
-
-    return price;
+  if (planCode !== DEFAULT_SUBSCRIPTION_PLAN_CODE || billingInterval !== "month") {
+    return null;
   }
 
   const prices = await stripe.prices.list({
@@ -83,6 +315,44 @@ async function resolveSubscriptionPrice(stripe: StripeClient) {
   return prices.data[0];
 }
 
+async function resolveConfiguredSubscriptionPrices(stripe: StripeClient) {
+  const prices = await Promise.all(
+    SUBSCRIPTION_PLANS.map(async (plan) => {
+      const [monthlyPrice, annualPrice] = await Promise.all([
+        resolveSubscriptionPriceForPlan(stripe, plan.code, "month"),
+        resolveSubscriptionPriceForPlan(stripe, plan.code, "year"),
+      ]);
+
+      const priceByInterval = Object.fromEntries(
+        [
+          monthlyPrice ? (["month", toStripePriceSummary(monthlyPrice)] as const) : null,
+          annualPrice ? (["year", toStripePriceSummary(annualPrice)] as const) : null,
+        ].filter((entry): entry is [BillingInterval, StripePriceSummary] => entry !== null),
+      );
+
+      return Object.keys(priceByInterval).length > 0 ? [plan.code, priceByInterval] : null;
+    }),
+  );
+
+  return Object.fromEntries(
+    prices.filter(
+      (entry): entry is [SubscriptionPlanCode, Partial<Record<BillingInterval, StripePriceSummary>>] =>
+        entry !== null,
+    ),
+  );
+}
+
+async function getStripeSubscriptionBillingInterval(
+  stripe: StripeClient,
+  stripeSubscriptionId: string,
+): Promise<BillingInterval | null> {
+  const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+    expand: ["items.data.price"],
+  });
+  const interval = subscription.items.data[0]?.price?.recurring?.interval;
+  return isBillingInterval(interval) ? interval : null;
+}
+
 const speakerSegmentSchema = z.object({
   speaker: z.enum(["clinician", "patient"]),
   text: z.string(),
@@ -100,7 +370,163 @@ const generateSoapSchema = z.object({
   context: z.string().optional(),
   noDefaultTemplate: z.boolean().optional(),
   speakerSegments: z.array(speakerSegmentSchema).optional(),
+  noteId: z.number().int().positive().optional(),
+  enforceNoteCredit: z.boolean().optional(),
+  noteStyle: z.enum(["detailed", "concise", "bullet_points"]).optional(),
 });
+
+async function getUserNoteCreditState(params: {
+  userId: string;
+  userEmail?: string | null;
+  existingNote?: Pick<BillingNote, "creditConsumedAt"> | null;
+}) {
+  let subscription = await storage.getSubscription(params.userId);
+  subscription = await normalizeExpiredSubscriptionStatus(params.userId, subscription);
+  const usage = await storage.getNoteCreditUsageSummary(params.userId);
+  const adminAccess = await resolveAdminAccess({
+    userId: params.userId,
+    userEmail: params.userEmail,
+  });
+
+  return getNoteCreditEntitlement({
+    subscription,
+    usage,
+    isAdmin: adminAccess.isAdmin,
+    isSuperAdmin: adminAccess.isSuperAdmin,
+    noteAlreadyConsumed: Boolean(params.existingNote?.creditConsumedAt),
+  });
+}
+
+function createNoteCreditExceededPayload(
+  entitlement: Awaited<ReturnType<typeof getUserNoteCreditState>>,
+) {
+  return {
+    error: "payment_required",
+    code: "note_credits_exhausted",
+    message:
+      entitlement.reason === "inactive"
+        ? "An active subscription is required before you can save new AI notes."
+        : `Your ${entitlement.plan.name.toLowerCase()} plan has no note credits remaining for this cycle.`,
+    plan: {
+      code: entitlement.plan.code,
+      name: entitlement.plan.name,
+      monthlyNoteAllowance: entitlement.plan.monthlyNoteAllowance,
+      unlimited: entitlement.plan.unlimited,
+      source: entitlement.plan.source,
+    },
+    usage: {
+      currentPeriodCount: entitlement.usage.currentPeriodCount,
+      includedCredits: entitlement.usage.includedCredits,
+      remainingCredits: entitlement.usage.remainingCredits,
+      exhausted: entitlement.usage.exhausted,
+      currentPeriodStart: entitlement.usage.currentPeriodStart,
+      nextResetAt: entitlement.usage.nextResetAt,
+    },
+  };
+}
+
+function buildStoredNoteSections(soapNote: Record<string, unknown>) {
+  const hpi = typeof soapNote.hpi === "string" ? soapNote.hpi : "";
+  const plan = typeof soapNote.plan === "string" ? soapNote.plan : "";
+
+  if (hpi) {
+    return {
+      subjective: hpi,
+      objective: "",
+      assessment: "",
+      plan,
+    };
+  }
+
+  return {
+    subjective: typeof soapNote.subjective === "string" ? soapNote.subjective : "",
+    objective: typeof soapNote.objective === "string" ? soapNote.objective : "",
+    assessment: typeof soapNote.assessment === "string" ? soapNote.assessment : "",
+    plan,
+  };
+}
+
+function hasMeaningfulStructuredContent(
+  payload: Record<string, unknown>,
+  requiredFields: string[],
+): boolean {
+  return requiredFields.some((field) => {
+    const value = payload[field];
+    if (typeof value === "string") {
+      return value.trim().length > 0;
+    }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (value && typeof value === "object") {
+      return Object.keys(value).length > 0;
+    }
+    return false;
+  });
+}
+
+async function createJsonCompletionWithRetry(params: {
+  label: string;
+  model: string;
+  fallbackModel?: string;
+  systemPrompt: string;
+  userContent: string;
+  requiredFields: string[];
+  maxCompletionTokens: number;
+}) {
+  let lastContent = "{}";
+  const attempts = [params.model, params.model];
+  if (params.fallbackModel && params.fallbackModel !== params.model) {
+    attempts.push(params.fallbackModel);
+  }
+
+  for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
+    const attempt = attemptIndex + 1;
+    const attemptModel = attempts[attemptIndex];
+    const retryInstruction =
+      attemptIndex === 0
+        ? ""
+        : `\n\nRETRY REQUIREMENT: Your previous response was empty or missing the required fields. Return a valid JSON object with non-empty ${params.requiredFields.join(", ")} values derived from the transcript. If a field truly has no supporting detail, explicitly write "No information documented for this section." instead of leaving it blank. Return JSON only.`;
+
+    const response = await openai.chat.completions.create({
+      model: attemptModel,
+      messages: [
+        { role: "system", content: `${params.systemPrompt}${retryInstruction}` },
+        { role: "user", content: params.userContent },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: params.maxCompletionTokens,
+    });
+
+    const content = response.choices[0]?.message?.content || "{}";
+    lastContent = content;
+
+    try {
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      if (
+        params.requiredFields.length === 0 ||
+        hasMeaningfulStructuredContent(parsed, params.requiredFields)
+      ) {
+        return { content, parsed, attempts: attempt, model: attemptModel };
+      }
+
+      console.warn(
+        `[${params.label}] Empty structured response on attempt ${attempt} using ${attemptModel}; retrying.`,
+        parsed,
+      );
+    } catch (error) {
+      console.warn(
+        `[${params.label}] Invalid JSON response on attempt ${attempt} using ${attemptModel}; retrying.`,
+        error,
+      );
+      if (attemptIndex === attempts.length - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`${params.label} returned empty structured content after retry. Last content: ${lastContent}`);
+}
 
 const createTemplateSchema = z.object({
   name: z.string().min(1, "Template name is required"),
@@ -136,6 +562,20 @@ const updateNoteSchema = z.object({
     .datetime()
     .optional()
     .transform((value) => (value ? new Date(value) : undefined)),
+});
+
+const regenerateNoteFromTranscriptSchema = z.object({
+  transcript: z.string().min(1, "Transcript is required"),
+  patientName: z.string().nullable().optional(),
+  specialty: z.string().optional(),
+  templateId: z.number().optional(),
+  outputLanguage: z.string().optional(),
+  context: z.string().nullable().optional(),
+  noDefaultTemplate: z.boolean().optional(),
+  speakerSegments: z.array(speakerSegmentSchema).optional(),
+  icdCodes: z.string().nullable().optional(),
+  consumeNoteCredit: z.boolean().optional(),
+  noteStyle: z.enum(["detailed", "concise", "bullet_points"]).optional(),
 });
 
 const updateMedicalVocabularySchema = z.object({
@@ -181,40 +621,28 @@ const createAppointmentSchema = z.object({
   notes: z.string().optional(),
 });
 
-// EMR access middleware - checks if user has EMR access
-// Owner (vendor) automatically gets full EMR access to all organizations
+const hasAdminFeatureAccess = async (req: any): Promise<boolean> =>
+  (await getAdminAccessContext(req)).isAdmin;
+
+const hasSuperAdminFeatureAccess = async (req: any): Promise<boolean> =>
+  (await getAdminAccessContext(req)).isSuperAdmin;
+
+// EMR access middleware - only admin users can access EMR functions
 const hasEmrAccess = async (req: any, res: Response, next: Function) => {
   try {
     const userId = req.user?.claims?.sub;
-    const userEmail = req.user?.claims?.email;
-    const ownerEmail = process.env.OWNER_EMAIL;
     
     if (!userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
     
-    // Owner (vendor) automatically has EMR access to all organizations
-    if (ownerEmail && userEmail === ownerEmail) {
+    if (await hasAdminFeatureAccess(req)) {
       req.isVendorOwner = true; // Flag for routes to know this is vendor access
       return next();
     }
-    
-    // Check for individual EMR access (legacy)
-    const subscription = await storage.getSubscription(userId);
-    if (subscription?.status === "active" && subscription?.hasEmrAccess) {
-      return next();
-    }
-    
-    // Check for organization-based EMR access
-    const emrOrgs = await storage.getUserEmrOrganizations(userId);
-    if (emrOrgs.length > 0) {
-      req.emrOrganizations = emrOrgs; // Store org info for routes
-      return next();
-    }
-    
-    // No EMR access found
-    return res.status(403).json({ 
-      error: "EMR access not enabled. Contact your organization admin or get an EMR invite code." 
+
+    return res.status(403).json({
+      error: "Admin access required for EMR features.",
     });
   } catch (error) {
     console.error("EMR access check failed:", error);
@@ -252,6 +680,80 @@ const logAudit = async (
     console.error("Failed to create audit log:", error);
   }
 };
+
+type MailboxFolder = "inbox" | "sent";
+
+type MailboxLogDetails = {
+  recipientUserId: string;
+  recipientEmail: string | null;
+  recipientDisplayName: string | null;
+  subject: string;
+  message: string;
+  readAt: string | null;
+  readByUserId: string | null;
+  deletedBySenderAt: string | null;
+  deletedByRecipientAt: string | null;
+};
+
+type InternalMessageLogDetails = {
+  subject: string;
+  message: string;
+  category: string;
+  readAt: string | null;
+  readByAdminId: string | null;
+  deletedAt: string | null;
+  deletedByAdminId: string | null;
+};
+
+function parseLogDetails(details: string | null | undefined): Record<string, unknown> {
+  if (!details) return {};
+  try {
+    const parsed = JSON.parse(details);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseMailboxLogDetails(log: AuditLog): MailboxLogDetails {
+  const parsed = parseLogDetails(log.details);
+  return {
+    recipientUserId: typeof parsed.recipientUserId === "string" ? parsed.recipientUserId : "",
+    recipientEmail: typeof parsed.recipientEmail === "string" ? parsed.recipientEmail : null,
+    recipientDisplayName: typeof parsed.recipientDisplayName === "string" ? parsed.recipientDisplayName : null,
+    subject: typeof parsed.subject === "string" ? parsed.subject : "No subject",
+    message: typeof parsed.message === "string" ? parsed.message : "",
+    readAt: typeof parsed.readAt === "string" ? parsed.readAt : null,
+    readByUserId: typeof parsed.readByUserId === "string" ? parsed.readByUserId : null,
+    deletedBySenderAt: typeof parsed.deletedBySenderAt === "string" ? parsed.deletedBySenderAt : null,
+    deletedByRecipientAt: typeof parsed.deletedByRecipientAt === "string" ? parsed.deletedByRecipientAt : null,
+  };
+}
+
+function serializeMailboxLogDetails(details: MailboxLogDetails): string {
+  return JSON.stringify(details);
+}
+
+function parseInternalMessageLogDetails(log: AuditLog): InternalMessageLogDetails {
+  const parsed = parseLogDetails(log.details);
+  return {
+    subject: typeof parsed.subject === "string" ? parsed.subject : "No subject",
+    message: typeof parsed.message === "string" ? parsed.message : "",
+    category: typeof parsed.category === "string" ? parsed.category : "general",
+    readAt: typeof parsed.readAt === "string" ? parsed.readAt : null,
+    readByAdminId: typeof parsed.readByAdminId === "string" ? parsed.readByAdminId : null,
+    deletedAt: typeof parsed.deletedAt === "string" ? parsed.deletedAt : null,
+    deletedByAdminId: typeof parsed.deletedByAdminId === "string" ? parsed.deletedByAdminId : null,
+  };
+}
+
+function serializeInternalMessageLogDetails(details: InternalMessageLogDetails): string {
+  return JSON.stringify(details);
+}
+
+function isMailboxMessageVisibleForFolder(details: MailboxLogDetails, folder: MailboxFolder): boolean {
+  return folder === "sent" ? !details.deletedBySenderAt : !details.deletedByRecipientAt;
+}
 
 const generateReferralSchema = z.object({
   patientName: z.string().optional(),
@@ -310,12 +812,28 @@ const sendMailboxMessageSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(5000, "Message is too long"),
 });
 
+const updateMessageSelectionSchema = z.object({
+  messageIds: z.array(z.number().int().positive()).min(1, "Select at least one message").max(200, "Too many messages selected"),
+});
+
+const sendSupportEmailSchema = z.object({
+  to: z.string().trim().email("A valid recipient email is required"),
+  subject: z.string().trim().min(1, "Subject is required").max(200, "Subject is too long"),
+  body: z.string().trim().min(1, "Message is required").max(50000, "Message is too long"),
+});
+
+const moveSupportEmailMessageSchema = z.object({
+  destination: z.enum(["inbox", "archive", "trash"]),
+});
+
 const updateMailboxDirectoryPreferenceSchema = z.object({
   listInDirectory: z.boolean(),
 });
 
 const updateAdminAiSettingsSchema = z.object({
   preferredSource: z.enum(["personal", "replit"]),
+  textModel: z.enum(ADMIN_AI_TEXT_MODELS),
+  monthlyBudgetUsd: z.number().min(0).max(1_000_000).nullable(),
 });
 
 const saveAdminPersonalAiKeySchema = z.object({
@@ -349,7 +867,22 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
+  const serveAppleAppSiteAssociation = (_req: Request, res: Response) => {
+    const payload = buildAppleAppSiteAssociationPayload();
+    if (!payload) {
+      return res.status(404).json({
+        error: "Apple app association is not configured.",
+      });
+    }
+
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    return res.send(JSON.stringify(payload));
+  };
+
+  app.get("/.well-known/apple-app-site-association", serveAppleAppSiteAssociation);
+  app.get("/apple-app-site-association", serveAppleAppSiteAssociation);
+
   // Register external API routes (for third-party integrations like urgent care)
   app.use("/api/external/v1", externalApiRoutes);
   app.use("/api/mobile", mobileApiRoutes);
@@ -359,6 +892,11 @@ export async function registerRoutes(
     await initializeAiProviderPreference();
   } catch (error) {
     console.error("Failed to initialize AI provider preference:", error);
+  }
+  try {
+    await initializeAiGenerationSettings();
+  } catch (error) {
+    console.error("Failed to initialize AI generation settings:", error);
   }
   try {
     await initializeSavedPersonalAiKey();
@@ -407,6 +945,8 @@ export async function registerRoutes(
   app.post("/api/notes", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const consumeNoteCredit = req.body?.consumeNoteCredit === true;
       const validationResult = insertNoteSchema.safeParse({ userId, ...req.body });
       
       if (!validationResult.success) {
@@ -415,8 +955,18 @@ export async function registerRoutes(
           details: validationResult.error.flatten().fieldErrors 
         });
       }
+
+      if (consumeNoteCredit) {
+        const entitlement = await getUserNoteCreditState({ userId, userEmail });
+        if (!entitlement.canConsumeCredit) {
+          return res.status(402).json(createNoteCreditExceededPayload(entitlement));
+        }
+      }
       
       const note = await storage.createNote(validationResult.data);
+      if (consumeNoteCredit) {
+        await storage.recordNoteCreditIfNeeded(userId, note.id);
+      }
       
       // Audit log for PHI creation
       if (note.patientId || note.patientName) {
@@ -435,13 +985,16 @@ export async function registerRoutes(
   app.patch("/api/notes/:id", isAuthenticated, async (req: any, res: Response) => {
     try {
       const noteId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const consumeNoteCredit = req.body?.consumeNoteCredit === true;
       const existingNote = await storage.getNote(noteId);
       
       if (!existingNote) {
         return res.status(404).json({ error: "Note not found" });
       }
       
-      if (existingNote.userId !== req.user.claims.sub) {
+      if (existingNote.userId !== userId) {
         return res.status(403).json({ error: "Forbidden" });
       }
       
@@ -452,8 +1005,22 @@ export async function registerRoutes(
           details: validationResult.error.flatten().fieldErrors 
         });
       }
+
+      if (consumeNoteCredit) {
+        const entitlement = await getUserNoteCreditState({
+          userId,
+          userEmail,
+          existingNote,
+        });
+        if (!entitlement.canConsumeCredit) {
+          return res.status(402).json(createNoteCreditExceededPayload(entitlement));
+        }
+      }
       
       const updated = await storage.updateNote(noteId, validationResult.data);
+      if (updated && consumeNoteCredit) {
+        await storage.recordNoteCreditIfNeeded(userId, noteId);
+      }
       
       // Audit log for PHI update
       if (updated && (updated.patientId || updated.patientName)) {
@@ -466,6 +1033,153 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating note:", error);
       res.status(500).json({ error: "Failed to update note" });
+    }
+  });
+
+  app.post("/api/notes/:id/regenerate-from-transcript", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const noteId = parseInt(req.params.id, 10);
+      const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
+      const existingNote = await storage.getNote(noteId);
+
+      if (!existingNote) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+
+      if (existingNote.userId !== userId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const validationResult = regenerateNoteFromTranscriptSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: validationResult.error.flatten().fieldErrors,
+        });
+      }
+
+      const {
+        transcript,
+        patientName,
+        specialty,
+        templateId,
+        outputLanguage,
+        context,
+        noDefaultTemplate,
+        speakerSegments,
+        icdCodes,
+        consumeNoteCredit,
+        noteStyle,
+      } = validationResult.data;
+
+      if (consumeNoteCredit) {
+        const entitlement = await getUserNoteCreditState({
+          userId,
+          userEmail,
+          existingNote,
+        });
+        if (!entitlement.canConsumeCredit) {
+          return res.status(402).json(createNoteCreditExceededPayload(entitlement));
+        }
+      }
+
+      const [settings, vocabulary] = await Promise.all([
+        storage.getUserSettings(userId),
+        getGlobalMedicalVocabulary(),
+      ]);
+
+      let effectiveTemplateId = templateId;
+      let customPrompt: string | undefined;
+
+      if (!effectiveTemplateId && !noDefaultTemplate) {
+        effectiveTemplateId = await storage.getDefaultTemplateId(userId);
+      }
+
+      if (effectiveTemplateId) {
+        const template = await storage.getTemplate(effectiveTemplateId);
+        if (template) {
+          customPrompt = template.prompt;
+        }
+      }
+
+      const selectedSoapModel = getAdminAiTextModel();
+      const { note: soapNote, modelUsed: soapModelUsed, pipeline } =
+        await generateClinicalNoteFromTranscript({
+          transcript,
+          patientName: patientName ?? existingNote.patientName ?? undefined,
+          specialty: specialty || existingNote.specialty || "general",
+          noteStyle: noteStyle ?? settings?.noteStyle ?? undefined,
+          customPrompt,
+          outputLanguage,
+          context: context ?? existingNote.patientContext ?? undefined,
+          speakerSegments,
+          vocabularyTerms: vocabulary.terms,
+          label: "regenerate-note-from-transcript",
+        });
+
+      if (pipeline.fallbackReason) {
+        console.warn(
+          "[regenerate-note-from-transcript] Fallback used:",
+          pipeline.fallbackReason || `${selectedSoapModel} -> ${soapModelUsed}`,
+        );
+        console.warn(
+          "[regenerate-note-from-transcript] Attempt trace:",
+          pipeline.soapAttemptTrace.join(" | "),
+        );
+      }
+
+      const noteSections = buildStoredNoteSections(soapNote);
+      const updated = await storage.updateNote(noteId, {
+        patientName: patientName ?? existingNote.patientName ?? null,
+        transcript,
+        patientContext: context ?? existingNote.patientContext ?? null,
+        templateId: effectiveTemplateId ?? existingNote.templateId ?? null,
+        icdCodes: icdCodes ?? null,
+        ...noteSections,
+      });
+
+      if (!updated) {
+        return res.status(500).json({ error: "Failed to update note" });
+      }
+
+      if (consumeNoteCredit) {
+        await storage.recordNoteCreditIfNeeded(userId, noteId);
+      }
+
+      res.set("X-DocuWhisper-SOAP-Model", soapModelUsed);
+      res.set("X-DocuWhisper-SOAP-Selected-Model", selectedSoapModel);
+      res.set("X-DocuWhisper-SOAP-Cleanup-Model", pipeline.cleanupModel);
+      if (pipeline.fallbackReason) {
+        res.set("X-DocuWhisper-SOAP-Fallback-Reason", pipeline.fallbackReason);
+      }
+      if (pipeline.soapAttemptTrace.length > 0) {
+        res.set("X-DocuWhisper-SOAP-Attempt-Trace", pipeline.soapAttemptTrace.join(" | "));
+      }
+      res.set(
+        "X-DocuWhisper-SOAP-Used-Long-Summary",
+        pipeline.usedLongTranscriptSummaries ? "1" : "0",
+      );
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error regenerating note from transcript:", error);
+      const debugTrace =
+        error && typeof error === "object" && Array.isArray((error as { soapAttemptTrace?: unknown[] }).soapAttemptTrace)
+          ? (error as { soapAttemptTrace: unknown[] }).soapAttemptTrace.join(" | ")
+          : "";
+      if (debugTrace) {
+        console.error("[regenerate-note-from-transcript] Failed attempt trace:", debugTrace);
+      }
+
+      const payload: Record<string, string> = { error: "Failed to regenerate note from transcript" };
+      if (canExposeSoapDebug(req) && debugTrace) {
+        payload.debugTrace = debugTrace;
+        if (error instanceof Error && error.message) {
+          payload.debugReason = error.message;
+        }
+      }
+      res.status(500).json(payload);
     }
   });
 
@@ -720,7 +1434,9 @@ export async function registerRoutes(
   };
 
   const logTranscriptionMetric = (payload: Record<string, unknown>) => {
-    console.log("[transcribe-metric]", JSON.stringify(payload));
+    if (shouldLogVerboseAiDetails) {
+      console.log("[transcribe-metric]", JSON.stringify(payload));
+    }
     persistTranscriptionMetric(payload);
   };
 
@@ -899,7 +1615,7 @@ export async function registerRoutes(
       const providerStatus = getTranscriptionProviderStatus();
       providerUsed = providerStatus.provider;
 
-      console.log("Transcription request received:", {
+      logVerboseAiDetails("Transcription request received:", {
         fileName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
@@ -962,7 +1678,7 @@ export async function registerRoutes(
       } else {
         transcript = await transcribeLongAudio(audioBuffer, language, !!vocabularyPrompt, vocabularyPrompt || undefined);
       }
-      console.log("Transcription successful, length:", transcript.length);
+      logVerboseAiDetails("Transcription successful, length:", transcript.length);
 
       const latencyMs = Date.now() - startedAt;
       logTranscriptionMetric({
@@ -989,7 +1705,7 @@ export async function registerRoutes(
       const latencyMs = Date.now() - startedAt;
       const errorType = classifyTranscriptionError(error);
       console.error("Error transcribing audio:", error);
-      console.error("Error details:", {
+      logVerboseAiErrorDetails("Error details:", {
         message: error?.message,
         status: error?.status,
         code: error?.code,
@@ -1032,19 +1748,49 @@ export async function registerRoutes(
         });
       }
       
-      const { transcript, patientName, specialty, templateId, aiInstructions, outputLanguage, context, noDefaultTemplate, speakerSegments } = validationResult.data;
+      const {
+        transcript,
+        patientName,
+        specialty,
+        templateId,
+        aiInstructions,
+        outputLanguage,
+        context,
+        noDefaultTemplate,
+        speakerSegments,
+        noteId,
+        enforceNoteCredit,
+        noteStyle,
+      } = validationResult.data;
       const userId = req.user.claims.sub;
+      const userEmail = req.user.claims.email;
       const vocabulary = await getGlobalMedicalVocabulary();
-      const vocabularyPrompt = buildMedicalVocabularyPrompt(vocabulary.terms, 220);
-      const vocabularySection = vocabularyPrompt
-        ? `\n\nSPELLING GUIDANCE:\n${vocabularyPrompt}`
-        : "";
+      const settings = await storage.getUserSettings(userId);
+
+      if (enforceNoteCredit) {
+        let existingNote: BillingNote | null = null;
+        if (noteId) {
+          const note = await storage.getNote(noteId);
+          if (!note || note.userId !== userId) {
+            return res.status(404).json({ error: "Note not found" });
+          }
+          existingNote = note;
+        }
+
+        const entitlement = await getUserNoteCreditState({
+          userId,
+          userEmail,
+          existingNote,
+        });
+        if (!entitlement.canConsumeCredit) {
+          return res.status(402).json(createNoteCreditExceededPayload(entitlement));
+        }
+      }
       
-      console.log("SOAP generation request - transcript length:", transcript.length);
-      console.log("SOAP generation request - transcript preview:", transcript.substring(0, 500));
-      console.log("SOAP generation request - output language:", outputLanguage || "en");
-      console.log("SOAP generation request - context provided:", !!context);
-      console.log("SOAP generation request - noDefaultTemplate:", !!noDefaultTemplate);
+      logVerboseAiDetails("SOAP generation request - transcript length:", transcript.length);
+      logVerboseAiDetails("SOAP generation request - output language:", outputLanguage || "en");
+      logVerboseAiDetails("SOAP generation request - context provided:", !!context);
+      logVerboseAiDetails("SOAP generation request - noDefaultTemplate:", !!noDefaultTemplate);
 
       let customPrompt = "";
       let effectiveTemplateId = templateId;
@@ -1054,7 +1800,7 @@ export async function registerRoutes(
       if (!effectiveTemplateId && !noDefaultTemplate) {
         effectiveTemplateId = await storage.getDefaultTemplateId(userId);
         if (effectiveTemplateId) {
-          console.log("SOAP generation - using user's default template:", effectiveTemplateId);
+          logVerboseAiDetails("SOAP generation - using user's default template:", effectiveTemplateId);
         }
       }
       
@@ -1062,223 +1808,83 @@ export async function registerRoutes(
         const template = await storage.getTemplate(effectiveTemplateId);
         if (template) {
           customPrompt = template.prompt;
-          console.log("SOAP generation - using custom template prompt:", template.name);
+          logVerboseAiDetails("SOAP generation - using custom template prompt:", template.name);
         }
       }
 
-      // Language-specific instructions
-      const languageNames: Record<string, string> = {
-        en: "English",
-        es: "Spanish (Español)",
-        fr: "French (Français)",
-        de: "German (Deutsch)",
-        pt: "Portuguese (Português)",
-      };
-      const targetLanguage = languageNames[outputLanguage || "en"] || "English";
-      const languageInstruction = outputLanguage && outputLanguage !== "en" 
-        ? `\n\nIMPORTANT: Generate ALL content in ${targetLanguage}. The entire SOAP note must be written in ${targetLanguage}, including medical terminology where appropriate.`
-        : "";
-
-      // Build context section if provided
-      const contextSection = context ? `
-PATIENT BACKGROUND & CONTEXT:
-${context}
-
-Use this background information to inform your assessment. Include relevant context in the appropriate SOAP sections (e.g., past medical history in Subjective, relevant medications in Plan).
-` : "";
-
-      const aiInstructionsSection = aiInstructions ? `
-
-IMPORTANT - User Instructions (follow these carefully):
-${aiInstructions}
-
-Apply these instructions when generating the note. If the user asks to omit certain information, do not include it. If they ask to add context, incorporate it appropriately.` : "";
-
-      let systemPrompt: string;
-      
-      // Check if using a custom template (user-defined format)
-      if (customPrompt) {
-        // Custom template - let it define the output format
-        // Detect if template uses HPI format (mentions HPI as a section)
-        const isHpiFormat = customPrompt.toLowerCase().includes('hpi') && 
-                           (customPrompt.toLowerCase().includes('section 1. hpi') || 
-                            customPrompt.toLowerCase().includes('required structure') ||
-                            customPrompt.toLowerCase().includes('hpi must appear'));
-        
-        console.log("[generate-soap] Custom template detected, HPI format:", isHpiFormat);
-        
-        if (isHpiFormat) {
-          // HPI + Plan format (e.g., Allergy and Immunology template)
-          systemPrompt = `You are a medical documentation assistant generating clinical notes in HPI + Plan format.
-
-${specialty ? `Specialty: ${specialty}` : ""}
-${patientName ? `Patient: ${patientName}` : ""}
-${contextSection}
-
-CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
-
-SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use them to determine context. Medications or conditions mentioned by the clinician about themselves (e.g., "I take...") or about third parties (e.g., "your child takes...") should NOT be attributed to the patient. Only include medications and conditions that are actually prescribed to or diagnosed in the patient. When a brand name and generic name are mentioned together (e.g., "Lipitor, which is atorvastatin"), treat them as the SAME single medication, not two separate prescriptions.
-
-TEMPLATE INSTRUCTIONS (follow these exactly):
-${customPrompt}
-${aiInstructionsSection}${languageInstruction}${vocabularySection}
-
-REQUIRED OUTPUT FORMAT - You MUST return valid JSON with BOTH fields:
-{
-  "hpi": "<Your complete HPI section following the template rules above - write as a clinical paragraph, present tense, encounter-based phrasing>",
-  "plan": "<Your complete Plan section starting with 'Impression:' paragraph followed by bulleted items>"
-}
-
-IMPORTANT: 
-- The "hpi" field must contain the full History of Present Illness paragraph
-- The "plan" field must contain BOTH the Impression paragraph AND the bulleted plan items
-- Do NOT omit either field
-- Return ONLY the JSON object, no other text`;
-        } else {
-          // Other custom template format - could be SOAP or other sections
-          systemPrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript.
-
-${specialty ? `Specialty: ${specialty}` : ""}
-${patientName ? `Patient: ${patientName}` : ""}
-${contextSection}
-
-CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
-
-SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use them to determine context. Medications or conditions mentioned by the clinician about themselves (e.g., "I take...") or about third parties (e.g., "your child takes...") should NOT be attributed to the patient. Only include medications and conditions that are actually prescribed to or diagnosed in the patient. When a brand name and generic name are mentioned together (e.g., "Lipitor, which is atorvastatin"), treat them as the SAME single medication, not two separate prescriptions.
-
-TEMPLATE INSTRUCTIONS (follow these exactly):
-${customPrompt}
-${aiInstructionsSection}${languageInstruction}${vocabularySection}
-
-Based on the transcript and the formatting instructions above, return ONLY valid JSON.
-
-If the template defines custom sections, use those section names as JSON keys.
-If no specific sections are defined, use standard SOAP format:
-{
-  "subjective": "<patient complaints>",
-  "objective": "<exam findings>",
-  "assessment": "<diagnosis>",
-  "plan": "<treatment plan>"
-}`;
-        }
-      } else {
-        // Default SOAP format
-        const basePrompt = `You are a medical documentation assistant. Your task is to extract and organize information from the provided patient consultation transcript into a structured SOAP note.
-
-${specialty ? `Specialty: ${specialty}` : ""}
-${patientName ? `Patient: ${patientName}` : ""}
-${contextSection}
-CRITICAL: Use ONLY the information from the actual transcript provided below. Do NOT use placeholder text, example text, or generic descriptions. Extract real details from the conversation.
-
-SPEAKER ATTRIBUTION: If speaker tags are provided ([Clinician] / [Patient]), use them to determine context. Medications or conditions mentioned by the clinician about themselves (e.g., "I take...") or about third parties (e.g., "your child takes...") should NOT be attributed to the patient. Only include medications and conditions that are actually prescribed to or diagnosed in the patient. When a brand name and generic name are mentioned together (e.g., "Lipitor, which is atorvastatin"), treat them as the SAME single medication, not two separate prescriptions.
-
-Generate a SOAP note with these sections:
-- Subjective: The patient's own description of symptoms, complaints, history, and concerns as stated in the transcript
-- Objective: Any physical examination findings, vital signs, measurements, or test results mentioned in the transcript
-- Assessment: Clinical diagnosis or differential diagnoses based on the transcript content
-- Plan: Treatment plan, medications, follow-up instructions discussed in the transcript
-
-Be thorough but concise. Use professional medical terminology. If a section has no relevant information in the transcript, write "No information documented for this section."${languageInstruction}${vocabularySection}`;
-
-        systemPrompt = `${basePrompt}${aiInstructionsSection}
-
-Based on the transcript, return ONLY valid JSON with the extracted information:
-{
-  "subjective": "<actual patient complaints from transcript>",
-  "objective": "<actual exam findings from transcript>",
-  "assessment": "<actual diagnosis from transcript>",
-  "plan": "<actual treatment plan from transcript>"
-}`;
-      }
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: speakerSegments && speakerSegments.length > 0
-            ? `Speaker-Tagged Transcript:\n${speakerSegments.map(s => `[${s.speaker === "clinician" ? "Clinician" : "Patient"}] ${s.text}`).join("\n")}\n\nFull Transcript:\n${transcript}`
-            : `Transcript:\n${transcript}` }
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 2048,
-      });
-
-      const content = response.choices[0]?.message?.content || "{}";
-      console.log("[generate-soap] Raw API response:", content);
-      const soapNote = JSON.parse(content);
-      console.log("[generate-soap] Parsed note keys:", Object.keys(soapNote));
-      console.log("[generate-soap] Has HPI:", !!soapNote.hpi, "Has Plan:", !!soapNote.plan);
-      console.log("[generate-soap] HPI length:", soapNote.hpi?.length || 0, "Plan length:", soapNote.plan?.length || 0);
-
-      // Auto-generate ICD-10 and CPT codes based on the SOAP note
-      let icdCodes = null;
-      try {
-        const clinicalContent = `
-SUBJECTIVE: ${soapNote.subjective || soapNote.hpi || ""}
-OBJECTIVE: ${soapNote.objective || ""}
-ASSESSMENT: ${soapNote.assessment || ""}
-PLAN: ${soapNote.plan || ""}
-        `.trim();
-
-        const codesResponse = await openai.chat.completions.create({
-          model: "gpt-5.1",
-          messages: [
-            { 
-              role: "system", 
-              content: `You are a medical coding assistant. Based on the clinical documentation provided, suggest appropriate ICD-10 diagnosis codes and CPT codes.
-
-Return a JSON object with arrays of suggested codes:
-{
-  "codes": [
-    {
-      "code": "ICD-10 code (e.g., J06.9)",
-      "description": "Code description",
-      "category": "primary" or "secondary",
-      "confidence": "high", "medium", or "low"
-    }
-  ],
-  "cptCodes": [
-    {
-      "code": "CPT code (e.g., 99213)",
-      "description": "E/M level description",
-      "rationale": "Brief rationale for this level"
-    }
-  ],
-  "priorAuthDxCodes": [
-    {
-      "code": "ICD-10 code that supports prior authorization when applicable",
-      "description": "Diagnosis description",
-      "medication": "Related medication or therapy if mentioned",
-      "rationale": "Why this code may support PA documentation",
-      "confidence": "high" | "medium" | "low"
-    }
-  ]
-}
-
-Suggest the most relevant codes based on the documented findings. Include both primary diagnosis and any relevant secondary diagnoses. Also suggest an appropriate E/M CPT code based on the complexity of the visit.
-
-If medications/biologics likely requiring prior authorization are documented or implied, include supporting ICD-10 codes in "priorAuthDxCodes". If not applicable, return an empty array.
-
-${vocabularyPrompt ? `Spelling guidance:\n${vocabularyPrompt}` : ""}`
-            },
-            { role: "user", content: clinicalContent }
-          ],
-          response_format: { type: "json_object" },
-          max_completion_tokens: 1000,
+      const selectedSoapModel = getAdminAiTextModel();
+      const { note: soapNote, modelUsed: soapModelUsed, pipeline } =
+        await generateClinicalNoteFromTranscript({
+          transcript,
+          patientName,
+          specialty,
+          noteStyle: noteStyle ?? settings?.noteStyle ?? undefined,
+          customPrompt,
+          aiInstructions,
+          outputLanguage,
+          context,
+          speakerSegments,
+          vocabularyTerms: vocabulary.terms,
+          label: "generate-soap",
         });
 
-        const codesContent = codesResponse.choices[0]?.message?.content || "{}";
-        icdCodes = JSON.parse(codesContent);
-        console.log("[generate-soap] Generated ICD codes:", icdCodes?.codes?.length || 0, "CPT codes:", icdCodes?.cptCodes?.length || 0);
-      } catch (codeError) {
-        console.error("[generate-soap] Error generating ICD codes (non-fatal):", codeError);
+      logVerboseAiDetails("[generate-soap] Model used:", soapModelUsed, "selected model:", selectedSoapModel);
+      const hpiText = typeof soapNote.hpi === "string" ? soapNote.hpi : "";
+      const subjectiveText = typeof soapNote.subjective === "string" ? soapNote.subjective : "";
+      const objectiveText = typeof soapNote.objective === "string" ? soapNote.objective : "";
+      const assessmentText = typeof soapNote.assessment === "string" ? soapNote.assessment : "";
+      const planText = typeof soapNote.plan === "string" ? soapNote.plan : "";
+      logVerboseAiDetails("[generate-soap] Cleanup model:", pipeline.cleanupModel);
+      logVerboseAiDetails(
+        "[generate-soap] Transcript tokens:",
+        pipeline.originalEstimatedTokens,
+        "->",
+        pipeline.condensedEstimatedTokens,
+        "used chunk summaries:",
+        pipeline.usedLongTranscriptSummaries,
+      );
+      logVerboseAiDetails("[generate-soap] Parsed note keys:", Object.keys(soapNote));
+      logVerboseAiDetails("[generate-soap] Has HPI:", !!hpiText, "Has Plan:", !!planText);
+      logVerboseAiDetails("[generate-soap] HPI length:", hpiText.length, "Plan length:", planText.length);
+      if (pipeline.fallbackReason) {
+        console.warn(
+          "[generate-soap] Fallback used:",
+          pipeline.fallbackReason || `${selectedSoapModel} -> ${soapModelUsed}`,
+        );
+        console.warn("[generate-soap] Attempt trace:", pipeline.soapAttemptTrace.join(" | "));
       }
 
-      // Return SOAP note with ICD codes
-      res.json({ ...soapNote, icdCodes });
+      res.set("X-DocuWhisper-SOAP-Model", soapModelUsed);
+      res.set("X-DocuWhisper-SOAP-Selected-Model", selectedSoapModel);
+      res.set("X-DocuWhisper-SOAP-Cleanup-Model", pipeline.cleanupModel);
+      if (pipeline.fallbackReason) {
+        res.set("X-DocuWhisper-SOAP-Fallback-Reason", pipeline.fallbackReason);
+      }
+      if (pipeline.soapAttemptTrace.length > 0) {
+        res.set("X-DocuWhisper-SOAP-Attempt-Trace", pipeline.soapAttemptTrace.join(" | "));
+      }
+      res.set(
+        "X-DocuWhisper-SOAP-Used-Long-Summary",
+        pipeline.usedLongTranscriptSummaries ? "1" : "0",
+      );
+      res.json(soapNote);
     } catch (error) {
       console.error("Error generating SOAP note:", error);
-      res.status(500).json({ error: "Failed to generate SOAP note" });
+      const debugTrace =
+        error && typeof error === "object" && Array.isArray((error as { soapAttemptTrace?: unknown[] }).soapAttemptTrace)
+          ? (error as { soapAttemptTrace: unknown[] }).soapAttemptTrace.join(" | ")
+          : "";
+      if (debugTrace) {
+        console.error("[generate-soap] Failed attempt trace:", debugTrace);
+      }
+      const payload: Record<string, string> = { error: "Failed to generate SOAP note" };
+      if (canExposeSoapDebug(req) && debugTrace) {
+        payload.debugTrace = debugTrace;
+        if (error instanceof Error && error.message) {
+          payload.debugReason = error.message;
+        }
+      }
+      res.status(500).json(payload);
     }
   });
 
@@ -1291,38 +1897,12 @@ ${vocabularyPrompt ? `Spelling guidance:\n${vocabularyPrompt}` : ""}`
         return res.status(400).json({ error: "Transcript is required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
-        messages: [
-          { 
-            role: "system", 
-            content: `You are a medical documentation assistant. Given a transcript of a patient consultation, extract the main symptom, complaint, or reason for visit to create a brief title.
-
-Return ONLY valid JSON in this exact format:
-{
-  "title": "Brief 2-4 word description of main symptom or complaint"
-}
-
-Examples of good titles:
-- "Chest Pain"
-- "Annual Checkup"
-- "Lower Back Pain"
-- "Persistent Cough"
-- "Headache and Fatigue"
-- "Follow-up Diabetes"
-
-If the transcript is unclear or empty, use "General Consultation".`
-          },
-          { role: "user", content: `Transcript:\n${transcript}` }
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 100,
+      const title = await generateClinicalTitleFromTranscript({
+        transcript,
+        label: "generate-title",
       });
 
-      const content = response.choices[0]?.message?.content || '{"title": "General Consultation"}';
-      const result = JSON.parse(content);
-
-      res.json(result);
+      res.json({ title });
     } catch (error) {
       console.error("Error generating title:", error);
       res.status(500).json({ error: "Failed to generate title" });
@@ -1339,7 +1919,7 @@ If the transcript is unclear or empty, use "General Consultation".`
       }
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1407,7 +1987,7 @@ Be thorough but practical. Focus on actionable recommendations.`
       const soapContent = JSON.stringify({ subjective, objective, assessment, plan }, null, 2);
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1462,7 +2042,7 @@ PLAN: ${plan || "Not provided"}
       `.trim();
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1517,7 +2097,7 @@ PLAN: ${plan || ""}
       `.trim();
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1589,7 +2169,7 @@ PLAN: ${plan || ""}
       `.trim();
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1650,7 +2230,7 @@ PLAN: ${plan || ""}
       `.trim();
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1707,7 +2287,7 @@ Answer their questions helpfully and concisely. If they ask about clinical matte
         `You are a helpful AI medical documentation assistant. Help healthcare providers with documentation questions, clinical coding, letter writing, and workflow optimization. Be concise and practical.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: question }
@@ -1755,7 +2335,7 @@ PLAN: ${plan || "Not provided"}
       const instruction = typeInstructions[summaryType || "brief"] || typeInstructions.brief;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -1808,7 +2388,7 @@ PLAN: ${plan || "Not provided"}
       const { medications } = parseResult.data;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getAdminAiTextModel(),
         messages: [
           { 
             role: "system", 
@@ -2064,10 +2644,26 @@ Focus only on clinically significant interactions. Do not include minor or theor
       
       // Validate request body
       const validatedData = insertUserSettingsSchema.omit({ userId: true }).parse(req.body);
+      const isAdminUser = await hasAdminFeatureAccess(req);
+      const settingsPayload = isAdminUser
+        ? validatedData
+        : {
+            ...validatedData,
+            emrRole: undefined,
+            licenseNumber: undefined,
+            licenseState: undefined,
+            licenseExpiry: undefined,
+            npiNumber: undefined,
+            deaNumber: undefined,
+            deaExpiry: undefined,
+            supervisingPhysicianId: undefined,
+            credentials: undefined,
+            requiresCosignature: undefined,
+          };
       
       const settings = await storage.upsertUserSettings({
         userId,
-        ...validatedData,
+        ...settingsPayload,
       });
       
       res.json(settings);
@@ -2131,10 +2727,14 @@ Focus only on clinically significant interactions. Do not include minor or theor
         userEmail,
         action: "submitted",
         resourceType: "internal_message",
-        details: JSON.stringify({
+        details: serializeInternalMessageLogDetails({
           subject: parsed.data.subject,
           message: parsed.data.message,
           category: parsed.data.category,
+          readAt: null,
+          readByAdminId: null,
+          deletedAt: null,
+          deletedByAdminId: null,
         }),
         ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
         userAgent,
@@ -2272,12 +2872,16 @@ Focus only on clinically significant interactions. Do not include minor or theor
         userEmail: senderEmail,
         action: "sent",
         resourceType: "user_mailbox",
-        details: JSON.stringify({
+        details: serializeMailboxLogDetails({
           recipientUserId: recipient.id,
           recipientEmail: recipient.email,
           recipientDisplayName,
           subject: parsed.data.subject,
           message: parsed.data.message,
+          readAt: null,
+          readByUserId: null,
+          deletedBySenderAt: null,
+          deletedByRecipientAt: null,
         }),
         ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
         userAgent,
@@ -2297,38 +2901,36 @@ Focus only on clinically significant interactions. Do not include minor or theor
       const folder = folderParam === "sent" ? "sent" : "inbox";
       const logs = await storage.getAuditLogs({ resourceType: "user_mailbox" });
 
-      const parsedMessages = logs
+      const messages = logs
         .map((log) => {
-          let details: any = {};
-          try {
-            details = log.details ? JSON.parse(log.details) : {};
-          } catch {
-            details = {};
-          }
+          const details = parseMailboxLogDetails(log);
+          if (!details.recipientUserId) return null;
 
-          const recipientUserId = typeof details.recipientUserId === "string" ? details.recipientUserId : "";
-          const recipientEmail = typeof details.recipientEmail === "string" ? details.recipientEmail : null;
-          const recipientDisplayName = typeof details.recipientDisplayName === "string" ? details.recipientDisplayName : null;
-          const subject = typeof details.subject === "string" ? details.subject : "No subject";
-          const message = typeof details.message === "string" ? details.message : "";
-
-          return {
+          const message = {
             id: log.id,
             senderUserId: log.userId,
             senderEmail: log.userEmail,
-            recipientUserId,
-            recipientEmail,
-            recipientDisplayName,
-            subject,
-            message,
+            recipientUserId: details.recipientUserId,
+            recipientEmail: details.recipientEmail,
+            recipientDisplayName: details.recipientDisplayName,
+            subject: details.subject,
+            message: details.message,
             createdAt: log.timestamp,
+            isRead: !!details.readAt,
+            readAt: details.readAt,
           };
-        })
-        .filter((message) => message.recipientUserId);
 
-      const messages = parsedMessages.filter((message) =>
-        folder === "sent" ? message.senderUserId === userId : message.recipientUserId === userId
-      );
+          if (folder === "sent" ? message.senderUserId !== userId : message.recipientUserId !== userId) {
+            return null;
+          }
+
+          if (!isMailboxMessageVisibleForFolder(details, folder)) {
+            return null;
+          }
+
+          return message;
+        })
+        .filter(Boolean);
 
       res.json(messages);
     } catch (error) {
@@ -2337,9 +2939,111 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  app.get("/api/mailbox/unread-count", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const logs = await storage.getAuditLogs({ resourceType: "user_mailbox" });
+
+      const unreadCount = logs.reduce((count, log) => {
+        const details = parseMailboxLogDetails(log);
+        if (details.recipientUserId !== userId) return count;
+        if (!isMailboxMessageVisibleForFolder(details, "inbox")) return count;
+        return details.readAt ? count : count + 1;
+      }, 0);
+
+      res.json({ unreadCount });
+    } catch (error) {
+      console.error("Error fetching mailbox unread count:", error);
+      res.status(500).json({ error: "Failed to fetch unread count" });
+    }
+  });
+
+  app.patch("/api/mailbox/messages/read", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = updateMessageSelectionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const userId = req.user.claims.sub;
+      const logs = await storage.getAuditLogsByIds(parsed.data.messageIds);
+      const targetLogs = logs.filter((log) => {
+        if (log.resourceType !== "user_mailbox") return false;
+        const details = parseMailboxLogDetails(log);
+        return details.recipientUserId === userId && !details.readAt && !details.deletedByRecipientAt;
+      });
+
+      const readAt = new Date().toISOString();
+      await Promise.all(
+        targetLogs.map((log) => {
+          const details = parseMailboxLogDetails(log);
+          return storage.updateAuditLog(log.id, {
+            details: serializeMailboxLogDetails({
+              ...details,
+              readAt,
+              readByUserId: userId,
+            }),
+          });
+        }),
+      );
+
+      res.json({ updated: targetLogs.length });
+    } catch (error) {
+      console.error("Error marking mailbox messages as read:", error);
+      res.status(500).json({ error: "Failed to mark messages as read" });
+    }
+  });
+
+  app.delete("/api/mailbox/messages", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = updateMessageSelectionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const userId = req.user.claims.sub;
+      const logs = await storage.getAuditLogsByIds(parsed.data.messageIds);
+      const deletedAt = new Date().toISOString();
+
+      const updatableLogs = logs.filter((log) => log.resourceType === "user_mailbox");
+      await Promise.all(
+        updatableLogs.map((log) => {
+          const details = parseMailboxLogDetails(log);
+          if (log.userId === userId && !details.deletedBySenderAt) {
+            return storage.updateAuditLog(log.id, {
+              details: serializeMailboxLogDetails({
+                ...details,
+                deletedBySenderAt: deletedAt,
+              }),
+            });
+          }
+
+          if (details.recipientUserId === userId && !details.deletedByRecipientAt) {
+            return storage.updateAuditLog(log.id, {
+              details: serializeMailboxLogDetails({
+                ...details,
+                deletedByRecipientAt: deletedAt,
+              }),
+            });
+          }
+
+          return Promise.resolve(undefined);
+        }),
+      );
+
+      res.json({ updated: updatableLogs.length });
+    } catch (error) {
+      console.error("Error deleting mailbox messages:", error);
+      res.status(500).json({ error: "Failed to delete messages" });
+    }
+  });
+
   // ===== Personal API Key Management =====
   app.get("/api/personal-api-keys", isAuthenticated, async (req: any, res: Response) => {
     try {
+      if (!(await hasAdminFeatureAccess(req))) {
+        return res.status(403).json({ error: "Admin access required for API keys" });
+      }
       const userId = req.user.claims.sub;
       const keys = await storage.getPersonalApiKeysByUser(userId);
       res.json(keys.map(k => ({
@@ -2360,6 +3064,9 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
   app.post("/api/personal-api-keys", isAuthenticated, async (req: any, res: Response) => {
     try {
+      if (!(await hasAdminFeatureAccess(req))) {
+        return res.status(403).json({ error: "Admin access required for API keys" });
+      }
       const userId = req.user.claims.sub;
       const { name, scopes } = z.object({
         name: z.string().min(1, "Key name is required"),
@@ -2406,6 +3113,9 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
   app.post("/api/personal-api-keys/:id/revoke", isAuthenticated, async (req: any, res: Response) => {
     try {
+      if (!(await hasAdminFeatureAccess(req))) {
+        return res.status(403).json({ error: "Admin access required for API keys" });
+      }
       const userId = req.user.claims.sub;
       const keyId = parseInt(req.params.id);
       
@@ -2425,6 +3135,9 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
   app.delete("/api/personal-api-keys/:id", isAuthenticated, async (req: any, res: Response) => {
     try {
+      if (!(await hasAdminFeatureAccess(req))) {
+        return res.status(403).json({ error: "Admin access required for API keys" });
+      }
       const userId = req.user.claims.sub;
       const keyId = parseInt(req.params.id);
       
@@ -2443,18 +3156,70 @@ Focus only on clinically significant interactions. Do not include minor or theor
   });
 
   app.get("/api/personal-api-keys/scopes", isAuthenticated, async (req: any, res: Response) => {
+    if (!(await hasAdminFeatureAccess(req))) {
+      return res.status(403).json({ error: "Admin access required for API keys" });
+    }
     res.json(PERSONAL_API_SCOPES);
   });
 
   app.get("/api/subscription", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const subscription = await storage.getSubscription(userId);
+      const adminAccess = await getAdminAccessContext(req);
+      let subscription = await storage.getSubscription(userId);
+      subscription = await normalizeExpiredSubscriptionStatus(userId, subscription);
+      const accessState = getSubscriptionAccessState(subscription as BillingSubscription | undefined);
+      const usage = await storage.getNoteCreditUsageSummary(userId);
+      const entitlement = getNoteCreditEntitlement({
+        subscription,
+        usage,
+        isAdmin: adminAccess.isAdmin,
+        isSuperAdmin: adminAccess.isSuperAdmin,
+      });
+      const effectivePlan = getEffectiveSubscriptionPlan(subscription, {
+        isAdmin: adminAccess.isAdmin,
+        isSuperAdmin: adminAccess.isSuperAdmin,
+      });
+      let billingInterval: BillingInterval | null = null;
+
+      if (subscription?.stripeSubscriptionId) {
+        try {
+          const stripe = await getUncachableStripeClient();
+          billingInterval = await getStripeSubscriptionBillingInterval(
+            stripe,
+            subscription.stripeSubscriptionId,
+          );
+        } catch (error) {
+          console.error("Error fetching Stripe billing interval:", error);
+        }
+      }
       
       res.json({
-        status: subscription?.status || "inactive",
+        status: accessState === "inactive" ? "inactive" : "active",
+        accessState,
+        hasAccess: entitlement.hasAccess,
         currentPeriodEnd: subscription?.currentPeriodEnd,
         stripeSubscriptionId: subscription?.stripeSubscriptionId,
+        canManageBilling: !!subscription?.stripeCustomerId,
+        usage: {
+          currentPeriodCount: usage.currentPeriodCount,
+          totalCount: usage.totalCount,
+          currentPeriodStart: usage.currentPeriodStart,
+          nextResetAt: usage.nextResetAt,
+          includedCredits: entitlement.usage.includedCredits,
+          remainingCredits: entitlement.usage.remainingCredits,
+          exhausted: entitlement.usage.exhausted,
+        },
+        plan: {
+          code: effectivePlan.code,
+          name: effectivePlan.name,
+          monthlyPriceCents: effectivePlan.monthlyPriceCents,
+          annualPriceCents: effectivePlan.annualPriceCents,
+          monthlyNoteAllowance: effectivePlan.monthlyNoteAllowance,
+          billingInterval,
+          unlimited: effectivePlan.unlimited,
+          source: effectivePlan.source,
+        },
       });
     } catch (error) {
       console.error("Error fetching subscription:", error);
@@ -2466,7 +3231,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
     try {
       const stripe = await getUncachableStripeClient();
 
-      const price = await resolveSubscriptionPrice(stripe);
+      const price = await resolveSubscriptionPriceForPlan(stripe, DEFAULT_SUBSCRIPTION_PLAN_CODE);
       res.json({ price });
     } catch (error) {
       console.error("Error fetching price:", error);
@@ -2474,13 +3239,39 @@ Focus only on clinically significant interactions. Do not include minor or theor
     }
   });
 
+  app.get("/api/stripe/prices", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const stripe = await getUncachableStripeClient();
+      const prices = await resolveConfiguredSubscriptionPrices(stripe);
+      res.json({ prices });
+    } catch (error) {
+      console.error("Error fetching prices:", error);
+      res.status(500).json({ error: "Failed to fetch prices" });
+    }
+  });
+
   app.post("/api/stripe/checkout", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
       const userEmail = req.user.claims.email;
+      const parsedBody = z
+        .object({
+          planCode: z.enum(["starter", "standard", "pro", "unlimited"]).optional(),
+          billingInterval: z.enum(["month", "year"]).optional(),
+        })
+        .safeParse(req.body ?? {});
+      if (!parsedBody.success) {
+        return res.status(400).json({ error: "Invalid plan selection" });
+      }
+      const selectedPlanCode = parsedBody.data.planCode ?? DEFAULT_SUBSCRIPTION_PLAN_CODE;
+      const selectedBillingInterval = parsedBody.data.billingInterval ?? "month";
       const stripe = await getUncachableStripeClient();
 
       let subscription = await storage.getSubscription(userId);
+      subscription = await normalizeExpiredSubscriptionStatus(userId, subscription);
+      if (subscription?.stripeSubscriptionId && getSubscriptionAccessState(subscription as BillingSubscription) === "active") {
+        return res.status(400).json({ error: "Use the billing portal to manage an existing subscription." });
+      }
       let customerId = subscription?.stripeCustomerId;
 
       if (!customerId) {
@@ -2490,18 +3281,37 @@ Focus only on clinically significant interactions. Do not include minor or theor
         });
         customerId = customer.id;
 
-        await storage.upsertSubscription({
-          userId,
-          stripeCustomerId: customerId,
-          status: "inactive",
-        });
+        if (subscription) {
+          await storage.updateSubscription(userId, {
+            stripeCustomerId: customerId,
+            planCode: subscription.planCode ?? selectedPlanCode,
+          });
+        } else {
+          await storage.upsertSubscription({
+            userId,
+            stripeCustomerId: customerId,
+            planCode: selectedPlanCode,
+            status: "inactive",
+          });
+        }
       }
 
-      const price = await resolveSubscriptionPrice(stripe);
+      if (subscription?.planCode !== selectedPlanCode) {
+        await storage.updateSubscription(userId, { planCode: selectedPlanCode });
+      }
+
+      const price = await resolveSubscriptionPriceForPlan(
+        stripe,
+        selectedPlanCode,
+        selectedBillingInterval,
+      );
       const priceId = price?.id;
 
       if (!priceId) {
-        return res.status(400).json({ error: "No price configured. Please set up products in Stripe." });
+        const selectedPlan = getSubscriptionPlanDefinition(selectedPlanCode);
+        return res.status(400).json({
+          error: `No Stripe ${selectedBillingInterval === "year" ? "annual" : "monthly"} price configured for ${selectedPlan?.name || selectedPlanCode}.`,
+        });
       }
 
       const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -2511,6 +3321,11 @@ Focus only on clinically significant interactions. Do not include minor or theor
         payment_method_types: ['card'],
         line_items: [{ price: priceId, quantity: 1 }],
         mode: 'subscription',
+        metadata: {
+          userId,
+          planCode: selectedPlanCode,
+          billingInterval: selectedBillingInterval,
+        },
         success_url: `${baseUrl}/subscription?success=true`,
         cancel_url: `${baseUrl}/subscription?canceled=true`,
       });
@@ -2548,36 +3363,319 @@ Focus only on clinically significant interactions. Do not include minor or theor
   });
 
   // Helper function to check if user is admin/owner
-  const isAdmin = (req: any): boolean => {
-    const ownerEmail = process.env.OWNER_EMAIL;
-    if (!ownerEmail) return false;
-    return req.user?.claims?.email === ownerEmail;
-  };
+  const isAdmin = async (req: any): Promise<boolean> => (await getAdminAccessContext(req)).isAdmin;
+  const isSuperAdmin = async (req: any): Promise<boolean> =>
+    (await getAdminAccessContext(req)).isSuperAdmin;
 
   // Admin middleware
-  const requireAdmin = (req: any, res: Response, next: Function) => {
-    if (!isAdmin(req)) {
+  const requireAdmin = async (req: any, res: Response, next: Function) => {
+    if (!(await isAdmin(req))) {
       return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  };
+
+  const requireSuperAdmin = async (req: any, res: Response, next: Function) => {
+    if (!(await isSuperAdmin(req))) {
+      return res.status(403).json({ error: "Super admin access required" });
     }
     next();
   };
 
   // Check if current user is admin
   app.get("/api/admin/check", isAuthenticated, async (req: any, res: Response) => {
+    const adminAccess = await getAdminAccessContext(req);
     res.json({ 
-      isAdmin: isAdmin(req),
+      isAdmin: adminAccess.isAdmin,
+      isSuperAdmin: adminAccess.isSuperAdmin,
       userEmail: req.user?.claims?.email,
     });
   });
 
+  app.get("/api/admin/support-email/status", isAuthenticated, requireAdmin, async (_req: any, res: Response) => {
+    try {
+      res.json(getSupportMailboxStatus());
+    } catch (error) {
+      console.error("Error fetching support mailbox status:", error);
+      res.status(500).json({ error: "Failed to fetch support mailbox status" });
+    }
+  });
+
+  app.get(
+    "/api/admin/support-email/unread-count",
+    isAuthenticated,
+    requireAdmin,
+    async (_req: any, res: Response) => {
+      try {
+        const unreadCount = await getSupportMailboxUnreadCount();
+        res.json({ unreadCount });
+      } catch (error) {
+        console.error("Error fetching support mailbox unread count:", error);
+        res.status(500).json({ error: "Failed to fetch support mailbox unread count" });
+      }
+    },
+  );
+
+  app.get("/api/admin/support-email/messages", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const folder: SupportMailboxFolder =
+        req.query.folder === "sent" ||
+        req.query.folder === "archive" ||
+        req.query.folder === "trash"
+          ? req.query.folder
+          : "inbox";
+      const rawLimit =
+        typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : Number.NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 25;
+      const query = typeof req.query.q === "string" ? req.query.q : "";
+      const messages = await listSupportMailboxMessages({ folder, limit, query });
+      res.json({
+        ...getSupportMailboxStatus(),
+        messages,
+      });
+    } catch (error) {
+      console.error("Error fetching support mailbox messages:", error);
+      res.status(500).json({ error: "Failed to fetch support mailbox messages" });
+    }
+  });
+
+  app.get("/api/admin/support-email/messages/:uid", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const uid = Number.parseInt(req.params.uid, 10);
+      if (!Number.isFinite(uid) || uid <= 0) {
+        return res.status(400).json({ error: "A valid message id is required" });
+      }
+
+      const folder: SupportMailboxFolder =
+        req.query.folder === "sent" ||
+        req.query.folder === "archive" ||
+        req.query.folder === "trash"
+          ? req.query.folder
+          : "inbox";
+      const markRead = req.query.markRead === "true" || req.query.markRead === "1";
+      const message = await getSupportMailboxMessage({ folder, uid, markRead });
+      if (!message) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      res.json({
+        ...getSupportMailboxStatus(),
+        message,
+      });
+    } catch (error) {
+      console.error("Error fetching support mailbox message:", error);
+      res.status(500).json({ error: "Failed to fetch support mailbox message" });
+    }
+  });
+
+  app.get(
+    "/api/admin/support-email/messages/:uid/conversation",
+    isAuthenticated,
+    requireAdmin,
+    async (req: any, res: Response) => {
+      try {
+        const uid = Number.parseInt(req.params.uid, 10);
+        if (!Number.isFinite(uid) || uid <= 0) {
+          return res.status(400).json({ error: "A valid message id is required" });
+        }
+
+        const folder: SupportMailboxFolder =
+          req.query.folder === "sent" ||
+          req.query.folder === "archive" ||
+          req.query.folder === "trash"
+            ? req.query.folder
+            : "inbox";
+
+        const messages = await getSupportMailboxConversation({ folder, uid, limit: 50 });
+        res.json({
+          ...getSupportMailboxStatus(),
+          messages,
+        });
+      } catch (error) {
+        console.error("Error fetching support mailbox conversation:", error);
+        res.status(500).json({ error: "Failed to fetch support mailbox conversation" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/support-email/messages/:uid/attachments/:index",
+    isAuthenticated,
+    requireAdmin,
+    async (req: any, res: Response) => {
+      try {
+        const uid = Number.parseInt(req.params.uid, 10);
+        const index = Number.parseInt(req.params.index, 10);
+        if (!Number.isFinite(uid) || uid <= 0 || !Number.isFinite(index) || index < 0) {
+          return res.status(400).json({ error: "A valid attachment is required" });
+        }
+
+        const folder: SupportMailboxFolder =
+          req.query.folder === "sent" ||
+          req.query.folder === "archive" ||
+          req.query.folder === "trash"
+            ? req.query.folder
+            : "inbox";
+
+        const attachment = await downloadSupportMailboxAttachment({ folder, uid, index });
+        if (!attachment) {
+          return res.status(404).json({ error: "Attachment not found" });
+        }
+
+        res.setHeader("Content-Type", attachment.contentType);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${attachment.filename.replace(/"/g, "")}"`,
+        );
+        res.send(attachment.content);
+      } catch (error) {
+        console.error("Error downloading support mailbox attachment:", error);
+        res.status(500).json({ error: "Failed to download attachment" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/support-email/messages/:uid/move",
+    isAuthenticated,
+    requireAdmin,
+    async (req: any, res: Response) => {
+      try {
+        const uid = Number.parseInt(req.params.uid, 10);
+        if (!Number.isFinite(uid) || uid <= 0) {
+          return res.status(400).json({ error: "A valid message id is required" });
+        }
+
+        const folder: SupportMailboxFolder =
+          req.query.folder === "sent" ||
+          req.query.folder === "archive" ||
+          req.query.folder === "trash"
+            ? req.query.folder
+            : "inbox";
+
+        const parsed = moveSupportEmailMessageSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid move request" });
+        }
+
+        if (folder === parsed.data.destination) {
+          return res.json({ success: true, moved: false });
+        }
+
+        const moved = await moveSupportMailboxMessage({
+          folder,
+          uid,
+          destination: parsed.data.destination,
+        });
+
+        res.json({ success: true, moved });
+      } catch (error) {
+        console.error("Error moving support mailbox message:", error);
+        res.status(500).json({ error: "Failed to move support mailbox message" });
+      }
+    },
+  );
+
+  app.post("/api/admin/support-email/send", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const parsed = sendSupportEmailSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid email" });
+      }
+
+      await sendSupportMailboxMessage(parsed.data);
+      res.status(201).json({ success: true });
+    } catch (error) {
+      console.error("Error sending support mailbox message:", error);
+      res.status(500).json({ error: "Failed to send support email" });
+    }
+  });
+
+  app.get("/api/admin/live-connections", isAuthenticated, requireAdmin, async (_req: any, res: Response) => {
+    try {
+      const roomInfo = getRoomInfo();
+      const uniqueNoteIds = Array.from(new Set(roomInfo.map((room) => room.noteId)));
+      const uniqueUserIds = Array.from(
+        new Set(
+          roomInfo.flatMap((room) =>
+            room.editors.map((editor: { userId: string }) => editor.userId),
+          ),
+        ),
+      );
+
+      const [notesById, usersById] = await Promise.all([
+        Promise.all(uniqueNoteIds.map(async (noteId) => [noteId, await storage.getNote(noteId)] as const)),
+        Promise.all(uniqueUserIds.map(async (userId) => [userId, await storage.getUserById(userId)] as const)),
+      ]);
+
+      const noteMap = new Map(notesById);
+      const userMap = new Map(usersById);
+
+      const rooms = roomInfo
+        .map((room) => {
+          const note = noteMap.get(room.noteId);
+          type LiveConnectionEditor = {
+            userId: string;
+            userName: string;
+            email: string | null;
+            lastActivity: string;
+          };
+          const editors = room.editors
+            .map((editor: { userId: string; userName: string; lastActivity: number }) => {
+              const user = userMap.get(editor.userId);
+              const fullName = `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+              return {
+                userId: editor.userId,
+                userName: fullName || user?.email || editor.userName || editor.userId,
+                email: user?.email || null,
+                lastActivity: new Date(editor.lastActivity).toISOString(),
+              };
+            })
+            .sort((a: LiveConnectionEditor, b: LiveConnectionEditor) =>
+              b.lastActivity.localeCompare(a.lastActivity),
+            );
+
+          const lastActivity =
+            editors[0]?.lastActivity ||
+            new Date(0).toISOString();
+
+          return {
+            noteId: room.noteId,
+            noteTitle: note?.title || `Note ${room.noteId}`,
+            patientName: note?.patientName || null,
+            editorCount: room.editorCount,
+            version: room.version,
+            lastActivity,
+            editors,
+          };
+        })
+        .sort((a, b) => {
+          if (b.editorCount !== a.editorCount) return b.editorCount - a.editorCount;
+          return b.lastActivity.localeCompare(a.lastActivity);
+        });
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        totalRooms: rooms.length,
+        totalConnections: rooms.reduce((sum, room) => sum + room.editorCount, 0),
+        rooms,
+      });
+    } catch (error) {
+      console.error("Error fetching live admin connections:", error);
+      res.status(500).json({ error: "Failed to fetch live connections" });
+    }
+  });
+
   app.get("/api/admin/ai-settings", isAuthenticated, requireAdmin, async (_req: any, res: Response) => {
     try {
-      const [settings, personalKeyStatus] = await Promise.all([
+      const [settings, generationSettings, personalKeyStatus] = await Promise.all([
         getAiProviderPreference(),
+        getAiGenerationSettings(),
         getSavedPersonalAiKeyStatus(),
       ]);
       res.json({
         ...settings,
+        ...generationSettings,
         ...personalKeyStatus,
         personalKeySource: getPersonalKeySource(),
       });
@@ -2595,15 +3693,29 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
 
       const ipAddress = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
-      const updated = await updateAiProviderPreference({
-        preferredSource: parsed.data.preferredSource as AiProviderSource,
-        userId: req.user.claims.sub,
-        userEmail: req.user.claims.email,
-        ipAddress: typeof ipAddress === "string" ? ipAddress : ipAddress?.[0],
-        userAgent: req.headers["user-agent"],
-      });
+      const normalizedIp = typeof ipAddress === "string" ? ipAddress : ipAddress?.[0];
+      const [providerSettings, generationSettings] = await Promise.all([
+        updateAiProviderPreference({
+          preferredSource: parsed.data.preferredSource as AiProviderSource,
+          userId: req.user.claims.sub,
+          userEmail: req.user.claims.email,
+          ipAddress: normalizedIp,
+          userAgent: req.headers["user-agent"],
+        }),
+        updateAiGenerationSettings({
+          textModel: parsed.data.textModel as AdminAiTextModel,
+          monthlyBudgetUsd: parsed.data.monthlyBudgetUsd,
+          userId: req.user.claims.sub,
+          userEmail: req.user.claims.email,
+          ipAddress: normalizedIp,
+          userAgent: req.headers["user-agent"],
+        }),
+      ]);
 
-      res.json(updated);
+      res.json({
+        ...providerSettings,
+        ...generationSettings,
+      });
     } catch (error) {
       console.error("Error updating admin AI settings:", error);
       res.status(500).json({ error: "Failed to update AI settings" });
@@ -2661,7 +3773,17 @@ Focus only on clinically significant interactions. Do not include minor or theor
         ? Math.min(Math.max(requestedHours, 1), 24 * 30)
         : 24;
       const startDate = new Date(Date.now() - windowHours * 60 * 60 * 1000);
-      const logs = await storage.getAuditLogs({ resourceType: "ai_usage", startDate });
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+
+      const [logs, monthLogs, generationSettings, openAiCosts, monthOpenAiCosts] = await Promise.all([
+        storage.getAuditLogs({ resourceType: "ai_usage", startDate, limit: 100000 }),
+        storage.getAuditLogs({ resourceType: "ai_usage", startDate: monthStart, limit: 100000 }),
+        getAiGenerationSettings(),
+        fetchOpenAiCostSummary({ startDate }),
+        fetchOpenAiCostSummary({ startDate: monthStart }),
+      ]);
 
       type Provider = "personal" | "replit";
       type ProviderStats = { requests: number; errors: number; totalTokens: number };
@@ -2672,32 +3794,100 @@ Focus only on clinically significant interactions. Do not include minor or theor
       };
       const byOperation: Record<string, OperationStats> = {};
       const byModel: Record<string, number> = {};
+      const estimatedCostByModel: Record<string, number> = {};
       let totalRequests = 0;
       let totalErrors = 0;
       let totalTokens = 0;
+      let estimatedCostUsd = 0;
+      let estimatedMonthToDateCostUsd = 0;
+
+      const getEstimatedLogCostUsd = (log: AuditLog) => {
+        try {
+          const details = log.details ? JSON.parse(log.details) : {};
+          const model = typeof details?.model === "string" ? details.model : null;
+          const inputTokens =
+            typeof details?.usage?.inputTokens === "number"
+              ? details.usage.inputTokens
+              : typeof details?.usage?.input_tokens === "number"
+                ? details.usage.input_tokens
+                : typeof details?.usage?.prompt_tokens === "number"
+                  ? details.usage.prompt_tokens
+                  : 0;
+          const outputTokens =
+            typeof details?.usage?.outputTokens === "number"
+              ? details.usage.outputTokens
+              : typeof details?.usage?.output_tokens === "number"
+                ? details.usage.output_tokens
+                : typeof details?.usage?.completion_tokens === "number"
+                  ? details.usage.completion_tokens
+                  : 0;
+
+          return estimateModelCostUsd({
+            model,
+            inputTokens,
+            outputTokens,
+          });
+        } catch {
+          return null;
+        }
+      };
+
+      for (const log of monthLogs) {
+        const estimated = getEstimatedLogCostUsd(log);
+        if (typeof estimated === "number") {
+          estimatedMonthToDateCostUsd += estimated;
+        }
+      }
 
       const recent = logs
         .slice(0, 100)
         .map((log) => {
           try {
             const details = log.details ? JSON.parse(log.details) : {};
-            const provider =
+            const provider: Provider =
               details?.provider === "personal" || details?.provider === "replit"
                 ? details.provider
                 : "replit";
             const operation = typeof details?.operation === "string" ? details.operation : "unknown";
             const model = typeof details?.model === "string" ? details.model : null;
             const success = details?.success !== false;
+            const inputTokens =
+              typeof details?.usage?.inputTokens === "number"
+                ? details.usage.inputTokens
+                : typeof details?.usage?.input_tokens === "number"
+                  ? details.usage.input_tokens
+                  : typeof details?.usage?.prompt_tokens === "number"
+                    ? details.usage.prompt_tokens
+                    : 0;
+            const outputTokens =
+              typeof details?.usage?.outputTokens === "number"
+                ? details.usage.outputTokens
+                : typeof details?.usage?.output_tokens === "number"
+                  ? details.usage.output_tokens
+                  : typeof details?.usage?.completion_tokens === "number"
+                    ? details.usage.completion_tokens
+                    : 0;
             const eventTokens =
               typeof details?.usage?.totalTokens === "number"
                 ? details.usage.totalTokens
                 : typeof details?.usage?.total_tokens === "number"
                   ? details.usage.total_tokens
                   : 0;
+            const estimatedEventCostUsd = estimateModelCostUsd({
+              model,
+              inputTokens,
+              outputTokens,
+            });
 
             totalRequests += 1;
             if (!success) totalErrors += 1;
             totalTokens += eventTokens;
+            if (typeof estimatedEventCostUsd === "number") {
+              estimatedCostUsd += estimatedEventCostUsd;
+              if (model) {
+                estimatedCostByModel[model] = (estimatedCostByModel[model] || 0) + estimatedEventCostUsd;
+              }
+            }
 
             if (!byOperation[operation]) {
               byOperation[operation] = { requests: 0, errors: 0, totalTokens: 0 };
@@ -2725,6 +3915,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
               model,
               success,
               totalTokens: eventTokens,
+              estimatedCostUsd: estimatedEventCostUsd,
             };
           } catch {
             return null;
@@ -2737,12 +3928,42 @@ Focus only on clinically significant interactions. Do not include minor or theor
         .sort((a, b) => b.requests - a.requests)
         .slice(0, 10);
 
+      const estimatedCostByModelList = Object.entries(estimatedCostByModel)
+        .map(([model, usd]) => ({
+          model,
+          usd,
+        }))
+        .sort((a, b) => b.usd - a.usd);
+
+      const currentSpendUsd =
+        openAiCosts.available && typeof openAiCosts.totalUsd === "number"
+          ? openAiCosts.totalUsd
+          : estimatedCostUsd;
+      const monthToDateSpendUsd =
+        monthOpenAiCosts.available && typeof monthOpenAiCosts.totalUsd === "number"
+          ? monthOpenAiCosts.totalUsd
+          : estimatedMonthToDateCostUsd;
+      const remainingBudgetUsd =
+        generationSettings.monthlyBudgetUsd != null
+          ? Math.max(0, generationSettings.monthlyBudgetUsd - monthToDateSpendUsd)
+          : null;
+
       res.json({
         windowHours,
         totalRequests,
         totalErrors,
         errorRate: totalRequests > 0 ? totalErrors / totalRequests : 0,
         totalTokens,
+        estimatedCostUsd,
+        estimatedCostByModel: estimatedCostByModelList,
+        openAiCosts,
+        monthlyBudgetUsd: generationSettings.monthlyBudgetUsd,
+        remainingBudgetUsd,
+        currentSpendUsd,
+        monthToDateSpendUsd,
+        monthToDateSpendSource: monthOpenAiCosts.available ? "actual" : "estimated",
+        monthOpenAiCosts,
+        spendSource: openAiCosts.available ? "actual" : "estimated",
         byProvider,
         byOperation,
         topModels,
@@ -2768,7 +3989,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
 
       const startDate = new Date(Date.now() - windowHours * 60 * 60 * 1000);
       const [usageLogs, allUsers] = await Promise.all([
-        storage.getAuditLogs({ resourceType: "ai_usage", startDate }),
+        storage.getAuditLogs({ resourceType: "ai_usage", startDate, limit: 100000 }),
         storage.getAllUsers(),
       ]);
 
@@ -3075,32 +4296,119 @@ Focus only on clinically significant interactions. Do not include minor or theor
   });
 
   // Get internal inbox submissions (admin only)
+  app.get("/api/admin/internal-messages/unread-count", isAuthenticated, requireAdmin, async (_req: any, res: Response) => {
+    try {
+      const logs = await storage.getAuditLogs({ resourceType: "internal_message" });
+      const unreadCount = logs.reduce((count, log) => {
+        const details = parseInternalMessageLogDetails(log);
+        if (details.deletedAt) return count;
+        return details.readAt ? count : count + 1;
+      }, 0);
+
+      res.json({ unreadCount });
+    } catch (error) {
+      console.error("Error fetching internal message unread count:", error);
+      res.status(500).json({ error: "Failed to fetch internal message unread count" });
+    }
+  });
+
   app.get("/api/admin/internal-messages", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
       const logs = await storage.getAuditLogs({ resourceType: "internal_message" });
-      const messages = logs.map((log) => {
-        let parsedDetails: any = {};
-        try {
-          parsedDetails = log.details ? JSON.parse(log.details) : {};
-        } catch {
-          parsedDetails = {};
-        }
-
-        return {
-          id: log.id,
-          userId: log.userId,
-          userEmail: log.userEmail,
-          subject: parsedDetails.subject || "No subject",
-          message: parsedDetails.message || "",
-          category: parsedDetails.category || "general",
-          createdAt: log.timestamp,
-        };
-      });
+      const messages = logs
+        .map((log) => {
+          const details = parseInternalMessageLogDetails(log);
+          if (details.deletedAt) return null;
+          return {
+            id: log.id,
+            userId: log.userId,
+            userEmail: log.userEmail,
+            subject: details.subject,
+            message: details.message,
+            category: details.category,
+            createdAt: log.timestamp,
+            isRead: !!details.readAt,
+            readAt: details.readAt,
+          };
+        })
+        .filter(Boolean);
 
       res.json(messages);
     } catch (error) {
       console.error("Error fetching internal messages:", error);
       res.status(500).json({ error: "Failed to fetch internal messages" });
+    }
+  });
+
+  app.patch("/api/admin/internal-messages/read", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const parsed = updateMessageSelectionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const adminUserId = req.user.claims.sub;
+      const logs = await storage.getAuditLogsByIds(parsed.data.messageIds);
+      const targetLogs = logs.filter((log) => {
+        if (log.resourceType !== "internal_message") return false;
+        const details = parseInternalMessageLogDetails(log);
+        return !details.readAt && !details.deletedAt;
+      });
+
+      const readAt = new Date().toISOString();
+      await Promise.all(
+        targetLogs.map((log) => {
+          const details = parseInternalMessageLogDetails(log);
+          return storage.updateAuditLog(log.id, {
+            details: serializeInternalMessageLogDetails({
+              ...details,
+              readAt,
+              readByAdminId: adminUserId,
+            }),
+          });
+        }),
+      );
+
+      res.json({ updated: targetLogs.length });
+    } catch (error) {
+      console.error("Error marking internal messages as read:", error);
+      res.status(500).json({ error: "Failed to mark internal messages as read" });
+    }
+  });
+
+  app.delete("/api/admin/internal-messages", isAuthenticated, requireAdmin, async (req: any, res: Response) => {
+    try {
+      const parsed = updateMessageSelectionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const adminUserId = req.user.claims.sub;
+      const deletedAt = new Date().toISOString();
+      const logs = await storage.getAuditLogsByIds(parsed.data.messageIds);
+      const targetLogs = logs.filter((log) => {
+        if (log.resourceType !== "internal_message") return false;
+        const details = parseInternalMessageLogDetails(log);
+        return !details.deletedAt;
+      });
+
+      await Promise.all(
+        targetLogs.map((log) => {
+          const details = parseInternalMessageLogDetails(log);
+          return storage.updateAuditLog(log.id, {
+            details: serializeInternalMessageLogDetails({
+              ...details,
+              deletedAt,
+              deletedByAdminId: adminUserId,
+            }),
+          });
+        }),
+      );
+
+      res.json({ updated: targetLogs.length });
+    } catch (error) {
+      console.error("Error deleting internal messages:", error);
+      res.status(500).json({ error: "Failed to delete internal messages" });
     }
   });
 
@@ -3131,12 +4439,15 @@ Focus only on clinically significant interactions. Do not include minor or theor
       // Merge users with their settings and subscriptions
       const enrichedUsers = allUsers.map(user => {
         const settings = settingsMap.get(user.id);
+        const isSuperAdminUser = isOwnerEmail(user.email);
         return {
           // Base user data from users table
           id: settings?.id || 0, // Use settings id if available, 0 for unsaved
           odexId: user.id, // Keep the original user id
           userId: user.id,
           email: user.email,
+          isAdmin: isSuperAdminUser || user.isAdmin,
+          isSuperAdmin: isSuperAdminUser,
           // Use settings data if available, otherwise use users table data
           firstName: settings?.firstName || user.firstName || null,
           lastName: settings?.lastName || user.lastName || null,
@@ -3154,6 +4465,40 @@ Focus only on clinically significant interactions. Do not include minor or theor
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  app.put("/api/admin/users/:userId/admin", isAuthenticated, requireSuperAdmin, async (req: any, res: Response) => {
+    try {
+      const { userId } = req.params;
+      const parsed = z.object({ isAdmin: z.boolean() }).safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "isAdmin must be a boolean" });
+      }
+
+      const existingUser = await storage.getUserById(userId);
+      if (!existingUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (isOwnerEmail(existingUser.email)) {
+        return res.status(400).json({ error: "The super admin role is managed by OWNER_EMAIL and cannot be changed here." });
+      }
+
+      const updatedUser = await storage.setUserAdminStatus(userId, parsed.data.isAdmin);
+      if (!updatedUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({
+        userId: updatedUser.id,
+        email: updatedUser.email,
+        isAdmin: updatedUser.isAdmin,
+        isSuperAdmin: false,
+      });
+    } catch (error) {
+      console.error("Error updating admin status:", error);
+      res.status(500).json({ error: "Failed to update admin status" });
     }
   });
 
@@ -4217,13 +5562,9 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.post("/api/practices", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const userEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
       
-      // Only the owner can create practices
-      const isOwner = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
-      if (!isOwner) {
-        return res.status(403).json({ error: "Only the system owner can create practices" });
+      if (!(await hasSuperAdminFeatureAccess(req))) {
+        return res.status(403).json({ error: "Only the super admin can create practices" });
       }
       
       const { name, description } = req.body;
@@ -4397,12 +5738,12 @@ Focus only on clinically significant interactions. Do not include minor or theor
   // Get user's EMR organizations
   app.get("/api/emr/organizations", isAuthenticated, async (req: any, res: Response) => {
     try {
+      if (!(await hasAdminFeatureAccess(req))) {
+        return res.status(403).json({ error: "Admin access required for EMR features" });
+      }
       const userId = req.user.claims.sub;
-      const userEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
 
-      // Owner (vendor) gets all organizations with EMR
-      if (ownerEmail && userEmail === ownerEmail) {
+      if (await hasAdminFeatureAccess(req)) {
         const allOrgs = await storage.getAllOrganizationsWithEmr();
         res.json(allOrgs.map(org => ({ practice: org, emrRole: 'vendor' })));
         return;
@@ -4420,11 +5761,13 @@ Focus only on clinically significant interactions. Do not include minor or theor
   // Grant EMR access to a member within organization (org admin or owner only)
   app.post("/api/practices/:id/emr-access", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const adminAccess = await getAdminAccessContext(req);
+      if (!adminAccess.isAdmin) {
+        return res.status(403).json({ error: "Admin access required for EMR features" });
+      }
       const practiceId = parseInt(req.params.id);
       const currentUserId = req.user.claims.sub;
-      const currentUserEmail = req.user.claims.email;
       const { userId, emrRole = "provider" } = req.body;
-      const ownerEmail = process.env.OWNER_EMAIL;
 
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
@@ -4440,7 +5783,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
 
       // Check authorization: must be owner, practice owner, or practice admin/emr_admin
-      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const isVendorOwner = adminAccess.isAdmin;
       const userPractices = await storage.getUserPractices(currentUserId);
       const membership = userPractices.find(p => p.practice.id === practiceId);
       const isOrgOwnerOrAdmin = practice.ownerId === currentUserId || 
@@ -4472,11 +5815,13 @@ Focus only on clinically significant interactions. Do not include minor or theor
   // Revoke EMR access from a member within organization (org admin or owner only)
   app.delete("/api/practices/:id/emr-access/:userId", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const adminAccess = await getAdminAccessContext(req);
+      if (!adminAccess.isAdmin) {
+        return res.status(403).json({ error: "Admin access required for EMR features" });
+      }
       const practiceId = parseInt(req.params.id);
       const targetUserId = req.params.userId;
       const currentUserId = req.user.claims.sub;
-      const currentUserEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
 
       const practice = await storage.getPractice(practiceId);
       if (!practice) {
@@ -4484,7 +5829,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
 
       // Check authorization
-      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const isVendorOwner = adminAccess.isAdmin;
       const userPractices = await storage.getUserPractices(currentUserId);
       const membership = userPractices.find(p => p.practice.id === practiceId);
       const isOrgOwnerOrAdmin = practice.ownerId === currentUserId || 
@@ -4509,12 +5854,14 @@ Focus only on clinically significant interactions. Do not include minor or theor
   // Update EMR role for a member (org admin or owner only)
   app.patch("/api/practices/:id/emr-role/:userId", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const adminAccess = await getAdminAccessContext(req);
+      if (!adminAccess.isAdmin) {
+        return res.status(403).json({ error: "Admin access required for EMR features" });
+      }
       const practiceId = parseInt(req.params.id);
       const targetUserId = req.params.userId;
       const currentUserId = req.user.claims.sub;
-      const currentUserEmail = req.user.claims.email;
       const { emrRole } = req.body;
-      const ownerEmail = process.env.OWNER_EMAIL;
 
       if (!emrRole) {
         return res.status(400).json({ error: "emrRole is required" });
@@ -4531,7 +5878,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
 
       // Check authorization
-      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const isVendorOwner = adminAccess.isAdmin;
       const userPractices = await storage.getUserPractices(currentUserId);
       const membership = userPractices.find(p => p.practice.id === practiceId);
       const isOrgOwnerOrAdmin = practice.ownerId === currentUserId || 
@@ -4556,10 +5903,12 @@ Focus only on clinically significant interactions. Do not include minor or theor
   // Get EMR members for an organization (any member with EMR access can view)
   app.get("/api/practices/:id/emr-members", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const adminAccess = await getAdminAccessContext(req);
+      if (!adminAccess.isAdmin) {
+        return res.status(403).json({ error: "Admin access required for EMR features" });
+      }
       const practiceId = parseInt(req.params.id);
       const currentUserId = req.user.claims.sub;
-      const currentUserEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
 
       const practice = await storage.getPractice(practiceId);
       if (!practice) {
@@ -4567,7 +5916,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       }
 
       // Check if user has access (owner, member of org, or vendor owner)
-      const isVendorOwner = ownerEmail && currentUserEmail === ownerEmail;
+      const isVendorOwner = adminAccess.isAdmin;
       const userPractices = await storage.getUserPractices(currentUserId);
       const isMember = userPractices.some(p => p.practice.id === practiceId);
 
@@ -4707,7 +6056,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       const days = parseInt(req.query.days as string) || 30;
       const fromDate = req.query.from ? new Date(req.query.from as string) : undefined;
       
-      const trends = await storage.getProductivityTrends(userId, Math.min(days, 90), fromDate); // Max 90 days
+      const trends = await storage.getProductivityTrends(userId, Math.min(days, 366), fromDate);
       res.json(trends);
     } catch (error) {
       console.error("Error fetching productivity trends:", error);
@@ -4736,36 +6085,25 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.get("/api/emr/access", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const userEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
+      const adminAccess = await getAdminAccessContext(req);
+      const isVendorOwner = adminAccess.isAdmin;
       
       const subscription = await storage.getSubscription(userId);
       const settings = await storage.getUserSettings(userId);
-      const emrOrgs = await storage.getUserEmrOrganizations(userId);
-      
-      // Check if user is owner (vendor)
-      const isVendorOwner = ownerEmail && userEmail === ownerEmail;
-      
-      // Has access if: owner, individual EMR access, or org-based EMR access
-      const hasIndividualAccess = subscription?.hasEmrAccess === true && subscription?.status === "active";
-      const hasOrgAccess = emrOrgs.length > 0;
-      const hasAccess = isVendorOwner || hasIndividualAccess || hasOrgAccess;
-      
-      // For owner, get all EMR organizations
-      let organizations = emrOrgs;
+      let organizations: { practice: any; emrRole: string | null }[] = [];
       if (isVendorOwner) {
         const allOrgs = await storage.getAllOrganizationsWithEmr();
         organizations = allOrgs.map(org => ({ practice: org, emrRole: 'vendor' as string | null }));
       }
       
       res.json({
-        hasAccess,
+        hasAccess: isVendorOwner,
         isVendorOwner,
         subscriptionStatus: subscription?.status || "none",
         consentAcknowledged: settings?.emrConsentAcknowledged || false,
         consentDate: settings?.emrConsentDate,
         organizations, // List of orgs user has EMR access to
-        accessType: isVendorOwner ? 'vendor' : hasIndividualAccess ? 'individual' : hasOrgAccess ? 'organization' : 'none',
+        accessType: isVendorOwner ? 'vendor' : 'none',
       });
     } catch (error) {
       console.error("Error checking EMR access:", error);
@@ -4776,13 +6114,15 @@ Focus only on clinically significant interactions. Do not include minor or theor
   // Acknowledge EMR/PHI consent (HIPAA requirement)
   app.post("/api/emr/consent", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const adminAccess = await getAdminAccessContext(req);
+      if (!adminAccess.isAdmin) {
+        return res.status(403).json({ error: "Admin access required for EMR features" });
+      }
       const userId = req.user.claims.sub;
-      const userEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
       const subscription = await storage.getSubscription(userId);
       const emrOrgs = await storage.getUserEmrOrganizations(userId);
       
-      const isVendorOwner = ownerEmail && userEmail === ownerEmail;
+      const isVendorOwner = adminAccess.isAdmin;
       const hasIndividualAccess = subscription?.hasEmrAccess === true && subscription?.status === "active";
       const hasOrgAccess = emrOrgs.length > 0;
       
@@ -4828,9 +6168,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
         : null;
       
       // Check if user is owner (vendor)
-      const ownerEmail = process.env.OWNER_EMAIL;
-      const userEmail = req.user.claims.email;
-      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      const isVendor = await hasAdminFeatureAccess(req);
       
       if (isVendor && organizationId) {
         // Vendor can access any organization's patients
@@ -4869,9 +6207,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       const userId = req.user.claims.sub;
       const query = (req.query.q as string || "").trim();
       const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
-      const ownerEmail = process.env.OWNER_EMAIL;
-      const userEmail = req.user.claims.email;
-      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      const isVendor = await hasAdminFeatureAccess(req);
       
       if (query.length < 1) {
         return res.json([]);
@@ -5049,10 +6385,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       const userId = req.user.claims.sub;
       const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
       
-      // Check if user is owner (vendor)
-      const ownerEmail = process.env.OWNER_EMAIL;
-      const userEmail = req.user.claims.email;
-      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      const isVendor = await hasAdminFeatureAccess(req);
       
       if (isVendor && organizationId) {
         // Vendor can access any organization's appointments
@@ -5086,10 +6419,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
       const days = parseInt(req.query.days as string) || 7;
       const organizationId = req.query.organizationId ? parseInt(req.query.organizationId as string) : null;
       
-      // Check if user is owner (vendor)
-      const ownerEmail = process.env.OWNER_EMAIL;
-      const userEmail = req.user.claims.email;
-      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      const isVendor = await hasAdminFeatureAccess(req);
       
       if (isVendor && organizationId) {
         const appointments = await storage.getUpcomingAppointmentsByOrganization(organizationId, Math.min(days, 90));
@@ -5154,9 +6484,7 @@ Focus only on clinically significant interactions. Do not include minor or theor
   app.post("/api/emr/appointments", isAuthenticated, hasEmrAccess, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const userEmail = req.user.claims.email;
-      const ownerEmail = process.env.OWNER_EMAIL;
-      const isVendor = ownerEmail && userEmail && userEmail.toLowerCase() === ownerEmail.toLowerCase();
+      const isVendor = await hasAdminFeatureAccess(req);
       
       const parsed = createAppointmentSchema.safeParse(req.body);
       

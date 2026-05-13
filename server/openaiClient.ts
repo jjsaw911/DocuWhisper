@@ -45,6 +45,9 @@ export const setPersonalOpenAiKeyOverride = (apiKey: string | null) => {
 
 export const hasPersonalOpenAiKey = () => Boolean(getResolvedPersonalApiKey());
 export const hasReplitOpenAiKey = () => Boolean(getResolvedReplitApiKey());
+export const getOpenAiApiKeyForSource = (source: AiProviderSource) =>
+  source === "personal" ? getResolvedPersonalApiKey() : getResolvedReplitApiKey();
+export const getEffectiveOpenAiApiKey = () => getOpenAiApiKeyForSource(getEffectiveAiProviderSource());
 
 export const getPersonalKeySource = () => {
   if (personalApiKeyOverride) return "saved";
@@ -96,13 +99,13 @@ export const getOpenAIClient = () => {
 };
 
 // Thin dynamic wrapper so existing call sites continue to use `openai.*`.
-const chatCompletionsCreate = (...args: any[]) =>
+const chatCompletionsCreate = (...args: any[]): Promise<any> =>
   (getOpenAIClient().chat.completions.create as any)(...args);
-const audioTranscriptionsCreate = (...args: any[]) =>
+const audioTranscriptionsCreate = (...args: any[]): Promise<any> =>
   (getOpenAIClient().audio.transcriptions.create as any)(...args);
-const imagesGenerate = (...args: any[]) =>
+const imagesGenerate = (...args: any[]): Promise<any> =>
   (getOpenAIClient().images.generate as any)(...args);
-const imagesEdit = (...args: any[]) =>
+const imagesEdit = (...args: any[]): Promise<any> =>
   (getOpenAIClient().images.edit as any)(...args);
 
 const toFiniteNumber = (value: unknown): number | undefined => {
@@ -206,8 +209,8 @@ const withUsageLogging = async <T>(params: {
 export const openai = {
   chat: {
     completions: {
-      create: (request: any, ...rest: any[]) =>
-        withUsageLogging({
+      create: (request: any, ...rest: any[]): Promise<any> =>
+        withUsageLogging<any>({
           operation: "chat.completions",
           model: typeof request?.model === "string" ? request.model : undefined,
           invoke: () => chatCompletionsCreate(request, ...rest),
@@ -216,8 +219,8 @@ export const openai = {
   },
   audio: {
     transcriptions: {
-      create: (request: any, ...rest: any[]) =>
-        withUsageLogging({
+      create: (request: any, ...rest: any[]): Promise<any> =>
+        withUsageLogging<any>({
           operation: "audio.transcriptions",
           model: typeof request?.model === "string" ? request.model : undefined,
           invoke: () => audioTranscriptionsCreate(request, ...rest),
@@ -225,14 +228,14 @@ export const openai = {
     },
   },
   images: {
-    generate: (request: any, ...rest: any[]) =>
-      withUsageLogging({
+    generate: (request: any, ...rest: any[]): Promise<any> =>
+      withUsageLogging<any>({
         operation: "images.generate",
         model: typeof request?.model === "string" ? request.model : undefined,
         invoke: () => imagesGenerate(request, ...rest),
       }),
-    edit: (request: any, ...rest: any[]) =>
-      withUsageLogging({
+    edit: (request: any, ...rest: any[]): Promise<any> =>
+      withUsageLogging<any>({
         operation: "images.edit",
         model: typeof request?.model === "string" ? request.model : undefined,
         invoke: () => imagesEdit(request, ...rest),

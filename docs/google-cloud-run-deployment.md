@@ -74,7 +74,7 @@ Set non-secret env vars:
 ```bash
 gcloud run services update docuwhisper-api \
   --region us-central1 \
-  --set-env-vars NODE_ENV=production,APP_BASE_URL=https://docuwhisper.com,IDENTITY_PROJECT_ID=YOUR_PROJECT_ID,IDENTITY_API_KEY=AIza...,IDENTITY_AUTH_DOMAIN=YOUR_PROJECT.firebaseapp.com,IDENTITY_APP_ID=1:1234567890:web:abcdef,MOBILE_TEST_LOGIN_ENABLED=true,LOCAL_AUTH_ENABLED=true,MOBILE_AUTH_REDIRECT_ALLOWLIST=docuwhisper://auth/callback
+  --set-env-vars NODE_ENV=production,APP_BASE_URL=https://docuwhisper.com,IDENTITY_PROJECT_ID=YOUR_PROJECT_ID,IDENTITY_API_KEY=AIza...,IDENTITY_AUTH_DOMAIN=YOUR_PROJECT.firebaseapp.com,IDENTITY_APP_ID=1:1234567890:web:abcdef,MOBILE_TEST_LOGIN_ENABLED=true,LOCAL_AUTH_ENABLED=true,MOBILE_AUTH_REDIRECT_ALLOWLIST=docuwhisper://auth/callback,APPLE_TEAM_ID=7D7S5WFB32,IOS_APP_BUNDLE_ID=com.jjsaw911.docuwhispermobile
 ```
 
 Use Secret Manager for sensitive values:
@@ -112,3 +112,11 @@ https://docuwhisper.com/api/mobile/auth/start?redirect_uri=docuwhisper://auth/ca
 ```
 
 Expected behavior: tester credential login page appears (no Replit login).
+
+Verify the Apple associated-domain file:
+
+```text
+https://docuwhisper.com/.well-known/apple-app-site-association
+```
+
+Expected behavior: JSON is returned with `7D7S5WFB32.com.jjsaw911.docuwhispermobile` in both `applinks.details[0].appIDs` and `webcredentials.apps`.

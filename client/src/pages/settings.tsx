@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
@@ -108,6 +108,8 @@ interface MailboxDirectoryPreference {
   updatedAt: string | null;
 }
 
+const MEDICAL_VOCABULARY_QUERY_KEY = ["/api/medical-vocabulary"] as const;
+
 export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -133,7 +135,7 @@ export default function Settings() {
   const [internalMessageSubject, setInternalMessageSubject] = useState("");
   const [internalMessageCategory, setInternalMessageCategory] = useState("general");
   const [internalMessageBody, setInternalMessageBody] = useState("");
-  const [customVocabularyText, setCustomVocabularyText] = useState("");
+  const [newVocabularyTerm, setNewVocabularyTerm] = useState("");
   const [vocabularySearch, setVocabularySearch] = useState("");
 
   // EMR Credentials state
@@ -167,8 +169,13 @@ export default function Settings() {
     queryKey: ["/api/settings"],
   });
 
+  const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
+    queryKey: ["/api/admin/check"],
+    enabled: !!user,
+  });
+
   const { data: globalVocabulary } = useQuery<GlobalMedicalVocabulary>({
-    queryKey: ["/api/medical-vocabulary"],
+    queryKey: MEDICAL_VOCABULARY_QUERY_KEY,
   });
 
   const { data: mailboxDirectoryPreference } = useQuery<MailboxDirectoryPreference>({
@@ -187,7 +194,10 @@ export default function Settings() {
   // Personal API keys query
   const { data: apiKeys = [], isLoading: apiKeysLoading } = useQuery<any[]>({
     queryKey: ["/api/personal-api-keys"],
+    enabled: !!user && adminCheck?.isAdmin === true,
   });
+
+  const showRestrictedSettings = adminCheck?.isAdmin === true;
 
   // Create practice mutation
   const createPracticeMutation = useMutation({
@@ -490,14 +500,6 @@ export default function Settings() {
   }, [settings]);
 
   useEffect(() => {
-    if (!globalVocabulary) return;
-    setCustomVocabularyText((prev) => {
-      const next = globalVocabulary.customTerms.join("\n");
-      return prev === next ? prev : next;
-    });
-  }, [globalVocabulary]);
-
-  useEffect(() => {
     if (!mailboxDirectoryPreference) return;
     setListInMailboxDirectory(mailboxDirectoryPreference.listInDirectory);
   }, [mailboxDirectoryPreference]);
@@ -505,6 +507,66 @@ export default function Settings() {
   useEffect(() => {
     setStaySignedIn(isStaySignedInEnabled());
   }, []);
+
+  const normalizeVocabularyTerm = useCallback((value: string) => {
+    return value.replace(/\s+/g, " ").trim();
+  }, []);
+
+  const sortVocabularyTerms = useCallback((terms: string[]) => {
+    return [...terms].sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+    );
+  }, []);
+
+  const mergeVocabularyTerms = useCallback(
+    (existingTerms: string[], additionalTerms: string[]) => {
+      const merged: string[] = [];
+      const seen = new Set<string>();
+
+      for (const term of [...existingTerms, ...additionalTerms]) {
+        const normalized = normalizeVocabularyTerm(term);
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(normalized);
+      }
+
+      return sortVocabularyTerms(merged);
+    },
+    [normalizeVocabularyTerm, sortVocabularyTerms],
+  );
+
+  const persistVocabularyTerms = useCallback(async (customTerms: string[]) => {
+    const response = await apiRequest("PUT", "/api/medical-vocabulary", {
+      customTerms,
+    });
+    return response.json();
+  }, []);
+
+  const applyOptimisticVocabularyUpdate = useCallback(
+    async (customTerms: string[]) => {
+      await queryClient.cancelQueries({ queryKey: MEDICAL_VOCABULARY_QUERY_KEY });
+      const previousVocabulary =
+        queryClient.getQueryData<GlobalMedicalVocabulary>(MEDICAL_VOCABULARY_QUERY_KEY);
+
+      queryClient.setQueryData<GlobalMedicalVocabulary>(
+        MEDICAL_VOCABULARY_QUERY_KEY,
+        (current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            customTerms,
+            terms: mergeVocabularyTerms(current.defaultTerms, customTerms),
+            updatedAt: new Date().toISOString(),
+          };
+        },
+      );
+
+      return previousVocabulary;
+    },
+    [mergeVocabularyTerms, queryClient],
+  );
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -523,17 +585,20 @@ export default function Settings() {
         noiseThreshold,
         emailNotificationsEnabled,
         emailDigestTime,
-        // EMR Credentials
-        emrRole: emrRole || null,
-        licenseNumber: licenseNumber || null,
-        licenseState: licenseState || null,
-        licenseExpiry: licenseExpiry ? new Date(licenseExpiry) : null,
-        npiNumber: npiNumber || null,
-        deaNumber: deaNumber || null,
-        deaExpiry: deaExpiry ? new Date(deaExpiry) : null,
-        supervisingPhysicianId: supervisingPhysicianId || null,
-        credentials: credentials || null,
-        requiresCosignature,
+        ...(showRestrictedSettings
+          ? {
+              emrRole: emrRole || null,
+              licenseNumber: licenseNumber || null,
+              licenseState: licenseState || null,
+              licenseExpiry: licenseExpiry ? new Date(licenseExpiry) : null,
+              npiNumber: npiNumber || null,
+              deaNumber: deaNumber || null,
+              deaExpiry: deaExpiry ? new Date(deaExpiry) : null,
+              supervisingPhysicianId: supervisingPhysicianId || null,
+              credentials: credentials || null,
+              requiresCosignature,
+            }
+          : {}),
       });
       return response.json();
     },
@@ -553,31 +618,42 @@ export default function Settings() {
     },
   });
 
-  const saveVocabularyMutation = useMutation({
-    mutationFn: async () => {
-      const customTerms = customVocabularyText
-        .split("\n")
-        .map((term) => term.trim())
-        .filter(Boolean);
-
-      const response = await apiRequest("PUT", "/api/medical-vocabulary", {
-        customTerms,
-      });
-      return response.json();
+  const addVocabularyMutation = useMutation({
+    mutationFn: async ({ nextCustomTerms }: { nextCustomTerms: string[]; term: string }) =>
+      persistVocabularyTerms(nextCustomTerms),
+    onMutate: async ({
+      nextCustomTerms,
+      term,
+    }: {
+      nextCustomTerms: string[];
+      term: string;
+    }) => {
+      const previousVocabulary = await applyOptimisticVocabularyUpdate(nextCustomTerms);
+      setNewVocabularyTerm("");
+      return { previousVocabulary, term };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/medical-vocabulary"] });
+    onSuccess: (data) => {
+      queryClient.setQueryData(MEDICAL_VOCABULARY_QUERY_KEY, data);
       toast({
-        title: "Shared vocabulary saved",
-        description: "All users will now benefit from the updated spelling dictionary.",
+        title: "Shared term added",
+        description: "The term was added to the shared vocabulary.",
       });
     },
-    onError: () => {
+    onError: (_error, _variables, context: any) => {
+      if (context?.previousVocabulary) {
+        queryClient.setQueryData(MEDICAL_VOCABULARY_QUERY_KEY, context.previousVocabulary);
+      }
+      if (context?.term) {
+        setNewVocabularyTerm(context.term);
+      }
       toast({
         title: "Error",
-        description: "Failed to save shared vocabulary",
+        description: "Failed to add the shared term",
         variant: "destructive",
       });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: MEDICAL_VOCABULARY_QUERY_KEY });
     },
   });
 
@@ -607,12 +683,54 @@ export default function Settings() {
     },
   });
 
+  const sortedVocabularyTerms = useMemo(() => {
+    return sortVocabularyTerms(globalVocabulary?.terms || []);
+  }, [globalVocabulary?.terms, sortVocabularyTerms]);
+
   const filteredVocabularyTerms = useMemo(() => {
-    const terms = globalVocabulary?.terms || [];
     const query = vocabularySearch.trim().toLowerCase();
-    if (!query) return terms.slice(0, 200);
-    return terms.filter((term) => term.toLowerCase().includes(query)).slice(0, 200);
-  }, [globalVocabulary?.terms, vocabularySearch]);
+    if (!query) return sortedVocabularyTerms.slice(0, 200);
+    return sortedVocabularyTerms
+      .filter((term) => term.toLowerCase().includes(query))
+      .slice(0, 200);
+  }, [sortedVocabularyTerms, vocabularySearch]);
+
+  const isVocabularyUpdating = addVocabularyMutation.isPending;
+
+  const handleAddVocabularyTerm = useCallback(() => {
+    const nextTerm = normalizeVocabularyTerm(newVocabularyTerm);
+    if (!nextTerm) return;
+
+    const existingCustomTerms = globalVocabulary?.customTerms || [];
+    const hasCustomTerm = existingCustomTerms.some(
+      (term) => term.toLowerCase() === nextTerm.toLowerCase(),
+    );
+    const hasGlobalTerm = (globalVocabulary?.defaultTerms || []).some(
+      (term) => term.toLowerCase() === nextTerm.toLowerCase(),
+    );
+
+    if (hasCustomTerm || hasGlobalTerm) {
+      setNewVocabularyTerm("");
+      toast({
+        title: "Term already listed",
+        description: "That term is already in the shared vocabulary list.",
+      });
+      return;
+    }
+
+    addVocabularyMutation.mutate({
+      term: nextTerm,
+      nextCustomTerms: mergeVocabularyTerms(existingCustomTerms, [nextTerm]),
+    });
+  }, [
+    addVocabularyMutation,
+    globalVocabulary?.customTerms,
+    globalVocabulary?.defaultTerms,
+    mergeVocabularyTerms,
+    newVocabularyTerm,
+    normalizeVocabularyTerm,
+    toast,
+  ]);
 
   const sendInternalMessageMutation = useMutation({
     mutationFn: async () => {
@@ -1002,46 +1120,49 @@ export default function Settings() {
                 <CardTitle>Shared Medical Vocabulary</CardTitle>
               </div>
               <CardDescription>
-                Global spelling dictionary used across users for transcription and note generation.
+                One shared spelling dictionary used for transcription and note generation across every user.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
                 <p>Total terms available: <span className="font-medium text-foreground">{globalVocabulary?.terms?.length || 0}</span></p>
-                <p>Built-in terms: <span className="font-medium text-foreground">{globalVocabulary?.defaultTerms?.length || 0}</span></p>
-                <p>Custom shared terms: <span className="font-medium text-foreground">{globalVocabulary?.customTerms?.length || 0}</span></p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="custom-vocabulary">Custom Shared Terms (one per line)</Label>
-                <Textarea
-                  id="custom-vocabulary"
-                  value={customVocabularyText}
-                  onChange={(e) => setCustomVocabularyText(e.target.value)}
-                  className="min-h-[180px] font-mono text-xs"
-                  placeholder="Add terms like brand names, biologics, uncommon terminology, and abbreviations..."
-                  data-testid="textarea-custom-medical-vocabulary"
-                />
+                <Label htmlFor="new-vocabulary-term">Add Shared Term</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="new-vocabulary-term"
+                    value={newVocabularyTerm}
+                    onChange={(e) => setNewVocabularyTerm(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddVocabularyTerm();
+                      }
+                    }}
+                    placeholder="Type a term and add it to the shared word database"
+                    data-testid="input-add-vocabulary-term"
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleAddVocabularyTerm}
+                    disabled={isVocabularyUpdating || !normalizeVocabularyTerm(newVocabularyTerm)}
+                    data-testid="button-add-vocabulary-term"
+                  >
+                    {addVocabularyMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    Add
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Edit carefully. These terms affect spelling guidance for all users.
+                  Any user can add a term. It is saved to the shared vocabulary and the add box clears after save.
                 </p>
               </div>
 
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => saveVocabularyMutation.mutate()}
-                  disabled={saveVocabularyMutation.isPending}
-                  data-testid="button-save-shared-vocabulary"
-                >
-                  {saveVocabularyMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
-                  Save Shared Vocabulary
-                </Button>
-              </div>
-
               <div className="space-y-2 pt-2 border-t">
-                <Label htmlFor="vocabulary-search">Browse Vocabulary</Label>
+                <Label htmlFor="vocabulary-search">Browse Total Available Terms</Label>
                 <Input
                   id="vocabulary-search"
                   value={vocabularySearch}
@@ -1302,15 +1423,16 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <IdCard className="h-5 w-5 text-primary" />
-                <CardTitle>EMR Credentials</CardTitle>
-              </div>
-              <CardDescription>Professional credentials for EMR access and documentation</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          {showRestrictedSettings && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <IdCard className="h-5 w-5 text-primary" />
+                  <CardTitle>EMR Credentials</CardTitle>
+                </div>
+                <CardDescription>Professional credentials for EMR access and documentation</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="emrRole">Role / Position</Label>
                 <Select value={emrRole} onValueChange={setEmrRole}>
@@ -1492,8 +1614,9 @@ export default function Settings() {
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
@@ -1636,18 +1759,18 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          {/* API Keys Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Key className="h-5 w-5" />
-                API Keys
-              </CardTitle>
-              <CardDescription>
-                Generate API keys to connect mobile apps or other integrations to your account
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          {showRestrictedSettings && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Key className="h-5 w-5" />
+                  API Keys
+                </CardTitle>
+                <CardDescription>
+                  Generate API keys to connect mobile apps or other integrations to your account
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-sm text-muted-foreground">
                   Base URL: <code className="text-xs bg-muted px-1 py-0.5 rounded">/api/mobile</code>
@@ -1837,8 +1960,9 @@ export default function Settings() {
                   ))}
                 </div>
               )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Add Member Dialog */}
           <Dialog open={addMemberOpen} onOpenChange={setAddMemberOpen}>
