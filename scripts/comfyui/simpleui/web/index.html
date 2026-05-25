@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Photo Studio</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #151922;
+    --border: #232936;
+    --text: #e8eaef;
+    --muted: #8a93a4;
+    --accent: #7c5cff;
+    --accent-2: #5da9ff;
+    --danger: #ff6b6b;
+    --ok: #44d07b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif; }
+  body { padding: max(env(safe-area-inset-top), 12px) 12px max(env(safe-area-inset-bottom), 12px); max-width: 720px; margin: 0 auto; }
+  h1 { margin: 8px 0 16px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+  textarea, input[type=text], select {
+    width: 100%; padding: 12px; background: #0e1219; border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-size: 16px; font-family: inherit; resize: vertical;
+  }
+  textarea { min-height: 84px; }
+  textarea:focus, input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .photo-drop {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 20px; text-align: center;
+    background: #0e1219; transition: border-color 0.15s, background 0.15s; cursor: pointer;
+  }
+  .photo-drop.hover { border-color: var(--accent); background: #131826; }
+  .photo-drop input { display: none; }
+  .photo-drop .hint { color: var(--muted); font-size: 14px; }
+  .photo-preview { display: none; max-width: 100%; max-height: 280px; border-radius: 10px; margin-top: 12px; }
+  .photo-preview.show { display: block; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 140px; }
+  button {
+    width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 17px; font-weight: 600;
+    color: white; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: #2a3142; color: var(--text); font-size: 14px; padding: 10px; }
+  .status { font-size: 14px; color: var(--muted); margin-top: 10px; min-height: 20px; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--ok); }
+  .progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; }
+  .progress.show { display: block; }
+  .progress > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); width: 0%; transition: width 0.3s; }
+  .result-img { display: none; width: 100%; border-radius: 12px; margin-top: 10px; }
+  .result-img.show { display: block; }
+  details { margin-top: 10px; }
+  summary { color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px 0; }
+  details[open] summary { margin-bottom: 10px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .preset-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .preset-btns button { flex: 0 0 auto; padding: 6px 10px; font-size: 13px; font-weight: 400; background: #232936; }
+  .toolbar { display: flex; gap: 8px; margin-top: 10px; }
+  .toolbar button { font-size: 14px; padding: 10px; }
+  small.note { color: var(--muted); font-size: 12px; display: block; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>Photo Studio</h1>
+
+<div class="card">
+  <label>Face reference photo</label>
+  <div class="photo-drop" id="drop">
+    <input type="file" id="file" accept="image/*">
+    <div class="hint" id="dropHint">Tap to choose or take a photo</div>
+    <img class="photo-preview" id="preview" alt="">
+  </div>
+  <small class="note">Clear front-facing photo works best. Plain background helps.</small>
+</div>
+
+<div class="card">
+  <label>Describe the image you want</label>
+  <textarea id="prompt" placeholder="e.g. selfie at the beach at sunset, golden hour lighting"></textarea>
+  <div class="preset-btns">
+    <button class="secondary" data-add="professional headshot, studio lighting, plain background">Headshot</button>
+    <button class="secondary" data-add="at the beach, golden hour, ocean background">Beach</button>
+    <button class="secondary" data-add="cozy bedroom, warm lighting, intimate">Bedroom</button>
+    <button class="secondary" data-add="in a luxury hotel suite">Hotel</button>
+    <button class="secondary" data-add="elegant black dress, dim restaurant">Date night</button>
+  </div>
+</div>
+
+<details>
+  <summary>Advanced settings</summary>
+  <div class="card" style="margin-top:0;">
+    <div class="grid2">
+      <div>
+        <label>Size</label>
+        <select id="size">
+          <option value="1024x1024">Square (1024)</option>
+          <option value="832x1216" selected>Portrait (832x1216)</option>
+          <option value="1216x832">Landscape (1216x832)</option>
+        </select>
+      </div>
+      <div>
+        <label>Steps</label>
+        <input type="text" id="steps" value="28" inputmode="numeric">
+      </div>
+      <div>
+        <label>Face strength</label>
+        <input type="text" id="faceWeight" value="1.0" inputmode="decimal">
+      </div>
+      <div>
+        <label>Seed (blank = random)</label>
+        <input type="text" id="seed" placeholder="random" inputmode="numeric">
+      </div>
+    </div>
+    <label style="margin-top:12px;">Negative prompt</label>
+    <textarea id="neg">cartoon, 3d, anime, illustration, painting, drawing, sketch, blurry, low quality, deformed face, bad anatomy, extra fingers, watermark, signature, text</textarea>
+  </div>
+</details>
+
+<button id="go">Generate</button>
+<div class="status" id="status"></div>
+<div class="progress" id="prog"><div></div></div>
+<img class="result-img" id="result" alt="">
+<div class="toolbar" id="toolbar" style="display:none;">
+  <button class="secondary" id="dlBtn">Save</button>
+  <button class="secondary" id="againBtn">New variation</button>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const BASE = location.origin;
+let uploadedName = null;
+let lastImageUrl = null;
+let lastPromptId = null;
+
+const drop = $("#drop"), fileIn = $("#file"), preview = $("#preview"), dropHint = $("#dropHint");
+drop.addEventListener("click", () => fileIn.click());
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("hover"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("hover"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("hover");
+  if (e.dataTransfer.files[0]) { fileIn.files = e.dataTransfer.files; handleFile(); }
+});
+fileIn.addEventListener("change", handleFile);
+
+function handleFile() {
+  const f = fileIn.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  preview.src = url;
+  preview.classList.add("show");
+  dropHint.textContent = f.name + " (" + Math.round(f.size/1024) + " KB)";
+  uploadedName = null;
+}
+
+document.querySelectorAll("[data-add]").forEach(b => {
+  b.addEventListener("click", (e) => {
+    e.preventDefault();
+    const cur = $("#prompt").value.trim();
+    const add = b.dataset.add;
+    $("#prompt").value = cur ? (cur + ", " + add) : add;
+  });
+});
+
+function setStatus(msg, cls) {
+  const s = $("#status");
+  s.className = "status" + (cls ? " " + cls : "");
+  s.textContent = msg;
+}
+function setProg(pct) {
+  const p = $("#prog");
+  if (pct == null) { p.classList.remove("show"); return; }
+  p.classList.add("show");
+  p.firstElementChild.style.width = pct + "%";
+}
+
+async function uploadImage(file) {
+  const fd = new FormData();
+  fd.append("image", file, "face_" + Date.now() + ".jpg");
+  fd.append("overwrite", "true");
+  const r = await fetch(BASE + "/upload/image", { method: "POST", body: fd });
+  if (!r.ok) throw new Error("Upload failed: " + r.status);
+  const j = await r.json();
+  return j.name;
+}
+
+function buildWorkflow({ faceImage, positive, negative, width, height, steps, faceWeight, seed }) {
+  return {
+    "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "RealVisXL_V5.0_fp16.safetensors" } },
+    "2": { class_type: "CLIPSetLastLayer", inputs: { clip: ["1", 1], stop_at_clip_layer: -2 } },
+    "3": { class_type: "CLIPTextEncode", inputs: { text: positive, clip: ["2", 0] } },
+    "4": { class_type: "CLIPTextEncode", inputs: { text: negative, clip: ["2", 0] } },
+    "5": { class_type: "EmptyLatentImage", inputs: { width: width, height: height, batch_size: 1 } },
+    "6": { class_type: "LoadImage", inputs: { image: faceImage } },
+    "7": { class_type: "IPAdapterUnifiedLoaderFaceID", inputs: {
+        model: ["1", 0],
+        preset: "FACEID PLUS V2",
+        lora_strength: 0.6,
+        provider: "CUDA"
+      } },
+    "8": { class_type: "IPAdapterFaceID", inputs: {
+        model: ["7", 0],
+        ipadapter: ["7", 1],
+        image: ["6", 0],
+        weight: faceWeight,
+        weight_faceidv2: faceWeight,
+        weight_type: "linear",
+        combine_embeds: "concat",
+        start_at: 0.0,
+        end_at: 1.0,
+        embeds_scaling: "V only"
+      } },
+    "9": { class_type: "KSampler", inputs: {
+        model: ["8", 0],
+        seed: seed,
+        steps: steps,
+        cfg: 4.5,
+        sampler_name: "dpmpp_2m_sde",
+        scheduler: "karras",
+        denoise: 1.0,
+        positive: ["3", 0],
+        negative: ["4", 0],
+        latent_image: ["5", 0]
+      } },
+    "10": { class_type: "VAEDecode", inputs: { samples: ["9", 0], vae: ["1", 2] } },
+    "11": { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: "studio" } }
+  };
+}
+
+async function queuePrompt(workflow) {
+  const r = await fetch(BASE + "/prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: workflow, client_id: "simpleui-" + Date.now() })
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error("Queue failed: " + t.slice(0, 400));
+  }
+  const j = await r.json();
+  return j.prompt_id;
+}
+
+async function pollResult(promptId) {
+  const start = Date.now();
+  let lastQueueAhead = -1;
+  while (true) {
+    if (Date.now() - start > 5 * 60 * 1000) throw new Error("Timed out (5 min)");
+    const hr = await fetch(BASE + "/history/" + promptId);
+    const h = await hr.json();
+    if (h[promptId]) {
+      const outputs = h[promptId].outputs;
+      const status = h[promptId].status;
+      if (status && status.status_str === "error") {
+        const err = status.messages.find(m => m[0] === "execution_error");
+        throw new Error("Generation error: " + (err ? JSON.stringify(err[1]) : "unknown"));
+      }
+      for (const nodeId of Object.keys(outputs)) {
+        if (outputs[nodeId].images) {
+          const img = outputs[nodeId].images[0];
+          return BASE + "/view?filename=" + encodeURIComponent(img.filename) + "&subfolder=" + encodeURIComponent(img.subfolder || "") + "&type=" + encodeURIComponent(img.type || "output");
+        }
+      }
+    }
+    // queue position
+    const qr = await fetch(BASE + "/queue");
+    const q = await qr.json();
+    const running = (q.queue_running || []).some(x => x[1] === promptId);
+    const ahead = (q.queue_pending || []).findIndex(x => x[1] === promptId);
+    if (running) {
+      setStatus("Generating...");
+      setProg(60);
+    } else if (ahead >= 0) {
+      if (ahead !== lastQueueAhead) {
+        setStatus("Queued (" + (ahead + 1) + " ahead)");
+        lastQueueAhead = ahead;
+      }
+      setProg(20);
+    } else {
+      setProg(80);
+    }
+    await new Promise(r => setTimeout(r, 1200));
+  }
+}
+
+$("#go").addEventListener("click", async () => {
+  const btn = $("#go");
+  const file = fileIn.files[0];
+  const promptText = $("#prompt").value.trim();
+  if (!file) { setStatus("Choose a face photo first", "err"); return; }
+  if (!promptText) { setStatus("Type a prompt", "err"); return; }
+  const [w, h] = $("#size").value.split("x").map(Number);
+  const steps = parseInt($("#steps").value) || 28;
+  const faceWeight = parseFloat($("#faceWeight").value) || 1.0;
+  const seedRaw = $("#seed").value.trim();
+  const seed = seedRaw ? parseInt(seedRaw) : Math.floor(Math.random() * 1e15);
+  btn.disabled = true;
+  $("#result").classList.remove("show");
+  $("#toolbar").style.display = "none";
+  try {
+    setStatus("Uploading photo...");
+    setProg(10);
+    if (!uploadedName) {
+      uploadedName = await uploadImage(file);
+    }
+    setStatus("Building workflow...");
+    setProg(20);
+    const positiveFull = promptText + ", photorealistic, RAW photo, detailed skin, sharp focus, 8k uhd, dslr, professional photography";
+    const wf = buildWorkflow({
+      faceImage: uploadedName,
+      positive: positiveFull,
+      negative: $("#neg").value,
+      width: w, height: h, steps, faceWeight, seed
+    });
+    setStatus("Submitting...");
+    lastPromptId = await queuePrompt(wf);
+    const url = await pollResult(lastPromptId);
+    lastImageUrl = url;
+    $("#result").src = url;
+    $("#result").classList.add("show");
+    $("#toolbar").style.display = "flex";
+    setStatus("Done.", "ok");
+    setProg(100);
+    setTimeout(() => setProg(null), 1500);
+  } catch (e) {
+    setStatus(e.message || String(e), "err");
+    setProg(null);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#dlBtn").addEventListener("click", () => {
+  if (!lastImageUrl) return;
+  const a = document.createElement("a");
+  a.href = lastImageUrl;
+  a.download = "studio_" + Date.now() + ".png";
+  a.click();
+});
+$("#againBtn").addEventListener("click", () => {
+  $("#seed").value = "";
+  $("#go").click();
+});
+</script>
+</body>
+</html>
