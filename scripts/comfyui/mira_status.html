@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Mira Status</title>
+<title>Mira Hub</title>
 <style>
 :root {
   --bg: #0b0d12;
@@ -11,67 +11,114 @@
   --border: #232b3d;
   --text: #e8eaef;
   --muted: #8a93a4;
+  --accent: #7c5cff;
+  --accent2: #5da9ff;
   --green: #3ed085;
   --green-dim: rgba(62,208,133,0.15);
   --red: #ff5b6b;
   --red-dim: rgba(255,91,107,0.15);
   --yellow: #ffba28;
   --yellow-dim: rgba(255,186,40,0.15);
-  --blue: #5da9ff;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
   margin: 0; padding: 0; background: var(--bg); color: var(--text);
   font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
 }
-body { padding: max(env(safe-area-inset-top), 16px) 14px max(env(safe-area-inset-bottom), 16px); max-width: 600px; margin: 0 auto; }
-h1 { margin: 4px 0 14px; font-size: 22px; font-weight: 700; }
+body { padding: max(env(safe-area-inset-top), 16px) 14px max(env(safe-area-inset-bottom), 16px); max-width: 700px; margin: 0 auto; }
+h1 { margin: 4px 0 14px; font-size: 24px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+h2 { margin: 18px 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+
 .headline {
-  font-size: 32px; font-weight: 800; padding: 22px; border-radius: 16px; text-align: center;
-  margin-bottom: 14px; letter-spacing: 0.01em; transition: background 0.3s;
+  font-size: 26px; font-weight: 800; padding: 18px; border-radius: 14px; text-align: center;
+  margin-bottom: 12px; letter-spacing: 0.01em; transition: background 0.3s;
 }
 .headline.active { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
-.headline.idle   { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
-.headline.waiting{ background: var(--yellow-dim);color: var(--yellow);border: 1px solid var(--yellow); }
-.headline.unreachable { background: #2a1a1a; color: var(--red); border: 1px solid var(--red); font-size: 18px; }
+.headline.idle { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.headline.waiting { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
+.headline.unreachable { background: #2a1a1a; color: var(--red); border: 1px solid var(--red); font-size: 16px; }
+
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.action {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 18px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--border);
+  color: var(--text); text-decoration: none; transition: transform 0.1s, border-color 0.1s;
+}
+.action:active { transform: scale(0.97); }
+.action:hover { border-color: var(--accent); }
+.action .emoji { font-size: 28px; margin-bottom: 6px; }
+.action .name { font-size: 15px; font-weight: 600; }
+.action .desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .box {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px; min-height: 70px;
+  padding: 12px 14px; min-height: 60px;
 }
 .box .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 4px; }
-.box .val { font-size: 22px; font-weight: 700; }
-.box .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.bar {
-  height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px;
-}
+.box .val { font-size: 20px; font-weight: 700; }
+.box .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
 .bar > div { height: 100%; transition: width 0.4s; }
-.bar > .b-vram { background: linear-gradient(90deg, var(--blue), var(--green)); }
+.bar > .b-vram { background: linear-gradient(90deg, var(--accent2), var(--green)); }
 .bar > .b-ram { background: var(--muted); }
+
 .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
-.section h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-.job-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+
+.gen-list { display: grid; gap: 8px; }
+.gen-row {
+  display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center;
+  padding: 10px 12px; background: #0e1219; border: 1px solid var(--border); border-radius: 10px;
+}
+.gen-row .ico { font-size: 22px; text-align: center; }
+.gen-row .body { min-width: 0; }
+.gen-row .body .p { font-size: 13px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.gen-row .body .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.gen-row .open { color: var(--accent2); text-decoration: none; font-size: 13px; font-weight: 600; padding: 6px 10px; background: rgba(93,169,255,0.1); border-radius: 6px; white-space: nowrap; }
+.gen-row .open:active { background: rgba(93,169,255,0.25); }
+
+.job-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .job-row:last-child { border-bottom: none; }
-.job-row .id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
-.job-row .badge { display: inline-block; padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-right: 6px; }
+.job-row .id { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); }
+.job-row .badge { padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; }
 .badge.run { background: var(--green-dim); color: var(--green); }
 .badge.wait { background: var(--yellow-dim); color: var(--yellow); }
+
 .muted { color: var(--muted); }
-.footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 10px; }
-.spinner { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 1.5s ease-in-out infinite; }
+.spinner { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 1.5s ease-in-out infinite; vertical-align: middle; }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-.refresh-btn { width: 100%; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 14px; cursor: pointer; }
+
+.footer { font-size: 11px; color: var(--muted); text-align: center; margin-top: 14px; padding-top: 10px; }
+.refresh-btn { width: 100%; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 13px; cursor: pointer; margin-top: 8px; }
+.refresh-btn:active { transform: scale(0.98); }
+.diag { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.diag .warn { color: var(--red); font-weight: 600; display: block; margin-top: 6px; }
 </style>
 </head>
 <body>
 
-<h1>Mira Status</h1>
+<h1>Mira Hub</h1>
 
 <div class="headline" id="headline">…connecting</div>
 
+<h2>Generators</h2>
+<div class="action-grid">
+  <a class="action" id="link-img" href="#" target="_blank" rel="noopener">
+    <div class="emoji">📷</div>
+    <div class="name">Image</div>
+    <div class="desc">Mira /mira</div>
+  </a>
+  <a class="action" id="link-vid" href="#" target="_blank" rel="noopener">
+    <div class="emoji">🎬</div>
+    <div class="name">Video</div>
+    <div class="desc">Mira /video</div>
+  </a>
+</div>
+
+<h2>System</h2>
 <div class="grid">
   <div class="box">
-    <div class="lbl">VRAM (GPU)</div>
+    <div class="lbl">VRAM</div>
     <div class="val" id="vram-val">—</div>
     <div class="sub" id="vram-sub">—</div>
     <div class="bar"><div class="b-vram" id="vram-bar" style="width:0%"></div></div>
@@ -85,40 +132,58 @@ h1 { margin: 4px 0 14px; font-size: 22px; font-weight: 700; }
   <div class="box">
     <div class="lbl">Queue running</div>
     <div class="val" id="qrun">—</div>
-    <div class="sub">jobs on the GPU now</div>
+    <div class="sub">GPU active</div>
   </div>
   <div class="box">
     <div class="lbl">Queue pending</div>
     <div class="val" id="qpend">—</div>
-    <div class="sub">waiting in line</div>
+    <div class="sub">waiting</div>
   </div>
 </div>
 
 <div class="section" id="jobs-section" style="display:none;">
-  <h2>Active jobs</h2>
+  <h2 style="margin-top:0;">Active jobs</h2>
   <div id="jobs"></div>
 </div>
 
-<div class="section">
-  <h2>Diagnostics</h2>
-  <div id="diag" class="muted" style="font-size:13px;"></div>
+<h2 id="recent-h2">Recent generations</h2>
+<div class="section" id="recent-section">
+  <div id="recent" class="gen-list">
+    <div class="muted" style="font-size:13px;padding:8px 0;">Loading…</div>
+  </div>
 </div>
 
+<details>
+  <summary style="color:var(--muted);font-size:13px;cursor:pointer;padding:8px 0;">Diagnostics</summary>
+  <div class="section">
+    <div id="diag" class="diag"></div>
+  </div>
+</details>
+
 <button class="refresh-btn" onclick="poll()">↻ Refresh now</button>
-<div class="footer" id="footer">auto-refreshing every 3s · <span id="last-update">never</span></div>
+
+<div class="footer">
+  auto-refresh every 3s · last: <span id="last-update">never</span><br>
+  <span class="muted">tunnel: <span id="tunnel-host"></span></span>
+</div>
 
 <script>
-// Replace these with your tunnel URL + token (basic auth)
+// ============ Configuration ============
 const TUNNEL = "https://applicants-revelation-soul-variety.trycloudflare.com";
 const AUTH_USER = "vastai";
 const AUTH_TOKEN = "d0771eab4813b721f7d0b88c9b7dde206efe8f4c6587c52f3eff06102d9ac8f1";
 const CORS = "https://api.allorigins.win/raw?url=";
 
+// Build authed URL with credentials embedded
 const authedURL = (path) => `https://${encodeURIComponent(AUTH_USER)}:${encodeURIComponent(AUTH_TOKEN)}@${TUNNEL.replace(/^https?:\/\//,'')}${path}`;
 
+// Set the action links + footer
+document.getElementById("link-img").href = authedURL("/mira");
+document.getElementById("link-vid").href = authedURL("/video");
+document.getElementById("tunnel-host").textContent = TUNNEL.replace(/^https?:\/\//,'').slice(0, 40) + "…";
+
 async function getJSON(path) {
-  const target = authedURL(path);
-  const proxied = CORS + encodeURIComponent(target);
+  const proxied = CORS + encodeURIComponent(authedURL(path));
   const r = await fetch(proxied, { cache: "no-store" });
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
   return r.json();
@@ -127,27 +192,98 @@ async function getJSON(path) {
 const $ = (id) => document.getElementById(id);
 const fmtGB = (b) => (b/1e9).toFixed(1) + " GB";
 
-let lastError = null;
+// Classify a workflow by its node types
+function classify(workflow) {
+  if (!workflow || typeof workflow !== "object") return { kind: "unknown", icon: "❓" };
+  const classes = Object.values(workflow).map(n => n && n.class_type ? n.class_type : "").filter(Boolean);
+  const has = (sub) => classes.some(c => c.includes(sub));
+  if (has("WanAnimate") || has("UniAnimate")) return { kind: "anim", icon: "💃", label: "Animation" };
+  if (has("WanVideoSampler") || has("WanImageToVideo") || has("VHS_VideoCombine") || has("SaveAnimatedWEBP")) return { kind: "video", icon: "🎬", label: "Video" };
+  if (has("CheckpointLoaderSimple") || has("KSampler") || has("SaveImage")) return { kind: "image", icon: "📷", label: "Image" };
+  return { kind: "other", icon: "⚙️", label: "Workflow" };
+}
+
+// Pull the positive prompt text from any text-encoding node
+function extractPrompt(workflow) {
+  if (!workflow) return "";
+  for (const [_, n] of Object.entries(workflow)) {
+    if (!n || !n.inputs) continue;
+    const t = n.inputs.positive_prompt || n.inputs.text;
+    if (typeof t === "string" && t.length > 5 && !t.toLowerCase().startsWith("bad ")) {
+      return t.slice(0, 180);
+    }
+  }
+  return "(no prompt)";
+}
+
+// Render Recent Generations
+function renderRecent(historyObj) {
+  const items = [];
+  for (const [pid, entry] of Object.entries(historyObj)) {
+    const wf = (entry.prompt && entry.prompt[2]) || {};
+    const outputs = entry.outputs || {};
+    const files = [];
+    for (const o of Object.values(outputs)) {
+      for (const v of (o.gifs || []))  files.push({ ...v, isVideo: true });
+      for (const v of (o.images || [])) files.push({ ...v, isVideo: (v.format||"").startsWith("video") });
+    }
+    if (files.length === 0) continue;
+    const cls = classify(wf);
+    const prompt = extractPrompt(wf);
+    items.push({ pid, cls, prompt, files, status: (entry.status||{}).status_str });
+  }
+  // Most recent first — preserve history's iteration order which is recent-first in ComfyUI
+  const recentSection = $("recent");
+  if (items.length === 0) {
+    recentSection.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">No generations yet. Tap a generator above to start.</div>';
+    return;
+  }
+  recentSection.innerHTML = items.slice(0, 20).map(item => {
+    const f = item.files[0];
+    const fileURL = authedURL(`/view?filename=${encodeURIComponent(f.filename)}&subfolder=${encodeURIComponent(f.subfolder||"")}&type=${encodeURIComponent(f.type||"output")}`);
+    const isVid = item.cls.kind !== "image" || f.isVideo;
+    const ico = isVid ? (item.cls.icon || "🎬") : (item.cls.icon || "📷");
+    const filename = f.filename.length > 30 ? f.filename.slice(0,28) + "…" : f.filename;
+    return `
+      <div class="gen-row">
+        <div class="ico">${ico}</div>
+        <div class="body">
+          <div class="p">${item.prompt || filename}</div>
+          <div class="meta">${item.cls.label || "?"} · ${filename}${item.files.length>1?` · +${item.files.length-1}`:""}</div>
+        </div>
+        <a class="open" href="${fileURL}" target="_blank" rel="noopener">Open</a>
+      </div>
+    `;
+  }).join("");
+}
 
 async function poll() {
   try {
-    const [queue, stats] = await Promise.all([getJSON("/queue"), getJSON("/system_stats")]);
-    lastError = null;
-
+    const [queue, stats, history] = await Promise.all([
+      getJSON("/queue"),
+      getJSON("/system_stats"),
+      getJSON("/history?max_items=20"),
+    ]);
     const running = queue.queue_running || [];
     const pending = queue.queue_pending || [];
 
-    // Headline state
+    // Headline
     const hl = $("headline");
     hl.className = "headline";
-    if (running.length > 0) { hl.classList.add("active"); hl.innerHTML = `<span class="spinner"></span>GENERATING`; }
-    else if (pending.length > 0) { hl.classList.add("waiting"); hl.textContent = "WAITING IN QUEUE"; }
-    else { hl.classList.add("idle"); hl.textContent = "IDLE"; }
+    if (running.length > 0) {
+      hl.classList.add("active");
+      const cls = classify(running[0][2] || {});
+      hl.innerHTML = `<span class="spinner"></span>GENERATING ${cls.icon} ${cls.label}`;
+    } else if (pending.length > 0) {
+      hl.classList.add("waiting"); hl.textContent = "WAITING IN QUEUE";
+    } else {
+      hl.classList.add("idle"); hl.textContent = "IDLE";
+    }
 
-    // Boxes
     $("qrun").textContent = running.length;
     $("qpend").textContent = pending.length;
 
+    // VRAM/RAM
     const dev = (stats.devices || [{}])[0];
     const vTot = dev.vram_total || 1;
     const vUsed = vTot - (dev.vram_free || 0);
@@ -162,42 +298,45 @@ async function poll() {
     $("ram-sub").textContent = `${fmtGB(rUsed)} / ${fmtGB(rTot)}`;
     $("ram-bar").style.width = ((rUsed/rTot)*100).toFixed(1) + "%";
 
-    // Jobs
+    // Active jobs detail
     const jobsSec = $("jobs-section");
     if (running.length + pending.length > 0) {
       jobsSec.style.display = "block";
       const html = [];
-      for (const [num, pid] of running) {
-        html.push(`<div class="job-row"><span class="badge run">running</span><span class="id">${pid.slice(0,12)}…</span></div>`);
+      for (const [num, pid, wf] of running) {
+        const cls = classify(wf);
+        html.push(`<div class="job-row"><span class="badge run">running</span><span class="ico">${cls.icon}</span><span class="id">${pid.slice(0,10)}…</span></div>`);
       }
-      const showPend = pending.slice(0, 8);
-      for (const [num, pid] of showPend) {
-        html.push(`<div class="job-row"><span class="badge wait">pending</span><span class="id">${pid.slice(0,12)}…</span></div>`);
+      for (const [num, pid, wf] of pending.slice(0, 8)) {
+        const cls = classify(wf);
+        html.push(`<div class="job-row"><span class="badge wait">pending</span><span class="ico">${cls.icon}</span><span class="id">${pid.slice(0,10)}…</span></div>`);
       }
-      if (pending.length > 8) html.push(`<div class="job-row muted">+ ${pending.length-8} more pending</div>`);
+      if (pending.length > 8) html.push(`<div class="muted" style="padding:6px 0;font-size:12px;">+ ${pending.length-8} more pending</div>`);
       $("jobs").innerHTML = html.join("");
     } else {
       jobsSec.style.display = "none";
     }
 
+    renderRecent(history);
+
     // Diagnostics
     const tvTot = dev.torch_vram_total || 0;
     const tvFree = dev.torch_vram_free || 0;
     const tvUsed = tvTot - tvFree;
+    const lying = running.length === 0 && tvUsed < 1e9;
     $("diag").innerHTML = `
-      ComfyUI: ${sys.comfyui_version || "?"} · PyTorch: ${sys.pytorch_version || "?"}<br>
+      ComfyUI ${sys.comfyui_version || "?"} · PyTorch ${sys.pytorch_version || "?"}<br>
       Torch VRAM in use: ${fmtGB(tvUsed)} · ${dev.name || "?"}<br>
-      ${running.length === 0 && tvUsed < 1e9 ? '<span style="color:var(--red)">⚠ GPU effectively idle (under 1 GB Torch VRAM) — if Mira says "running", Mira is lying.</span>' : ''}
+      ${lying ? '<span class="warn">⚠ GPU effectively idle. If a Mira tab says "running", refresh it.</span>' : ''}
     `;
 
     $("last-update").textContent = new Date().toLocaleTimeString();
   } catch (e) {
-    lastError = e.message;
     const hl = $("headline");
     hl.className = "headline unreachable";
     hl.textContent = "Cannot reach tunnel";
-    $("diag").innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span><br>The tunnel may have died. The instance #3 is in Vast-offline state.`;
-    $("last-update").textContent = "failed at " + new Date().toLocaleTimeString();
+    $("diag").innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+    $("last-update").textContent = "failed " + new Date().toLocaleTimeString();
   }
 }
 
