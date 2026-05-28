@@ -99,6 +99,18 @@ h2 { margin: 18px 0 10px; font-size: 13px; color: var(--muted); text-transform: 
 
 <h1>Mira Hub</h1>
 
+<div id="auth-banner" style="background:#1a2330;border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;display:none;">
+  <div style="font-weight:600;color:var(--accent2);margin-bottom:4px;">First time? Tap to authenticate:</div>
+  <div class="muted" style="font-size:11px;margin-bottom:6px;">A login popup will appear. Use:</div>
+  <div style="font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#0e1219;padding:6px 8px;border-radius:6px;">
+    <span style="color:var(--muted);">user:</span> <span id="auth-user-show"></span><br>
+    <span style="color:var(--muted);">pass:</span> <span id="auth-pass-show" style="word-break:break-all;"></span>
+    <button onclick="copyPass()" style="float:right;margin-left:8px;background:var(--accent);border:none;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Copy pass</button>
+  </div>
+  <div class="muted" style="font-size:11px;margin-top:6px;">Auth persists for 7 days via cookie. Tap the dot when done →</div>
+  <button onclick="document.getElementById('auth-banner').style.display='none'; localStorage.setItem('auth_dismissed','1');" style="margin-top:6px;background:transparent;border:1px solid var(--border);color:var(--muted);padding:4px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Got it, hide this</button>
+</div>
+
 <div class="headline" id="headline">…connecting</div>
 
 <h2>Generators</h2>
@@ -174,13 +186,31 @@ const AUTH_USER = "vastai";
 const AUTH_TOKEN = "d0771eab4813b721f7d0b88c9b7dde206efe8f4c6587c52f3eff06102d9ac8f1";
 const CORS = "https://api.allorigins.win/raw?url=";
 
-// Build authed URL with credentials embedded
+// Build authed URL with credentials embedded (used only for the CORS proxy, which forwards them)
 const authedURL = (path) => `https://${encodeURIComponent(AUTH_USER)}:${encodeURIComponent(AUTH_TOKEN)}@${TUNNEL.replace(/^https?:\/\//,'')}${path}`;
 
+// Plain URL (no credentials) — browsers strip user:pass@ from navigation URLs since 2017,
+// so links must be plain. Vast's Caddy basic auth sets a 7-day cookie after first prompt.
+const plainURL = (path) => `${TUNNEL}${path}`;
+
 // Set the action links + footer
-document.getElementById("link-img").href = authedURL("/mira");
-document.getElementById("link-vid").href = authedURL("/video");
+document.getElementById("link-img").href = plainURL("/mira");
+document.getElementById("link-vid").href = plainURL("/video");
 document.getElementById("tunnel-host").textContent = TUNNEL.replace(/^https?:\/\//,'').slice(0, 40) + "…";
+
+// First-time auth banner
+document.getElementById("auth-user-show").textContent = AUTH_USER;
+document.getElementById("auth-pass-show").textContent = AUTH_TOKEN;
+if (!localStorage.getItem("auth_dismissed")) {
+  document.getElementById("auth-banner").style.display = "block";
+}
+function copyPass() {
+  navigator.clipboard.writeText(AUTH_TOKEN).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent; btn.textContent = "Copied ✓";
+    setTimeout(() => btn.textContent = orig, 1500);
+  }).catch(() => {});
+}
 
 async function getJSON(path) {
   const proxied = CORS + encodeURIComponent(authedURL(path));
@@ -240,7 +270,7 @@ function renderRecent(historyObj) {
   }
   recentSection.innerHTML = items.slice(0, 20).map(item => {
     const f = item.files[0];
-    const fileURL = authedURL(`/view?filename=${encodeURIComponent(f.filename)}&subfolder=${encodeURIComponent(f.subfolder||"")}&type=${encodeURIComponent(f.type||"output")}`);
+    const fileURL = plainURL(`/view?filename=${encodeURIComponent(f.filename)}&subfolder=${encodeURIComponent(f.subfolder||"")}&type=${encodeURIComponent(f.type||"output")}`);
     const isVid = item.cls.kind !== "image" || f.isVideo;
     const ico = isVid ? (item.cls.icon || "🎬") : (item.cls.icon || "📷");
     const filename = f.filename.length > 30 ? f.filename.slice(0,28) + "…" : f.filename;
