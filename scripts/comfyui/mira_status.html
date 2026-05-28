@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mira Status</title>
+<style>
+:root {
+  --bg: #0b0d12;
+  --panel: #161b27;
+  --border: #232b3d;
+  --text: #e8eaef;
+  --muted: #8a93a4;
+  --green: #3ed085;
+  --green-dim: rgba(62,208,133,0.15);
+  --red: #ff5b6b;
+  --red-dim: rgba(255,91,107,0.15);
+  --yellow: #ffba28;
+  --yellow-dim: rgba(255,186,40,0.15);
+  --blue: #5da9ff;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+}
+body { padding: max(env(safe-area-inset-top), 16px) 14px max(env(safe-area-inset-bottom), 16px); max-width: 600px; margin: 0 auto; }
+h1 { margin: 4px 0 14px; font-size: 22px; font-weight: 700; }
+.headline {
+  font-size: 32px; font-weight: 800; padding: 22px; border-radius: 16px; text-align: center;
+  margin-bottom: 14px; letter-spacing: 0.01em; transition: background 0.3s;
+}
+.headline.active { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.headline.idle   { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+.headline.waiting{ background: var(--yellow-dim);color: var(--yellow);border: 1px solid var(--yellow); }
+.headline.unreachable { background: #2a1a1a; color: var(--red); border: 1px solid var(--red); font-size: 18px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; min-height: 70px;
+}
+.box .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 4px; }
+.box .val { font-size: 22px; font-weight: 700; }
+.box .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.bar {
+  height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px;
+}
+.bar > div { height: 100%; transition: width 0.4s; }
+.bar > .b-vram { background: linear-gradient(90deg, var(--blue), var(--green)); }
+.bar > .b-ram { background: var(--muted); }
+.section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+.section h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.job-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.job-row:last-child { border-bottom: none; }
+.job-row .id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
+.job-row .badge { display: inline-block; padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-right: 6px; }
+.badge.run { background: var(--green-dim); color: var(--green); }
+.badge.wait { background: var(--yellow-dim); color: var(--yellow); }
+.muted { color: var(--muted); }
+.footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 10px; }
+.spinner { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+.refresh-btn { width: 100%; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h1>Mira Status</h1>
+
+<div class="headline" id="headline">…connecting</div>
+
+<div class="grid">
+  <div class="box">
+    <div class="lbl">VRAM (GPU)</div>
+    <div class="val" id="vram-val">—</div>
+    <div class="sub" id="vram-sub">—</div>
+    <div class="bar"><div class="b-vram" id="vram-bar" style="width:0%"></div></div>
+  </div>
+  <div class="box">
+    <div class="lbl">RAM</div>
+    <div class="val" id="ram-val">—</div>
+    <div class="sub" id="ram-sub">—</div>
+    <div class="bar"><div class="b-ram" id="ram-bar" style="width:0%"></div></div>
+  </div>
+  <div class="box">
+    <div class="lbl">Queue running</div>
+    <div class="val" id="qrun">—</div>
+    <div class="sub">jobs on the GPU now</div>
+  </div>
+  <div class="box">
+    <div class="lbl">Queue pending</div>
+    <div class="val" id="qpend">—</div>
+    <div class="sub">waiting in line</div>
+  </div>
+</div>
+
+<div class="section" id="jobs-section" style="display:none;">
+  <h2>Active jobs</h2>
+  <div id="jobs"></div>
+</div>
+
+<div class="section">
+  <h2>Diagnostics</h2>
+  <div id="diag" class="muted" style="font-size:13px;"></div>
+</div>
+
+<button class="refresh-btn" onclick="poll()">↻ Refresh now</button>
+<div class="footer" id="footer">auto-refreshing every 3s · <span id="last-update">never</span></div>
+
+<script>
+// Replace these with your tunnel URL + token (basic auth)
+const TUNNEL = "https://applicants-revelation-soul-variety.trycloudflare.com";
+const AUTH_USER = "vastai";
+const AUTH_TOKEN = "d0771eab4813b721f7d0b88c9b7dde206efe8f4c6587c52f3eff06102d9ac8f1";
+const CORS = "https://api.allorigins.win/raw?url=";
+
+const authedURL = (path) => `https://${encodeURIComponent(AUTH_USER)}:${encodeURIComponent(AUTH_TOKEN)}@${TUNNEL.replace(/^https?:\/\//,'')}${path}`;
+
+async function getJSON(path) {
+  const target = authedURL(path);
+  const proxied = CORS + encodeURIComponent(target);
+  const r = await fetch(proxied, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+}
+
+const $ = (id) => document.getElementById(id);
+const fmtGB = (b) => (b/1e9).toFixed(1) + " GB";
+
+let lastError = null;
+
+async function poll() {
+  try {
+    const [queue, stats] = await Promise.all([getJSON("/queue"), getJSON("/system_stats")]);
+    lastError = null;
+
+    const running = queue.queue_running || [];
+    const pending = queue.queue_pending || [];
+
+    // Headline state
+    const hl = $("headline");
+    hl.className = "headline";
+    if (running.length > 0) { hl.classList.add("active"); hl.innerHTML = `<span class="spinner"></span>GENERATING`; }
+    else if (pending.length > 0) { hl.classList.add("waiting"); hl.textContent = "WAITING IN QUEUE"; }
+    else { hl.classList.add("idle"); hl.textContent = "IDLE"; }
+
+    // Boxes
+    $("qrun").textContent = running.length;
+    $("qpend").textContent = pending.length;
+
+    const dev = (stats.devices || [{}])[0];
+    const vTot = dev.vram_total || 1;
+    const vUsed = vTot - (dev.vram_free || 0);
+    $("vram-val").textContent = ((vUsed/vTot)*100).toFixed(1) + "%";
+    $("vram-sub").textContent = `${fmtGB(vUsed)} / ${fmtGB(vTot)}`;
+    $("vram-bar").style.width = ((vUsed/vTot)*100).toFixed(1) + "%";
+
+    const sys = stats.system || {};
+    const rTot = sys.ram_total || 1;
+    const rUsed = rTot - (sys.ram_free || 0);
+    $("ram-val").textContent = ((rUsed/rTot)*100).toFixed(1) + "%";
+    $("ram-sub").textContent = `${fmtGB(rUsed)} / ${fmtGB(rTot)}`;
+    $("ram-bar").style.width = ((rUsed/rTot)*100).toFixed(1) + "%";
+
+    // Jobs
+    const jobsSec = $("jobs-section");
+    if (running.length + pending.length > 0) {
+      jobsSec.style.display = "block";
+      const html = [];
+      for (const [num, pid] of running) {
+        html.push(`<div class="job-row"><span class="badge run">running</span><span class="id">${pid.slice(0,12)}…</span></div>`);
+      }
+      const showPend = pending.slice(0, 8);
+      for (const [num, pid] of showPend) {
+        html.push(`<div class="job-row"><span class="badge wait">pending</span><span class="id">${pid.slice(0,12)}…</span></div>`);
+      }
+      if (pending.length > 8) html.push(`<div class="job-row muted">+ ${pending.length-8} more pending</div>`);
+      $("jobs").innerHTML = html.join("");
+    } else {
+      jobsSec.style.display = "none";
+    }
+
+    // Diagnostics
+    const tvTot = dev.torch_vram_total || 0;
+    const tvFree = dev.torch_vram_free || 0;
+    const tvUsed = tvTot - tvFree;
+    $("diag").innerHTML = `
+      ComfyUI: ${sys.comfyui_version || "?"} · PyTorch: ${sys.pytorch_version || "?"}<br>
+      Torch VRAM in use: ${fmtGB(tvUsed)} · ${dev.name || "?"}<br>
+      ${running.length === 0 && tvUsed < 1e9 ? '<span style="color:var(--red)">⚠ GPU effectively idle (under 1 GB Torch VRAM) — if Mira says "running", Mira is lying.</span>' : ''}
+    `;
+
+    $("last-update").textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    lastError = e.message;
+    const hl = $("headline");
+    hl.className = "headline unreachable";
+    hl.textContent = "Cannot reach tunnel";
+    $("diag").innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span><br>The tunnel may have died. The instance #3 is in Vast-offline state.`;
+    $("last-update").textContent = "failed at " + new Date().toLocaleTimeString();
+  }
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+
+</body>
+</html>
