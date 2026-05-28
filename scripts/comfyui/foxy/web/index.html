@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0d12">
+<title>Foxy</title>
+<link rel="stylesheet" href="/extensions/foxy/styles.css">
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="login" class="screen">
+  <div class="login-card">
+    <h1 class="brand">Foxy</h1>
+    <p class="muted">Sign in to continue</p>
+    <form id="loginForm">
+      <label>Username
+        <input type="text" name="username" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Sign in</button>
+      <div class="status" id="loginStatus"></div>
+    </form>
+    <small class="muted">First login? Default creds are in <code>/workspace/foxy/initial_creds.txt</code> on the instance.</small>
+  </div>
+</section>
+
+<!-- ============ APP ============ -->
+<section id="app" class="screen hidden">
+  <header class="appbar">
+    <span class="brand-sm">Foxy</span>
+    <span class="grow"></span>
+    <span id="userBadge" class="muted"></span>
+    <button class="iconbtn" id="logoutBtn" title="Sign out">⏻</button>
+  </header>
+
+  <main id="main">
+    <!-- ===== Generate ===== -->
+    <div class="tab" id="tab-generate">
+      <div class="card">
+        <label class="lbl">Character (face reference)</label>
+        <div class="char-strip" id="charStrip">
+          <button class="char-chip add" id="charNewBtn" type="button">+ New</button>
+        </div>
+        <div class="char-empty muted" id="charEmpty">
+          No characters yet. Tap <b>+ New</b> to add yourself or someone else, then upload a clear face photo.
+        </div>
+      </div>
+
+      <div class="card">
+        <label class="lbl">Describe the photo</label>
+        <textarea id="prompt" placeholder="e.g. lying on a hotel bed in lingerie, warm lighting, intimate"></textarea>
+        <div class="chips">
+          <button class="chip" data-add="lying on a bed, soft lighting">Bed</button>
+          <button class="chip" data-add="in lingerie">Lingerie</button>
+          <button class="chip" data-add="topless">Topless</button>
+          <button class="chip" data-add="nude">Nude</button>
+          <button class="chip" data-add="at the beach, golden hour">Beach</button>
+          <button class="chip" data-add="luxury hotel suite">Hotel</button>
+          <button class="chip" data-add="bathroom, steamy">Bathroom</button>
+          <button class="chip" data-add="black lace lingerie">Lace</button>
+          <button class="chip" data-add="bent over">Bent over</button>
+          <button class="chip" data-add="from behind">From behind</button>
+        </div>
+      </div>
+
+      <details>
+        <summary>Advanced</summary>
+        <div class="card">
+          <div class="row2">
+            <label class="lbl">Aspect
+              <select id="aspect">
+                <option value="portrait" selected>Portrait</option>
+                <option value="square">Square</option>
+                <option value="landscape">Landscape</option>
+              </select>
+            </label>
+            <label class="lbl">Steps
+              <input id="steps" type="number" inputmode="numeric" value="28" min="10" max="60">
+            </label>
+            <label class="lbl">CFG
+              <input id="cfg" type="number" inputmode="decimal" value="4.5" step="0.5" min="1" max="10">
+            </label>
+            <label class="lbl">Face strength
+              <input id="faceW" type="number" inputmode="decimal" value="1.0" step="0.1" min="0.1" max="2">
+            </label>
+            <label class="lbl">Seed
+              <input id="seed" type="text" inputmode="numeric" placeholder="random">
+            </label>
+          </div>
+          <label class="lbl">Negative prompt
+            <textarea id="neg">cartoon, 3d, anime, illustration, painting, drawing, sketch, blurry, low quality, deformed face, bad anatomy, extra fingers, watermark, signature, text, jpeg artifacts</textarea>
+          </label>
+        </div>
+      </details>
+
+      <button id="genBtn" class="primary">Generate</button>
+      <div class="status" id="genStatus"></div>
+      <div class="prog" id="genProg"><div></div></div>
+      <div id="genResult"></div>
+    </div>
+
+    <!-- ===== Characters ===== -->
+    <div class="tab hidden" id="tab-characters">
+      <h2 class="page-title">Characters</h2>
+      <button class="primary" id="charNewBtn2">+ New character</button>
+      <div class="char-list" id="charList"></div>
+    </div>
+
+    <!-- ===== Character detail ===== -->
+    <div class="tab hidden" id="tab-character">
+      <button class="back" id="charBack">← Back</button>
+      <h2 class="page-title"><span id="charTitle"></span></h2>
+      <label class="primary upload-btn">
+        + Add photos
+        <input type="file" id="charUpload" accept="image/*" multiple hidden>
+      </label>
+      <div class="status" id="charUploadStatus"></div>
+      <div class="photo-grid" id="photoGrid"></div>
+      <button class="danger" id="charDeleteBtn">Delete character</button>
+    </div>
+
+    <!-- ===== Gallery ===== -->
+    <div class="tab hidden" id="tab-gallery">
+      <h2 class="page-title">Gallery</h2>
+      <div class="gallery-grid" id="galleryGrid"></div>
+      <button class="secondary" id="galleryMore" style="display:none;">Load more</button>
+    </div>
+
+    <!-- ===== Settings ===== -->
+    <div class="tab hidden" id="tab-settings">
+      <h2 class="page-title">Settings</h2>
+      <div class="card">
+        <h3>Change password</h3>
+        <label class="lbl">Current password
+          <input type="password" id="oldPw" autocomplete="current-password">
+        </label>
+        <label class="lbl">New password (≥6 chars)
+          <input type="password" id="newPw" autocomplete="new-password">
+        </label>
+        <button id="changePwBtn">Update password</button>
+        <div class="status" id="pwStatus"></div>
+      </div>
+      <div class="card muted">
+        <p>Signed in as <b id="settingsUser"></b></p>
+        <p>This app runs entirely on your Vast.ai instance. Images and references are stored in <code>/workspace/foxy/</code> on the instance disk and persist across restarts.</p>
+      </div>
+    </div>
+  </main>
+
+  <nav class="tabbar">
+    <button data-tab="generate" class="active">
+      <span class="ico">🎨</span><span>Generate</span>
+    </button>
+    <button data-tab="characters">
+      <span class="ico">👤</span><span>Faces</span>
+    </button>
+    <button data-tab="gallery">
+      <span class="ico">🖼️</span><span>Gallery</span>
+    </button>
+    <button data-tab="settings">
+      <span class="ico">⚙️</span><span>Settings</span>
+    </button>
+  </nav>
+</section>
+
+<!-- ============ Modal ============ -->
+<div id="modal" class="modal hidden">
+  <div class="modal-body" id="modalBody"></div>
+</div>
+
+<script src="/extensions/foxy/app.js"></script>
+</body>
+</html>
